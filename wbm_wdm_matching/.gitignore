@@ -1,0 +1,51 @@
+# =====================
+# Python 通用
+# =====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyc
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints
+.ipynb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 环境
+.env
+.venv/
+venv/
+env/
+
+# =====================
+# WaPIRL 项目数据
+# =====================
+WaPIRL/data/
+WaPIRL/checkpoints/
+WaPIRL/test/data/
+WaPIRL/test/checkpoints/
+WaPIRL/test/encoder_model/
+WaPIRL/xs/
+WaPIRL/test/__pycache__/
+
+# =====================
+# ViT 项目（如果有）
+# =====================
+ViT/data/
+ViT/checkpoints/
+ViT/__pycache__/
+
+# =====================
+# 其他
+# =====================
+*.log
+.DS_Store
