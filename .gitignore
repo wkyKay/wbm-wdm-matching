@@ -29,6 +29,8 @@ env/
 # =====================
 # WaPIRL 项目数据
 # =====================
+data/
+wbm_wdm_matching/
 WaPIRL/data/
 WaPIRL/checkpoints/
 WaPIRL/test/data/

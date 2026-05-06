@@ -5,10 +5,75 @@ import sys
 os.environ['CUDA_VISIBLE_DEVICES'] = '3'
 import torch
 import numpy as np
+import glob
+import pathlib
+import cv2
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from datasets.wm811k import WM811K
 from datasets.transforms import WM811KTransform
+from torch.utils.data import Dataset
+
+
+class WM811KWithoutNone(Dataset):
+    label2idx = {
+        'center'    : 0,
+        'donut'     : 1,
+        'edge-loc'  : 2,
+        'edge-ring' : 3,
+        'loc'       : 4,
+        'random'    : 5,
+        'scratch'   : 6,
+        'near-full' : 7,
+    }
+    idx2label = [k for k in label2idx.keys()]
+    num_classes = len(idx2label)
+
+    def __init__(self, root, transform=None, decouple_input: bool = True, **kwargs):
+        super(WM811KWithoutNone, self).__init__()
+
+        self.root = root
+        self.transform = transform
+        self.decouple_input = decouple_input
+
+        images = sorted(glob.glob(os.path.join(root, '**/*.png'), recursive=True))
+        labels = [pathlib.PurePath(image).parent.name for image in images]
+        
+        filtered_samples = []
+        for image, label in zip(images, labels):
+            if label in self.label2idx:
+                target = self.label2idx[label]
+                filtered_samples.append((image, target))
+
+        self.samples = filtered_samples
+
+    def __getitem__(self, idx):
+        path, y = self.samples[idx]
+        x = self.load_image_cv2(path)
+
+        if self.transform is not None:
+            x = self.transform(x)
+
+        if self.decouple_input:
+            x = self.decouple_mask(x)
+
+        return dict(x=x, y=y, idx=idx)
+
+    def __len__(self):
+        return len(self.samples)
+
+    @staticmethod
+    def load_image_cv2(filepath: str):
+        out = cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
+        return np.expand_dims(out, axis=2)
+
+    @staticmethod
+    def decouple_mask(x: torch.Tensor):
+        m = x.gt(0).float()
+        x = torch.clamp(x - 1, min=0., max=1.)
+        return torch.cat([x, m], dim=0)
+
+
 from configs.task_configs import ClassificationConfig
 from configs.network_configs import ALEXNET_BACKBONE_CONFIGS
 from configs.network_configs import VGGNET_BACKBONE_CONFIGS
@@ -66,22 +131,21 @@ def main_worker(local_rank: int, config: object):
         logger = None
 
     in_channels = int(config.decouple_input) + 1
-    num_classes = 9
+    num_classes = 8
 
     # 2. Dataset
     train_transform = WM811KTransform(size=config.input_size, mode=config.augmentation)
     test_transform  = WM811KTransform(size=config.input_size, mode='test')
-    train_set = WM811K('./data/wm811k/wbm(40*40)/labeled/train/',
+    train_set = WM811KWithoutNone('./data/wm811k/wbm(40*40)/labeled/train/',
                        transform=train_transform,
-                       proportion=config.label_proportion,
                        decouple_input=config.decouple_input)
-    valid_set = WM811K('./data/wm811k/wbm(40*40)/labeled/valid/',
+    valid_set = WM811KWithoutNone('./data/wm811k/wbm(40*40)/labeled/valid/',
                        transform=test_transform,
                        decouple_input=config.decouple_input)
-    test_set  = WM811K('./data/wm811k/wbm(40*40)/labeled/test/',
+    test_set  = WM811KWithoutNone('./data/wm811k/wbm(40*40)/labeled/test/',
                        transform=test_transform,
                        decouple_input=config.decouple_input)
-
+    print(len(train_set), len(valid_set), len(test_set))
     # 3. Model
     BACKBONE_CONFIGS, Backbone = AVAILABLE_MODELS[config.backbone_type]
     backbone = Backbone(BACKBONE_CONFIGS[config.backbone_config], in_channels=in_channels)

@@ -5,7 +5,6 @@
 [![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.4+-red.svg)](https://pytorch.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-
 ## 📌 项目简介
 
 本项目研究晶圆制造过程中的缺陷匹配问题。通过自监督对比学习（Contrastive Learning）方法，分别基于 **CNN** 和 **Vision Transformer (ViT)** 两种架构，实现晶圆缺陷图（Wafer Defect Map, WDM）与晶圆失效芯片图（Wafer Bin Map, WBM）之间的跨模态匹配。

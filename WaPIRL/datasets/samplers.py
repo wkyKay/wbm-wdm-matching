@@ -40,7 +40,7 @@ class ImbalancedDatasetSampler(Sampler):
 
     @staticmethod
     def get_target_counts(dataset: Dataset):
-        if dataset.__class__.__name__ == 'WM811K':
+        if dataset.__class__.__name__ in ['WM811K', 'WM811KWithoutNone']:
             targets = [s[-1] for s in dataset.samples]
         else:
             raise NotImplementedError
@@ -48,7 +48,7 @@ class ImbalancedDatasetSampler(Sampler):
 
     @staticmethod
     def get_target(dataset: Dataset, idx: int):
-        if dataset.__class__.__name__ == 'WM811K':
+        if dataset.__class__.__name__ in ['WM811K', 'WM811KWithoutNone']:
             return dataset.samples[idx][-1]
 
 
