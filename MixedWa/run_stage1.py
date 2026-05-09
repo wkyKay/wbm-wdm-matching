@@ -46,13 +46,19 @@ def parse_args():
     p.add_argument('--in_channels',    type=int,  default=2,
                    help='输入通道数（解耦输入=2，原始单通道=1）')
     p.add_argument('--checkpoint_dir', type=str,  default='./checkpoints/stage1')
-    p.add_argument('--device',         type=str,  default='cuda' if torch.cuda.is_available() else 'cpu')
+    p.add_argument('--device',         type=str,  default='cuda:3')
     return p.parse_args()
 
 
 def main():
     args = parse_args()
     assert args.pkl_file or args.data_dir, "必须指定 --pkl_file 或 --data_dir"
+
+    # 限制只使用指定 GPU（需在 import torch 之前设置，此处通过 device 参数解析后设置）
+    if args.device.startswith('cuda:'):
+        gpu_id = args.device.split(':')[1]
+        os.environ.setdefault('CUDA_VISIBLE_DEVICES', gpu_id)
+        args.device = 'cuda'  # CUDA_VISIBLE_DEVICES 生效后，cuda:0 即为物理 GPU 3
 
     # 数据变换
     train_transform = WaferTransform(size=(96, 96), mode='crop')

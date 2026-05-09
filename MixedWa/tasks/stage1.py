@@ -102,19 +102,23 @@ class Stage1Classification(Task):
         self.classifier.train()
         total_loss, total_acc, steps = 0., 0., 0
 
-        for batch in data_loader:
-            x = batch['x'].to(self.device)
-            y = batch['y'].to(self.device)
+        with tqdm.tqdm(**get_tqdm_config(len(data_loader), leave=False, color='green')) as pbar:
+            for batch in data_loader:
+                x = batch['x'].to(self.device)
+                y = batch['y'].to(self.device)
 
-            logits = self.classifier(self.backbone(x))
-            loss = self.loss_function(logits, y)
-            loss.backward()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+                logits = self.classifier(self.backbone(x))
+                loss = self.loss_function(logits, y)
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
 
-            total_loss += loss.item()
-            total_acc  += top_k_accuracy(logits.detach(), y, k=1)
-            steps += 1
+                total_loss += loss.item()
+                total_acc  += top_k_accuracy(logits.detach(), y, k=1)
+                steps += 1
+                pbar.set_description_str(
+                    f" loss: {total_loss/steps:.4f} | acc: {total_acc/steps:.4f}")
+                pbar.update(1)
 
         return {'loss': total_loss / steps, 'acc': total_acc / steps}
 

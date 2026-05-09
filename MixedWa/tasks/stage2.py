@@ -111,30 +111,33 @@ class Stage2MultiLabel(Task):
         total_loss, all_logits, all_targets = 0., [], []
         steps = 0
 
-        for batch in data_loader:
-            x = batch['x'].to(self.device)
-            y = batch['y'].to(self.device)
+        with tqdm.tqdm(**get_tqdm_config(len(data_loader), leave=False, color='green')) as pbar:
+            for batch in data_loader:
+                x = batch['x'].to(self.device)
+                y = batch['y'].to(self.device)
 
-            feat_orig = self.backbone(x)
-            logits = self.classifier(feat_orig)
+                feat_orig = self.backbone(x)
+                logits = self.classifier(feat_orig)
 
-            if 'x_shift' in batch:
-                x_shift = batch['x_shift'].to(self.device)
-                feat_shift = self.backbone(x_shift)
-                z_orig  = F.normalize(feat_orig,  dim=1)
-                z_shift = F.normalize(feat_shift, dim=1)
-                loss = self.loss_function(logits, y, z_orig, z_shift)
-            else:
-                loss = self.loss_function.bce(logits, y)
+                if 'x_shift' in batch:
+                    x_shift = batch['x_shift'].to(self.device)
+                    feat_shift = self.backbone(x_shift)
+                    z_orig  = F.normalize(feat_orig,  dim=1)
+                    z_shift = F.normalize(feat_shift, dim=1)
+                    loss = self.loss_function(logits, y, z_orig, z_shift)
+                else:
+                    loss = self.loss_function.bce(logits, y)
 
-            loss.backward()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                self.optimizer.zero_grad()
 
-            total_loss += loss.item()
-            all_logits.append(logits.detach().cpu())
-            all_targets.append(y.detach().cpu())
-            steps += 1
+                total_loss += loss.item()
+                all_logits.append(logits.detach().cpu())
+                all_targets.append(y.detach().cpu())
+                steps += 1
+                pbar.set_description_str(f" loss: {total_loss/steps:.4f}")
+                pbar.update(1)
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
