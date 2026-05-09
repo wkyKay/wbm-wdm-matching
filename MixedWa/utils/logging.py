@@ -17,9 +17,10 @@ def get_tqdm_config(total: int, leave: bool = True, color: str = 'white') -> dic
 def make_epoch_description(history: dict, current: int, total: int, best: int) -> str:
     desc = f" Epoch [{current:>4d}/{total:>4d}] (best: {best:>4d}): "
     for metric_name, metric_dict in history.items():
-        for split, val in metric_dict.items():
-            if val is not None:
-                desc += f" {split}_{metric_name}: {val:.4f} |"
+        if isinstance(metric_dict, dict):
+            for split, val in metric_dict.items():
+                if val is not None:
+                    desc += f" {split}_{metric_name}: {val:.4f} |"
     return desc
 
 
