@@ -76,7 +76,9 @@ def classification_metrics(logits: torch.Tensor, targets: torch.Tensor) -> dict:
         recalls.append(r)
         f1s.append(f1)
 
+    acc = float((preds == tgts).mean())
     return {
+        'acc':    acc,
         'recall': float(np.mean(recalls)),
         'f1':     float(np.mean(f1s)),
     }

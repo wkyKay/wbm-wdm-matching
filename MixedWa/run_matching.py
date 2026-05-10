@@ -17,6 +17,7 @@
 
 import os
 import sys
+import json
 import argparse
 
 import cv2
@@ -143,6 +144,12 @@ def main():
     args = parse_args()
     decouple = (args.in_channels == 2)
     transform = WaferTransform(size=(args.img_size, args.img_size), mode='test')
+
+    # 保存推理参数到 stage2_ckpt 所在目录
+    ckpt_dir = os.path.dirname(os.path.abspath(args.stage2_ckpt))
+    config_path = os.path.join(ckpt_dir, 'config_matching.json')
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(vars(args), f, indent=2, ensure_ascii=False)
 
     # 加载模型
     backbone   = build_backbone(args.backbone, in_channels=args.in_channels, img_size=args.img_size)

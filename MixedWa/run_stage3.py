@@ -137,6 +137,7 @@ def main():
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
     )
+    task.save_config(vars(args))
     task.run(dataset, epochs=args.epochs,
              batch_size=args.batch_size, num_workers=args.num_workers)
 
