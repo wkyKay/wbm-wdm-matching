@@ -152,7 +152,8 @@ class WM38KRaw(Dataset):
     def __init__(self, npz_file: str, split: str = 'train',
                  transform=None, shift_transform=None,
                  decouple_input: bool = True,
-                 train_ratio: float = 0.8, seed: int = 0):
+                 train_ratio: float = 0.8, seed: int = 0,
+                 img_size: int = 96):
         """
         Args:
             npz_file: Wafer_Map_Datasets.npz 路径
@@ -166,6 +167,7 @@ class WM38KRaw(Dataset):
         self.transform = transform
         self.shift_transform = shift_transform
         self.decouple_input = decouple_input
+        self.img_size = img_size
 
         data = np.load(npz_file)
         wafer_maps = data['arr_0']   # (N, H, W)
@@ -199,7 +201,7 @@ class WM38KRaw(Dataset):
         wmap = self.wafer_maps[idx]
         y = torch.from_numpy(self.labels[idx])  # (8,) float32 多热
 
-        x_np = self._to_input(wmap)
+        x_np = self._to_input(wmap, self.img_size)
 
         if self.transform is not None:
             x = self.transform(x_np)
@@ -222,10 +224,10 @@ class WM38KRaw(Dataset):
         return result
 
     @staticmethod
-    def _to_input(wmap: np.ndarray) -> np.ndarray:
-        """将晶圆图 resize 到 96×96，返回 (H, W, 1) uint8 numpy 数组。"""
+    def _to_input(wmap: np.ndarray, img_size: int = 96) -> np.ndarray:
+        """将晶圆图 resize 到 img_size×img_size，返回 (H, W, 1) uint8 numpy 数组。"""
         arr = wmap.astype(np.uint8)
-        arr = cv2.resize(arr, (96, 96), interpolation=cv2.INTER_NEAREST)
+        arr = cv2.resize(arr, (img_size, img_size), interpolation=cv2.INTER_NEAREST)
         return np.expand_dims(arr, axis=2)
 
 

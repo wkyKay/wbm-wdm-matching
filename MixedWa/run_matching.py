@@ -49,6 +49,8 @@ def parse_args():
                    help='backbone 类型，需与训练时一致：resnet18 | mobilenet_v3 | '
                         'efficientnet_b0 | vit_tiny | vit_small | vit_micro | vit_timm')
     p.add_argument('--in_channels', type=int, default=2)
+    p.add_argument('--img_size',    type=int, default=96,
+                   help='输入图像尺寸（正方形，默认 96）')
     # 匹配参数
     p.add_argument('--alpha',         type=float, default=0.6)
     p.add_argument('--beta',          type=float, default=0.2)
@@ -77,7 +79,7 @@ def load_wdm_tensors(args, transform, decouple: bool, device: str):
         key = 'arr_0' if 'arr_0' in data else list(data.keys())[0]
         arrays = data[key]
         for arr in arrays:
-            x_np = np.expand_dims(cv2.resize(arr.astype(np.uint8), (96, 96),
+            x_np = np.expand_dims(cv2.resize(arr.astype(np.uint8), (args.img_size, args.img_size),
                                              interpolation=cv2.INTER_NEAREST), axis=2)
             x = transform(x_np)
             raw_maps.append(x)
@@ -98,15 +100,16 @@ def load_wdm_tensors(args, transform, decouple: bool, device: str):
     return torch.stack(tensors).to(device), torch.stack(raw_maps).to(device)
 
 
-def evaluate_top3(matcher: WaferMatcher, npz_file: str, device: str):
+def evaluate_top3(matcher: WaferMatcher, npz_file: str, device: str, img_size: int = 96):
     """在 WM38K 测试集上评估 top-3 准确率。"""
     from datasets.datasets import WM38KRaw
     from datasets.transforms import WaferTransform
 
-    transform = WaferTransform(size=(96, 96), mode='test')
+    transform = WaferTransform(size=(img_size, img_size), mode='test')
     test_set = WM38KRaw(npz_file, split='test',
                         transform=transform,
-                        decouple_input=(matcher.backbone.in_channels == 2))
+                        decouple_input=(matcher.backbone.in_channels == 2),
+                        img_size=img_size)
 
     correct, total = 0, 0
     for i in range(len(test_set)):
@@ -139,10 +142,10 @@ def evaluate_top3(matcher: WaferMatcher, npz_file: str, device: str):
 def main():
     args = parse_args()
     decouple = (args.in_channels == 2)
-    transform = WaferTransform(size=(96, 96), mode='test')
+    transform = WaferTransform(size=(args.img_size, args.img_size), mode='test')
 
     # 加载模型
-    backbone   = build_backbone(args.backbone, in_channels=args.in_channels)
+    backbone   = build_backbone(args.backbone, in_channels=args.in_channels, img_size=args.img_size)
     classifier = LinearClassifier(in_dim=backbone.out_dim, num_classes=8)
 
     backbone.load_weights_from_checkpoint(args.stage2_ckpt, strict=False)
@@ -165,7 +168,7 @@ def main():
 
     # 批量评估模式
     if args.eval_npz:
-        evaluate_top3(matcher, args.eval_npz, args.device)
+        evaluate_top3(matcher, args.eval_npz, args.device, img_size=args.img_size)
         return
 
     # 单次推理模式

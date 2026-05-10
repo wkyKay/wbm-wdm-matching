@@ -53,6 +53,8 @@ def parse_args():
                    help='backbone 类型：resnet18 | mobilenet_v3 | efficientnet_b0 | '
                         'vit_tiny | vit_small | vit_micro | vit_timm')
     p.add_argument('--in_channels',    type=int, default=2)
+    p.add_argument('--img_size',        type=int, default=96,
+                   help='输入图像尺寸（正方形，默认 96）')
     p.add_argument('--proj_dim',       type=int, default=128)
     p.add_argument('--checkpoint_dir', type=str, default='./checkpoints/stage3')
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
@@ -82,17 +84,17 @@ def main():
     print(f"Loaded {len(wdm_arrays)} WDM samples, shape: {wdm_arrays[0].shape}")
 
     decouple = (args.in_channels == 2)
-    transform = WaferTransform(size=(96, 96), mode='test')
+    transform = WaferTransform(size=(args.img_size, args.img_size), mode='test')
 
     dataset = ProductionWDMDataset(
         wdm_arrays=wdm_arrays,
         transform=transform,
         decouple_input=decouple,
-        img_size=96,
+        img_size=args.img_size,
     )
 
     # 模型
-    backbone  = build_backbone(args.backbone, in_channels=args.in_channels)
+    backbone  = build_backbone(args.backbone, in_channels=args.in_channels, img_size=args.img_size)
     projector = MLPProjector(in_dim=backbone.out_dim, hidden_dim=256, out_dim=args.proj_dim)
     info = BACKBONE_INFO.get(args.backbone, {})
     print(f"Backbone: {args.backbone}  params≈{info.get('params','?')}  out_dim={backbone.out_dim}"

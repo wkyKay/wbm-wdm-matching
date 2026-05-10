@@ -54,6 +54,8 @@ def parse_args():
                    help='backbone 类型：resnet18 | mobilenet_v3 | efficientnet_b0 | '
                         'vit_tiny | vit_small | vit_micro | vit_timm')
     p.add_argument('--in_channels',    type=int, default=2)
+    p.add_argument('--img_size',        type=int, default=96,
+                   help='输入图像尺寸（正方形，默认 96）')
     p.add_argument('--checkpoint_dir', type=str, default='./checkpoints/stage2')
     p.add_argument('--device', type=str, default='cuda:3')
     return p.parse_args()
@@ -69,19 +71,23 @@ def main():
         args.device = 'cuda'
 
     decouple = (args.in_channels == 2)
-    train_transform = WaferTransform(size=(96, 96), mode='crop')
-    shift_transform = WaferTransform(size=(96, 96), mode='shift', shift=args.shift)
-    test_transform  = WaferTransform(size=(96, 96), mode='test')
+    size = (args.img_size, args.img_size)
+    train_transform = WaferTransform(size=size, mode='crop')
+    shift_transform = WaferTransform(size=size, mode='shift', shift=args.shift)
+    test_transform  = WaferTransform(size=size, mode='test')
 
     if args.npz_file:
         train_set = WM38KRaw(args.npz_file, split='train',
                              transform=train_transform,
                              shift_transform=shift_transform,
-                             decouple_input=decouple)
+                             decouple_input=decouple,
+                             img_size=args.img_size)
         valid_set = WM38KRaw(args.npz_file, split='valid',
-                             transform=test_transform, decouple_input=decouple)
+                             transform=test_transform, decouple_input=decouple,
+                             img_size=args.img_size)
         test_set  = WM38KRaw(args.npz_file, split='test',
-                             transform=test_transform, decouple_input=decouple)
+                             transform=test_transform, decouple_input=decouple,
+                             img_size=args.img_size)
     else:
         train_set = WM38KFromDir(os.path.join(args.data_dir, 'train'),
                                  transform=train_transform,
@@ -95,7 +101,7 @@ def main():
     print(f"Train: {len(train_set)} | Valid: {len(valid_set)} | Test: {len(test_set)}")
 
     # 模型
-    backbone   = build_backbone(args.backbone, in_channels=args.in_channels)
+    backbone   = build_backbone(args.backbone, in_channels=args.in_channels, img_size=args.img_size)
     classifier = LinearClassifier(in_dim=backbone.out_dim, num_classes=8, dropout=args.dropout)
     info = BACKBONE_INFO.get(args.backbone, {})
     print(f"Backbone: {args.backbone}  params≈{info.get('params','?')}  out_dim={backbone.out_dim}"
