@@ -23,10 +23,9 @@ class ToWBM(BasicTransform):
         if isinstance(img, np.ndarray):
             if img.ndim == 2:
                 img = img[:, :, None]
-            img = torch.from_numpy(img.transpose(2, 0, 1))
-            if isinstance(img, torch.ByteTensor):
-                img = img.float().div(255)
-        return torch.ceil(img * 2)
+            img = torch.from_numpy(img.transpose(2, 0, 1)).float()
+        # 值域已经是 {0, 1, 2}（0=背景, 1=正常, 2=缺陷），直接返回，不做归一化
+        return img
 
     def get_transform_init_args_names(self):
         return []

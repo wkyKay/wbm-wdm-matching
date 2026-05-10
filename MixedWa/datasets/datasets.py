@@ -53,7 +53,8 @@ class WM811KRaw(Dataset):
 
     def __init__(self, pkl_file: str, split: str = 'train',
                  transform=None, decouple_input: bool = True,
-                 proportion: float = 1.0, seed: int = 0):
+                 proportion: float = 1.0, seed: int = 0,
+                 img_size: int = 96):
         """
         Args:
             pkl_file: LSWMD.pkl 路径
@@ -65,6 +66,7 @@ class WM811KRaw(Dataset):
         super().__init__()
         self.transform = transform
         self.decouple_input = decouple_input
+        self.img_size = img_size
 
         data = pd.read_pickle(pkl_file)
         data['labelString'] = data['failureType'].apply(self._get_label)
@@ -105,7 +107,7 @@ class WM811KRaw(Dataset):
 
     def __getitem__(self, idx):
         wmap, y = self.samples[idx]
-        x = self._to_input(wmap)
+        x = self._to_input(wmap, self.img_size)
         if self.transform is not None:
             x = self.transform(x)
         if self.decouple_input:
@@ -113,10 +115,10 @@ class WM811KRaw(Dataset):
         return dict(x=x, y=y, idx=idx)
 
     @staticmethod
-    def _to_input(wmap: np.ndarray) -> np.ndarray:
-        """将晶圆图 resize 到 96×96，返回 (H, W, 1) uint8 numpy 数组。"""
+    def _to_input(wmap: np.ndarray, img_size: int = 96) -> np.ndarray:
+        """将晶圆图 resize 到 img_size×img_size，返回 (H, W, 1) uint8 numpy 数组。"""
         arr = wmap.astype(np.uint8)
-        arr = cv2.resize(arr, (96, 96), interpolation=cv2.INTER_NEAREST)
+        arr = cv2.resize(arr, (img_size, img_size), interpolation=cv2.INTER_NEAREST)
         return np.expand_dims(arr, axis=2)
 
     @staticmethod

@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 
 from tasks.base import Task
 from datasets.loaders import balanced_loader, standard_loader
-from utils.metrics import top_k_accuracy
+from utils.metrics import classification_metrics
 from utils.logging import get_tqdm_config, make_epoch_description, get_logger
 
 
@@ -67,8 +67,9 @@ class Stage1Classification(Task):
                 epoch_history = {
                     'epoch': epoch,
                     'lr': lr,
-                    'loss': {'train': train_hist['loss'], 'valid': valid_hist['loss']},
-                    'acc':  {'train': train_hist['acc'],  'valid': valid_hist['acc']},
+                    'loss':   {'train': train_hist['loss'],   'valid': valid_hist['loss']},
+                    'recall': {'train': train_hist['recall'], 'valid': valid_hist['recall']},
+                    'f1':     {'train': train_hist['f1'],     'valid': valid_hist['f1']},
                 }
                 full_history.append(epoch_history)
 
@@ -94,13 +95,14 @@ class Stage1Classification(Task):
         if test_set is not None:
             test_loader = standard_loader(test_set, batch_size, num_workers=num_workers, shuffle=False)
             test_hist = self.evaluate(test_loader)
-            self.logger.info(f"[Test] loss={test_hist['loss']:.4f} acc={test_hist['acc']:.4f}")
+            self.logger.info(f"[Test] loss={test_hist['loss']:.4f} "
+                             f"recall={test_hist['recall']:.4f} f1={test_hist['f1']:.4f}")
             self._save_history_json({'test': test_hist}, 'test_history.json')
 
     def train(self, data_loader: DataLoader) -> dict:
         self.backbone.train()
         self.classifier.train()
-        total_loss, total_acc, steps = 0., 0., 0
+        total_loss, total_recall, total_f1, steps = 0., 0., 0., 0
 
         with tqdm.tqdm(**get_tqdm_config(len(data_loader), leave=False, color='green')) as pbar:
             for batch in data_loader:
@@ -114,18 +116,21 @@ class Stage1Classification(Task):
                 self.optimizer.zero_grad()
 
                 total_loss += loss.item()
-                total_acc  += top_k_accuracy(logits.detach(), y, k=1)
+                m = classification_metrics(logits.detach(), y)
+                total_recall += m['recall']
+                total_f1     += m['f1']
                 steps += 1
                 pbar.set_description_str(
-                    f" loss: {total_loss/steps:.4f} | acc: {total_acc/steps:.4f}")
+                    f" loss: {total_loss/steps:.4f} | recall: {total_recall/steps:.4f}"
+                    f" | f1: {total_f1/steps:.4f}")
                 pbar.update(1)
 
-        return {'loss': total_loss / steps, 'acc': total_acc / steps}
+        return {'loss': total_loss / steps, 'recall': total_recall / steps, 'f1': total_f1 / steps}
 
     def evaluate(self, data_loader: DataLoader) -> dict:
         self.backbone.eval()
         self.classifier.eval()
-        total_loss, total_acc, steps = 0., 0., 0
+        total_loss, total_recall, total_f1, steps = 0., 0., 0., 0
 
         with torch.no_grad():
             for batch in data_loader:
@@ -134,10 +139,12 @@ class Stage1Classification(Task):
                 logits = self.classifier(self.backbone(x))
                 loss = self.loss_function(logits, y)
                 total_loss += loss.item()
-                total_acc  += top_k_accuracy(logits, y, k=1)
+                m = classification_metrics(logits, y)
+                total_recall += m['recall']
+                total_f1     += m['f1']
                 steps += 1
 
-        return {'loss': total_loss / steps, 'acc': total_acc / steps}
+        return {'loss': total_loss / steps, 'recall': total_recall / steps, 'f1': total_f1 / steps}
 
     def save_checkpoint(self, path: str, **kwargs):
         ckpt = {

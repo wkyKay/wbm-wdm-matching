@@ -45,6 +45,8 @@ def parse_args():
                         'vit_tiny | vit_small | vit_micro | vit_timm')
     p.add_argument('--in_channels',    type=int,  default=2,
                    help='输入通道数（解耦输入=2，原始单通道=1）')
+    p.add_argument('--img_size',        type=int,  default=96,
+                   help='输入图像尺寸（正方形，默认 96）')
     p.add_argument('--checkpoint_dir', type=str,  default='./checkpoints/stage1')
     p.add_argument('--device',         type=str,  default='cuda:3')
     return p.parse_args()
@@ -61,19 +63,22 @@ def main():
         args.device = 'cuda'  # CUDA_VISIBLE_DEVICES 生效后，cuda:0 即为物理 GPU 3
 
     # 数据变换
-    train_transform = WaferTransform(size=(96, 96), mode='crop')
-    test_transform  = WaferTransform(size=(96, 96), mode='test')
+    size = (args.img_size, args.img_size)
+    train_transform = WaferTransform(size=size, mode='crop')
+    test_transform  = WaferTransform(size=size, mode='test')
     decouple = (args.in_channels == 2)
 
     # 数据集
     if args.pkl_file:
         train_set = WM811KRaw(args.pkl_file, split='train',
                               transform=train_transform, decouple_input=decouple,
-                              proportion=args.proportion)
+                              proportion=args.proportion, img_size=args.img_size)
         valid_set = WM811KRaw(args.pkl_file, split='valid',
-                              transform=test_transform, decouple_input=decouple)
+                              transform=test_transform, decouple_input=decouple,
+                              img_size=args.img_size)
         test_set  = WM811KRaw(args.pkl_file, split='test',
-                              transform=test_transform, decouple_input=decouple)
+                              transform=test_transform, decouple_input=decouple,
+                              img_size=args.img_size)
     else:
         train_set = WM811KFromDir(os.path.join(args.data_dir, 'train'),
                                   transform=train_transform, decouple_input=decouple,
@@ -86,7 +91,7 @@ def main():
     print(f"Train: {len(train_set)} | Valid: {len(valid_set)} | Test: {len(test_set)}")
 
     # 模型
-    backbone   = build_backbone(args.backbone, in_channels=args.in_channels)
+    backbone   = build_backbone(args.backbone, in_channels=args.in_channels, img_size=args.img_size)
     classifier = LinearClassifier(in_dim=backbone.out_dim, num_classes=9, dropout=args.dropout)
     info = BACKBONE_INFO.get(args.backbone, {})
     print(f"Backbone: {args.backbone}  params≈{info.get('params','?')}  out_dim={backbone.out_dim}"

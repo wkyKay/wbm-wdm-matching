@@ -54,3 +54,29 @@ def top_k_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int = 1) -> f
     _, pred = logits.topk(k, dim=1, largest=True, sorted=True)
     correct = pred.eq(targets.view(-1, 1).expand_as(pred))
     return correct.any(dim=1).float().mean().item()
+
+
+def classification_metrics(logits: torch.Tensor, targets: torch.Tensor) -> dict:
+    """
+    单标签分类的 macro recall 和 macro F1。
+    返回 {'recall': float, 'f1': float}。
+    """
+    preds = logits.argmax(dim=1).cpu().numpy()
+    tgts  = targets.cpu().numpy()
+    num_classes = logits.size(1)
+
+    recalls, f1s = [], []
+    for c in range(num_classes):
+        tp = ((preds == c) & (tgts == c)).sum()
+        fn = ((preds != c) & (tgts == c)).sum()
+        fp = ((preds == c) & (tgts != c)).sum()
+        r = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        p = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        f1 = 2 * p * r / (p + r) if (p + r) > 0 else 0.0
+        recalls.append(r)
+        f1s.append(f1)
+
+    return {
+        'recall': float(np.mean(recalls)),
+        'f1':     float(np.mean(f1s)),
+    }
