@@ -153,14 +153,14 @@ if __name__ == '__main__':
         return len(files) > 0  # True if files exist, else False.
 
     args = parse_args()
-    processor = WM811kProcessor(wm811k_file='./data/wm811k/LSWMD.pkl')
+    processor = WM811kProcessor(wm811k_file='../data/wm811k/LSWMD.pkl')
 
     if not check_files_exist_in_directory(args.labeled_root):
-        processor.write_labeled_images(root='./data/wm811k/labeled/', train_size=0.8, valid_size=0.1)
+        processor.write_labeled_images(root='../../data/wm811k/labeled/', train_size=0.8, valid_size=0.1)
     else:
         print(f"Labeled images exist in `{args.labeled_root}`. Skipping...")
 
     if not check_files_exist_in_directory(args.unlabeled_root):
-        processor.write_unlabeled_images(root='./data/wm811k/unlabeled/', train_size=0.8, valid_size=0.1)
+        processor.write_unlabeled_images(root='../../data/wm811k/unlabeled/', train_size=0.8, valid_size=0.1)
     else:
         print(f"Unlabeled images exist in `{args.unlabeled_root}`. Skipping...")

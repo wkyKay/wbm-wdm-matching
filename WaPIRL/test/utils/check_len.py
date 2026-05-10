@@ -9,5 +9,5 @@ def count_files_in_dir(path):
     return count
 
 # 示例
-folder_path = '/data/wangkaiyan2024/wbm_wdm_matching/WaPIRL/test/data/wm811k/paired_data/train/wdm'  # 当前目录
+folder_path = '/data/wangkaiyan2024/data/wm38k/images/unknown'  # 当前目录
 print(count_files_in_dir(folder_path))

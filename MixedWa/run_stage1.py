@@ -11,16 +11,7 @@ import os
 import sys
 import argparse
 
-import torch
-import torch.nn as nn
-
 sys.path.insert(0, os.path.dirname(__file__))
-
-from datasets.datasets import WM811KRaw, WM811KFromDir
-from datasets.transforms import WaferTransform
-from models.factory import build_backbone, BACKBONE_INFO
-from models.head import LinearClassifier
-from tasks.stage1 import Stage1Classification
 
 
 def parse_args():
@@ -29,7 +20,7 @@ def parse_args():
     p.add_argument('--pkl_file', type=str, default=None,
                    help='直接从 LSWMD.pkl 读取（无需预处理）')
     p.add_argument('--data_dir', type=str, default=None,
-                   help='已处理图像目录（如 data/wm811k/labeled）')
+                   help='已处理图像目录（如 data/wm811k/labeled')
     # 训练参数
     p.add_argument('--epochs',     type=int,   default=100)
     p.add_argument('--batch_size', type=int,   default=256)
@@ -56,11 +47,28 @@ def main():
     args = parse_args()
     assert args.pkl_file or args.data_dir, "必须指定 --pkl_file 或 --data_dir"
 
-    # 限制只使用指定 GPU（需在 import torch 之前设置，此处通过 device 参数解析后设置）
+    # 限制只使用指定 GPU（必须在 import torch 之前设置
     if args.device.startswith('cuda:'):
+        print(f"Setting visible GPU to {args.device}")
         gpu_id = args.device.split(':')[1]
         os.environ.setdefault('CUDA_VISIBLE_DEVICES', gpu_id)
         args.device = 'cuda'  # CUDA_VISIBLE_DEVICES 生效后，cuda:0 即为物理 GPU 3
+
+    # 检查 GPU 设置是否生效
+    print(f"CUDA_VISIBLE_DEVICES = {os.environ.get('CUDA_VISIBLE_DEVICES', 'NOT SET')}")
+
+    # 现在才导入 torch 和其他依赖
+    import torch
+    import torch.nn as nn
+    from datasets.datasets import WM811KRaw, WM811KFromDir
+    from datasets.transforms import WaferTransform
+    from models.factory import build_backbone, BACKBONE_INFO
+    from models.head import LinearClassifier
+    from tasks.stage1 import Stage1Classification
+
+    print(f"torch.cuda.device_count() = {torch.cuda.device_count()}")
+    for i in range(torch.cuda.device_count()):
+        print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
 
     # 数据变换
     size = (args.img_size, args.img_size)
@@ -97,7 +105,7 @@ def main():
     print(f"Backbone: {args.backbone}  params≈{info.get('params','?')}  out_dim={backbone.out_dim}"
           f"  [{info.get('note','')}]")
 
-    # 优化器 & 调度器
+    # 优化器 &amp; 调度器
     optimizer = torch.optim.Adam(
         list(backbone.parameters()) + list(classifier.parameters()),
         lr=args.lr, weight_decay=args.weight_decay,
