@@ -42,14 +42,15 @@ class Stage1Classification(Task):
         self.logger = get_logger('stage1', checkpoint_dir)
 
     def run(self, train_set, valid_set, epochs: int, batch_size: int,
-            num_workers: int = 0, test_set=None):
+            num_workers: int = 0, test_set=None, max_per_class: int = None):
         self.backbone.to(self.device)
         self.classifier.to(self.device)
 
         self.logger.info(f"Stage1 started | epochs={epochs} batch_size={batch_size} "
                          f"device={self.device} train={len(train_set)} valid={len(valid_set)}")
 
-        train_loader = balanced_loader(train_set, batch_size, num_workers=num_workers)
+        train_loader = balanced_loader(train_set, batch_size, num_workers=num_workers,
+                                       max_per_class=max_per_class)
         valid_loader = standard_loader(valid_set, batch_size, num_workers=num_workers, shuffle=False)
 
         best_valid_loss = float('inf')

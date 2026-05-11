@@ -240,8 +240,35 @@ python run_stage1.py \
 | `--lr` | 1e-3 | 学习率 |
 | `--dropout` | 0.3 | 分类头 dropout |
 | `--proportion` | 1.0 | 使用有标签数据的比例 |
+| `--max_per_class` | None | 每类最多采样数，见下方说明 |
 | `--in_channels` | 2 | 输入通道（2=解耦双通道，1=原始单通道） |
+| `--img_size` | 96 | 输入图像尺寸（正方形） |
 | `--checkpoint_dir` | `./checkpoints/stage1` | 权重保存目录 |
+
+#### 类别平衡采样策略
+
+WM811K 存在严重的类别不平衡：`none` 类约 8 万张，`donut`/`scratch` 等稀有类仅数百张。直接训练会导致 accuracy 虚高而 macro recall/F1 偏低（模型偏向多数类）。
+
+`balanced_loader` 采用**少数类过采样 + 多数类下采样**的混合策略：
+
+```
+每类目标采样数 = min(该类实际数量, max_per_class)
+采样权重       = 目标采样数 / 实际数量
+总采样数       = Σ 各类目标采样数
+```
+
+- `max_per_class=None`（默认）：取各类数量的**中位数**作为上限，自动平衡
+- `max_per_class=N`：手动指定上限，值越大多数类下采样越少
+
+WM811K 中位数约 2000-3000，修改后每 epoch 有效样本数从 17 万降至约 2 万，但各类分布均匀，macro recall/F1 显著提升。
+
+```bash
+# 使用默认中位数平衡（推荐）
+python run_stage1.py --pkl_file ../../data/wm811k/LSWMD.pkl
+
+# 手动指定每类上限为 3000
+python run_stage1.py --pkl_file ../../data/wm811k/LSWMD.pkl --max_per_class 3000
+```
 
 ---
 

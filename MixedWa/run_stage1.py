@@ -30,6 +30,8 @@ def parse_args():
     p.add_argument('--dropout',      type=float, default=0.3)
     p.add_argument('--proportion',   type=float, default=1.0,
                    help='使用有标签数据的比例')
+    p.add_argument('--max_per_class', type=int, default=None,
+                   help='每类最多采样数（None=取各类数量中位数）；控制多数类下采样幅度')
     # 模型 / 输出
     p.add_argument('--backbone',      type=str,  default='resnet18',
                    help='backbone 类型：resnet18 | mobilenet_v3 | efficientnet_b0 | '
@@ -126,7 +128,7 @@ def main():
     task.save_config(vars(args))
     task.run(train_set, valid_set, epochs=args.epochs,
              batch_size=args.batch_size, num_workers=args.num_workers,
-             test_set=test_set)
+             test_set=test_set, max_per_class=args.max_per_class)
 
     print(f"\n[Stage1] Done. Checkpoint saved to: {args.checkpoint_dir}")
 
