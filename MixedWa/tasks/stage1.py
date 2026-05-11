@@ -10,6 +10,7 @@ import tqdm
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from tasks.base import Task
 from datasets.loaders import balanced_loader, standard_loader
@@ -40,6 +41,7 @@ class Stage1Classification(Task):
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.logger = get_logger('stage1', checkpoint_dir)
+        self.writer = SummaryWriter(log_dir=os.path.join(checkpoint_dir, 'tensorboard'))
 
     def run(self, train_set, valid_set, epochs: int, batch_size: int,
             num_workers: int = 0, test_set=None, max_per_class: int = None):
@@ -89,6 +91,13 @@ class Stage1Classification(Task):
                 pbar.update(1)
                 self.logger.info(desc.strip())
 
+                # TensorBoard
+                self.writer.add_scalars('loss',   {'train': train_hist['loss'],   'valid': valid_hist['loss']},   epoch)
+                self.writer.add_scalars('acc',    {'train': train_hist['acc'],    'valid': valid_hist['acc']},    epoch)
+                self.writer.add_scalars('recall', {'train': train_hist['recall'], 'valid': valid_hist['recall']}, epoch)
+                self.writer.add_scalars('f1',     {'train': train_hist['f1'],     'valid': valid_hist['f1']},     epoch)
+                self.writer.add_scalar('lr', lr, epoch)
+
         self.save_checkpoint(self.last_ckpt, epoch=epochs, history=full_history)
         self._save_history_json(full_history, 'train_history.json')
         self.logger.info(f"Stage1 finished | best_epoch={best_epoch} "
@@ -100,6 +109,9 @@ class Stage1Classification(Task):
             self.logger.info(f"[Test] loss={test_hist['loss']:.4f} acc={test_hist['acc']:.4f} "
                              f"recall={test_hist['recall']:.4f} f1={test_hist['f1']:.4f}")
             self._save_history_json({'test': test_hist}, 'test_history.json')
+            self.writer.add_scalars('test', test_hist, 0)
+
+        self.writer.close()
 
     def train(self, data_loader: DataLoader) -> dict:
         self.backbone.train()
