@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
 阶段二：WM38K 多标签微调 + 位置感知训练。
-- 冻结 backbone 前两层（layer1, layer2），微调后两层 + 分类头
+- 冻结 backbone 前 N 层（可配置），微调后续层 + 分类头
 - 损失 = BCE + λ * margin_loss(z_orig, z_shift)
 - 分类头输出 8 维 sigmoid（多热编码）
+- 支持 early stopping 和 ReduceLROnPlateau 调度器
 """
 
 import os
@@ -13,6 +14,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 
 from tasks.base import Task
 from datasets.loaders import standard_loader
@@ -24,7 +26,6 @@ from utils.logging import get_tqdm_config, make_epoch_description, get_logger
 class Stage2MultiLabel(Task):
     """
     阶段二：WM38K 多标签微调（含位置感知训练）。
-    backbone 前两层冻结，后两层 + 分类头参与更新。
     """
     def __init__(self,
                  backbone: nn.Module,
@@ -33,7 +34,9 @@ class Stage2MultiLabel(Task):
                  scheduler,
                  loss_function: PositionAwareLoss,
                  device: str = 'cpu',
-                 checkpoint_dir: str = './checkpoints/stage2'):
+                 checkpoint_dir: str = './checkpoints/stage2',
+                 freeze_layers: list = None,
+                 patience: int = 15):
         super().__init__()
         self.backbone = backbone
         self.classifier = classifier
@@ -42,26 +45,30 @@ class Stage2MultiLabel(Task):
         self.loss_function = loss_function
         self.device = device
         self.checkpoint_dir = checkpoint_dir
+        self.freeze_layers = freeze_layers or ['layer1', 'layer2']
+        self.patience = patience
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.logger = get_logger('stage2', checkpoint_dir)
+        self.writer = SummaryWriter(log_dir=os.path.join(checkpoint_dir, 'tensorboard'))
 
     def run(self, train_set, valid_set, epochs: int, batch_size: int,
             num_workers: int = 0, test_set=None):
         self.backbone.to(self.device)
         self.classifier.to(self.device)
 
-        # 冻结前两层
-        self.backbone.freeze_layers(['layer1', 'layer2'])
+        if self.freeze_layers:
+            self.backbone.freeze_layers(self.freeze_layers)
+            self.logger.info(f"Frozen layers: {self.freeze_layers}")
 
         self.logger.info(f"Stage2 started | epochs={epochs} batch_size={batch_size} "
                          f"device={self.device} train={len(train_set)} valid={len(valid_set)}")
-        self.logger.info("Frozen layers: layer1, layer2")
 
         train_loader = standard_loader(train_set, batch_size, num_workers=num_workers, shuffle=True)
         valid_loader = standard_loader(valid_set, batch_size, num_workers=num_workers, shuffle=False)
 
         best_valid_loss = float('inf')
         best_epoch = 0
+        no_improve = 0
         full_history = []
 
         with tqdm.tqdm(**get_tqdm_config(epochs, leave=True, color='blue')) as pbar:
@@ -69,8 +76,7 @@ class Stage2MultiLabel(Task):
                 train_hist = self.train(train_loader)
                 valid_hist = self.evaluate(valid_loader)
 
-                lr = self.scheduler.get_last_lr()[0] if self.scheduler else \
-                     self.optimizer.param_groups[0]['lr']
+                lr = self.optimizer.param_groups[0]['lr']
 
                 epoch_history = {
                     'epoch': epoch,
@@ -83,18 +89,32 @@ class Stage2MultiLabel(Task):
                 if valid_hist['loss'] < best_valid_loss:
                     best_valid_loss = valid_hist['loss']
                     best_epoch = epoch
-                    self.save_checkpoint(self.best_ckpt, epoch=epoch,
-                                         history=full_history)
+                    no_improve = 0
+                    self.save_checkpoint(self.best_ckpt, epoch=epoch, history=full_history)
+                else:
+                    no_improve += 1
 
                 if self.scheduler is not None:
-                    self.scheduler.step()
+                    if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        self.scheduler.step(valid_hist['loss'])
+                    else:
+                        self.scheduler.step()
+
+                # TensorBoard
+                self.writer.add_scalars('loss', {'train': train_hist['loss'], 'valid': valid_hist['loss']}, epoch)
+                self.writer.add_scalars('mAP',  {'train': train_hist['mAP'],  'valid': valid_hist['mAP']},  epoch)
+                self.writer.add_scalar('lr', lr, epoch)
 
                 desc = make_epoch_description(epoch_history, epoch, epochs, best_epoch)
                 pbar.set_description_str(desc)
                 pbar.update(1)
                 self.logger.info(desc.strip())
 
-        self.save_checkpoint(self.last_ckpt, epoch=epochs, history=full_history)
+                if no_improve >= self.patience:
+                    self.logger.info(f"Early stopping at epoch {epoch} (no improvement for {self.patience} epochs)")
+                    break
+
+        self.save_checkpoint(self.last_ckpt, epoch=epoch, history=full_history)
         self._save_history_json(full_history, 'train_history.json')
         self.logger.info(f"Stage2 finished | best_epoch={best_epoch} "
                          f"best_valid_loss={best_valid_loss:.4f}")
@@ -104,6 +124,9 @@ class Stage2MultiLabel(Task):
             test_hist = self.evaluate(test_loader)
             self.logger.info(f"[Test] loss={test_hist['loss']:.4f} mAP={test_hist['mAP']:.4f}")
             self._save_history_json({'test': test_hist}, 'test_history.json')
+            self.writer.add_scalars('test', test_hist, 0)
+
+        self.writer.close()
 
     def train(self, data_loader: DataLoader) -> dict:
         self.backbone.train()

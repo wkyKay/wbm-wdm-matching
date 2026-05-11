@@ -42,6 +42,14 @@ def parse_args():
     p.add_argument('--weight_decay', type=float, default=1e-4)
     p.add_argument('--num_workers',  type=int,   default=4)
     p.add_argument('--dropout',      type=float, default=0.3)
+    # 冻结 / early stopping
+    p.add_argument('--freeze_layers', type=str, nargs='*', default=['layer1'],
+                   help='冻结的 backbone 层名，默认只冻 layer1；传空列表则全部解冻')
+    p.add_argument('--patience',      type=int, default=15,
+                   help='early stopping 容忍轮数')
+    p.add_argument('--lr_scheduler',  type=str, default='plateau',
+                   choices=['cosine', 'plateau'],
+                   help='学习率调度器：cosine=CosineAnnealingLR，plateau=ReduceLROnPlateau')
     # 位置感知损失参数
     p.add_argument('--pos_margin', type=float, default=0.5,
                    help='平移负样本 margin')
@@ -114,14 +122,22 @@ def main():
     else:
         print("No stage1 checkpoint found, using random initialization.")
 
-    # 优化器（只优化未冻结参数，冻结在 Task.run() 中执行）
-    optimizer = torch.optim.Adam(
-        filter(lambda p: p.requires_grad,
-               list(backbone.parameters()) + list(classifier.parameters())),
-        lr=args.lr, weight_decay=args.weight_decay,
-    )
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    loss_fn   = PositionAwareLoss(margin=args.pos_margin, lam=args.pos_lambda)
+    # 先冻结，再收集可训练参数构建 optimizer（避免冻结层参数混入）
+    if args.freeze_layers:
+        backbone.freeze_layers(args.freeze_layers)
+        print(f"Frozen layers: {args.freeze_layers}")
+
+    trainable = list(filter(lambda p: p.requires_grad,
+                            list(backbone.parameters()) + list(classifier.parameters())))
+    optimizer = torch.optim.Adam(trainable, lr=args.lr, weight_decay=args.weight_decay)
+
+    if args.lr_scheduler == 'plateau':
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6)
+    else:
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
+
+    loss_fn = PositionAwareLoss(margin=args.pos_margin, lam=args.pos_lambda)
 
     task = Stage2MultiLabel(
         backbone=backbone,
@@ -131,6 +147,8 @@ def main():
         loss_function=loss_fn,
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
+        freeze_layers=[],   # 已在此处冻结，task 内不重复冻结
+        patience=args.patience,
     )
     task.save_config(vars(args))
     task.run(train_set, valid_set, epochs=args.epochs,

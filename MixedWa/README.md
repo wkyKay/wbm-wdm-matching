@@ -274,16 +274,17 @@ python run_stage1.py --pkl_file ../../data/wm811k/LSWMD.pkl --max_per_class 3000
 
 ### 阶段二：WM38K 多标签微调 + 位置感知训练
 
-在阶段一权重基础上，用 WM38K（含组合 pattern）进行多标签微调。冻结 backbone 前两层，同时加入平移负样本迫使 encoder 学习位置敏感特征。
+在阶段一权重基础上，用 WM38K（含组合 pattern）进行多标签微调。默认只冻结 layer1，同时加入平移负样本迫使 encoder 学习位置敏感特征。支持 early stopping 和 ReduceLROnPlateau 调度器以缓解过拟合。
 
 ```bash
-# 从原始 npz 直接读取（推荐）
+# 推荐配置（ReduceLROnPlateau + early stopping）
 python run_stage2.py \
   --npz_file ../../data/wm38k/Wafer_Map_Datasets.npz \
   --stage1_ckpt ./checkpoints/stage1/best_model.pt \
-  --epochs 50 \
-  --batch_size 128 \
-  --lr 1e-4 \
+  --freeze_layers layer1 \
+  --lr_scheduler plateau \
+  --patience 15 \
+  --epochs 100 \
   --checkpoint_dir ./checkpoints/stage2
 
 # 使用 ViT-Tiny backbone（需与阶段一保持一致）
@@ -299,7 +300,7 @@ python run_stage2.py \
 python run_stage2.py \
   --data_dir ../../data/wm38k/images \
   --stage1_ckpt ./checkpoints/stage1/best_model.pt \
-  --epochs 50 \
+  --epochs 100 \
   --checkpoint_dir ./checkpoints/stage2
 ```
 
@@ -311,13 +312,28 @@ python run_stage2.py \
 | `--data_dir` | — | 已处理图像目录 |
 | `--backbone` | `resnet18` | backbone 类型，需与阶段一保持一致 |
 | `--stage1_ckpt` | — | 阶段一 checkpoint（不指定则随机初始化） |
-| `--epochs` | 50 | |
+| `--epochs` | 50 | 最大训练轮数（early stopping 可提前终止） |
 | `--batch_size` | 128 | ViT 建议 64-128 |
-| `--lr` | 1e-4 | 小学习率微调 |
+| `--lr` | 1e-4 | 初始学习率 |
+| `--freeze_layers` | `layer1` | 冻结的 backbone 层，可传多个（如 `layer1 layer2`）或空列表全解冻 |
+| `--lr_scheduler` | `plateau` | `plateau`=ReduceLROnPlateau，`cosine`=CosineAnnealingLR |
+| `--patience` | 15 | early stopping 容忍轮数 |
 | `--pos_margin` | 0.5 | 位置感知 margin |
 | `--pos_lambda` | 0.1 | 位置感知损失权重 λ |
 | `--shift` | 0.25 | 平移幅度（图宽比例，25%） |
+| `--img_size` | 96 | 输入图像尺寸（正方形） |
 | `--checkpoint_dir` | `./checkpoints/stage2` | |
+
+#### 过拟合问题与解决方案
+
+WM38K 数据量（3.8 万张）远小于 WM811K，直接微调容易出现训练 mAP 接近 1.0 而验证 mAP 停滞在 0.75 左右的过拟合现象。主要原因及对应修复：
+
+| 原因 | 修复 |
+|------|------|
+| 冻结 layer1+layer2，可训练参数过少，在小数据集上反而过拟合 | 默认只冻 layer1，`--freeze_layers` 可调 |
+| CosineAnnealingLR 在 epoch 10 后 lr 已极小，模型停止有效学习 | 改为 ReduceLROnPlateau，验证 loss 不降才减半 lr |
+| 无 early stopping，后续 epoch 白跑且可能加剧过拟合 | `--patience=15`，连续 15 epoch 无改善则停止 |
+| optimizer 在冻结前构建，冻结层参数混入更新 | 先冻结再收集 `requires_grad=True` 参数构建 optimizer |
 
 ---
 
