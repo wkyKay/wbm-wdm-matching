@@ -116,7 +116,9 @@ class Stage1Classification(Task):
     def train(self, data_loader: DataLoader) -> dict:
         self.backbone.train()
         self.classifier.train()
-        total_loss, total_acc, total_recall, total_f1, steps = 0., 0., 0., 0., 0
+        total_loss, steps = 0., 0
+        all_logits = []
+        all_targets = []
 
         with tqdm.tqdm(**get_tqdm_config(len(data_loader), leave=False, color='green')) as pbar:
             for batch in data_loader:
@@ -130,23 +132,29 @@ class Stage1Classification(Task):
                 self.optimizer.zero_grad()
 
                 total_loss += loss.item()
-                m = classification_metrics(logits.detach(), y)
-                total_acc    += m['acc']
-                total_recall += m['recall']
-                total_f1     += m['f1']
+                all_logits.append(logits.detach().cpu())
+                all_targets.append(y.cpu())
                 steps += 1
-                pbar.set_description_str(
-                    f" loss: {total_loss/steps:.4f} | acc: {total_acc/steps:.4f}"
-                    f" | recall: {total_recall/steps:.4f} | f1: {total_f1/steps:.4f}")
+
+                # 用当前收集的所有数据计算指标用于显示
+                if steps % 10 == 0 or steps == len(data_loader):
+                    m = classification_metrics(torch.cat(all_logits), torch.cat(all_targets))
+                    pbar.set_description_str(
+                        f" loss: {total_loss/steps:.4f} | acc: {m['acc']:.4f}"
+                        f" | recall: {m['recall']:.4f} | f1: {m['f1']:.4f}")
                 pbar.update(1)
 
-        return {'loss': total_loss / steps, 'acc': total_acc / steps,
-                'recall': total_recall / steps, 'f1': total_f1 / steps}
+        # 用所有数据一次性计算最终指标
+        m = classification_metrics(torch.cat(all_logits), torch.cat(all_targets))
+        return {'loss': total_loss / steps, 'acc': m['acc'],
+                'recall': m['recall'], 'f1': m['f1']}
 
     def evaluate(self, data_loader: DataLoader) -> dict:
         self.backbone.eval()
         self.classifier.eval()
-        total_loss, total_acc, total_recall, total_f1, steps = 0., 0., 0., 0., 0
+        total_loss, steps = 0., 0
+        all_logits = []
+        all_targets = []
 
         with torch.no_grad():
             for batch in data_loader:
@@ -155,14 +163,14 @@ class Stage1Classification(Task):
                 logits = self.classifier(self.backbone(x))
                 loss = self.loss_function(logits, y)
                 total_loss += loss.item()
-                m = classification_metrics(logits, y)
-                total_acc    += m['acc']
-                total_recall += m['recall']
-                total_f1     += m['f1']
+                all_logits.append(logits.cpu())
+                all_targets.append(y.cpu())
                 steps += 1
 
-        return {'loss': total_loss / steps, 'acc': total_acc / steps,
-                'recall': total_recall / steps, 'f1': total_f1 / steps}
+        # 用所有数据一次性计算最终指标
+        m = classification_metrics(torch.cat(all_logits), torch.cat(all_targets))
+        return {'loss': total_loss / steps, 'acc': m['acc'],
+                'recall': m['recall'], 'f1': m['f1']}
 
     def save_checkpoint(self, path: str, **kwargs):
         ckpt = {
