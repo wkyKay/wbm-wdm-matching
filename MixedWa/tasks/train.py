@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tasks.base import Task
 from datasets.loaders import standard_loader
 from utils.loss import PositionAwareLoss
-from utils.metrics import multilabel_metrics
+from utils.metrics import multilabel_metrics, DEFAULT_METRICS, build_metrics
 from utils.logging import get_tqdm_config, make_epoch_description, get_logger
 
 
@@ -37,7 +37,8 @@ class WM38KTrainer(Task):
                  device: str = 'cpu',
                  checkpoint_dir: str = './checkpoints/train',
                  freeze_layers: list = None,
-                 patience: int = 15):
+                 patience: int = 15,
+                 metrics: dict = None):
         super().__init__()
         self.backbone = backbone
         self.classifier = classifier
@@ -48,12 +49,13 @@ class WM38KTrainer(Task):
         self.checkpoint_dir = checkpoint_dir
         self.freeze_layers = freeze_layers or []
         self.patience = patience
+        self.metrics = metrics if metrics is not None else build_metrics(DEFAULT_METRICS)
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.logger = get_logger('train', checkpoint_dir)
         self.writer = SummaryWriter(log_dir=os.path.join(checkpoint_dir, 'tensorboard'))
 
     def run(self, train_set, valid_set, epochs: int, batch_size: int,
-            num_workers: int = 0, test_set=None):
+            num_workers: int = 0, test_set=None, shift_transform=None):
         self.backbone.to(self.device)
         self.classifier.to(self.device)
 
@@ -85,12 +87,11 @@ class WM38KTrainer(Task):
                 epoch_history = {
                     'epoch': epoch,
                     'lr': lr,
-                    'loss':        {'train': train_hist['loss'],        'valid': valid_hist['loss']},
-                    'mAP':         {'train': train_hist['mAP'],         'valid': valid_hist['mAP']},
-                    'f1_macro':    {'train': train_hist['f1_macro'],    'valid': valid_hist['f1_macro']},
-                    'f1_micro':    {'train': train_hist['f1_micro'],    'valid': valid_hist['f1_micro']},
-                    'exact_match': {'train': train_hist['exact_match'], 'valid': valid_hist['exact_match']},
-                    'hamming_acc': {'train': train_hist['hamming_acc'], 'valid': valid_hist['hamming_acc']},
+                    'loss': {'train': train_hist['loss'], 'valid': valid_hist['loss']},
+                    **{
+                        name: {'train': train_hist[name], 'valid': valid_hist[name]}
+                        for name in self.metrics
+                    },
                 }
                 full_history.append(epoch_history)
 
@@ -112,12 +113,9 @@ class WM38KTrainer(Task):
                         self.scheduler.step()
 
                 # TensorBoard
-                self.writer.add_scalars('loss',        {'train': train_hist['loss'],        'valid': valid_hist['loss']},        epoch)
-                self.writer.add_scalars('mAP',         {'train': train_hist['mAP'],         'valid': valid_hist['mAP']},         epoch)
-                self.writer.add_scalars('f1_macro',    {'train': train_hist['f1_macro'],    'valid': valid_hist['f1_macro']},    epoch)
-                self.writer.add_scalars('f1_micro',    {'train': train_hist['f1_micro'],    'valid': valid_hist['f1_micro']},    epoch)
-                self.writer.add_scalars('exact_match', {'train': train_hist['exact_match'], 'valid': valid_hist['exact_match']}, epoch)
-                self.writer.add_scalars('hamming_acc', {'train': train_hist['hamming_acc'], 'valid': valid_hist['hamming_acc']}, epoch)
+                self.writer.add_scalars('loss', {'train': train_hist['loss'], 'valid': valid_hist['loss']}, epoch)
+                for name in self.metrics:
+                    self.writer.add_scalars(name, {'train': train_hist[name], 'valid': valid_hist[name]}, epoch)
                 self.writer.add_scalar('lr', lr, epoch)
 
                 desc = make_epoch_description(epoch_history, epoch, epochs, best_epoch)
@@ -141,14 +139,19 @@ class WM38KTrainer(Task):
 
         if test_set is not None:
             test_loader = standard_loader(test_set, batch_size, num_workers=num_workers, shuffle=False)
-            test_hist = self.evaluate(test_loader)
+            test_hist = self.evaluate(test_loader, shift_transform=shift_transform)
             self.logger.info(
                 f"[Test] loss={test_hist['loss']:.4f} mAP={test_hist['mAP']:.4f} "
                 f"f1_macro={test_hist['f1_macro']:.4f} f1_micro={test_hist['f1_micro']:.4f} "
                 f"exact_match={test_hist['exact_match']:.4f} hamming_acc={test_hist['hamming_acc']:.4f}"
             )
+            if 'shift_dist' in test_hist:
+                self.logger.info(
+                    f"[Test] shift_dist={test_hist['shift_dist']:.4f} "
+                    f"shift_false_accept={test_hist['shift_false_accept']:.4f}"
+                )
             self._save_history_json({'test': test_hist}, 'test_history.json')
-            self.writer.add_scalars('test', test_hist, 0)
+            self.writer.add_scalars('test', {k: v for k, v in test_hist.items() if isinstance(v, float)}, 0)
 
         self.writer.close()
 
@@ -188,30 +191,76 @@ class WM38KTrainer(Task):
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
-        m = multilabel_metrics(all_logits, all_targets)
-        return {'loss': total_loss / steps, **m}
+        scores = {name: metric(all_logits, all_targets) for name, metric in self.metrics.items()}
+        return {'loss': total_loss / steps, **scores}
 
-    def evaluate(self, data_loader: DataLoader) -> dict:
+    def evaluate(self, data_loader: DataLoader, shift_transform=None) -> dict:
         self.backbone.eval()
         self.classifier.eval()
         total_loss, all_logits, all_targets = 0., [], []
+        shift_dists, shift_false_accepts = [], []
         steps = 0
 
         with torch.no_grad():
             for batch in data_loader:
                 x = batch['x'].to(self.device)
                 y = batch['y'].to(self.device)
-                logits = self.classifier(self.backbone(x))
+                feat_orig = self.backbone(x)
+                logits = self.classifier(feat_orig)
                 loss = self.loss_function.bce(logits, y)
                 total_loss += loss.item()
                 all_logits.append(logits.cpu())
                 all_targets.append(y.cpu())
+
+                # 位置敏感性评估：对每张图动态生成平移版本
+                if shift_transform is not None:
+                    x_np_list = batch.get('x_np')  # 原始 numpy，若 dataset 提供
+                    if x_np_list is None:
+                        # 从 tensor 反推：直接对 tensor 做平移（近似）
+                        x_shift = torch.roll(x, shifts=int(x.shape[-1] * 0.3), dims=-1)
+                    else:
+                        x_shift = torch.stack([
+                            shift_transform(xn) for xn in x_np_list
+                        ]).to(self.device)
+                        from datasets.datasets import decouple_mask
+                        if x.shape[1] == 2:
+                            x_shift = torch.stack([decouple_mask(s) for s in x_shift])
+
+                    feat_shift = self.backbone(x_shift)
+                    z_orig  = F.normalize(feat_orig,  dim=1)
+                    z_shift = F.normalize(feat_shift, dim=1)
+
+                    # 平均余弦距离（越大越位置敏感）
+                    dist = (1.0 - F.cosine_similarity(z_orig, z_shift, dim=1))
+                    shift_dists.extend(dist.cpu().tolist())
+
+                    # 位置误接受率：平移后与原图的相似度 > 同类其他图的相似度 → 误接受
+                    # 用 batch 内同标签对的相似度作为参考基准
+                    sim_orig  = F.cosine_similarity(z_orig.unsqueeze(1),
+                                                    z_orig.unsqueeze(0), dim=2)  # (B, B)
+                    label_match = (y.unsqueeze(1) * y.unsqueeze(0)).sum(dim=2) > 0  # (B, B) 同标签掩码
+                    diag = torch.eye(x.shape[0], dtype=torch.bool, device=self.device)
+                    label_match = label_match & ~diag  # 排除自身
+
+                    if label_match.any():
+                        # 对每个样本：平移版本的相似度 > 同类最高相似度 → 误接受
+                        same_class_max = (sim_orig * label_match.float()).max(dim=1).values
+                        self_shift_sim  = F.cosine_similarity(z_orig, z_shift, dim=1)
+                        false_accept = (self_shift_sim > same_class_max).float()
+                        shift_false_accepts.extend(false_accept.cpu().tolist())
+
                 steps += 1
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
-        m = multilabel_metrics(all_logits, all_targets)
-        return {'loss': total_loss / steps, **m}
+        scores = {name: metric(all_logits, all_targets) for name, metric in self.metrics.items()}
+        result = {'loss': total_loss / steps, **scores}
+
+        if shift_dists:
+            result['shift_dist']         = float(np.mean(shift_dists))
+            result['shift_false_accept'] = float(np.mean(shift_false_accepts)) if shift_false_accepts else 0.0
+
+        return result
 
     def save_checkpoint(self, path: str, **kwargs):
         ckpt = {

@@ -77,11 +77,11 @@ data/wm38k/images/
 
 ```
 checkpoints/train/
-├── best_model.pt        # 验证集 loss 最优的模型权重
+├── best_model.pt        # 验证集 mAP 最优的模型权重
 ├── last_model.pt        # 最后一个 epoch 的权重
 ├── config.json          # 完整训练参数
-├── train_history.json   # 每 epoch 的 loss / mAP
-├── test_history.json    # 测试集评估结果
+├── train_history.json   # 每 epoch 的 loss / mAP / f1 / exact_match / hamming_acc
+├── test_history.json    # 测试集评估结果（含位置敏感性指标）
 ├── train.log            # 完整训练日志
 └── tensorboard/         # TensorBoard 事件文件
 ```
@@ -93,8 +93,10 @@ import torch, json
 
 ckpt = torch.load('checkpoints/train/best_model.pt', map_location='cpu')
 for ep in ckpt['history']:
-    print(f"Epoch {ep['epoch']}: train_mAP={ep['mAP']['train']:.4f} "
-          f"valid_mAP={ep['mAP']['valid']:.4f}")
+    print(f"Epoch {ep['epoch']}: "
+          f"valid_mAP={ep['mAP']['valid']:.4f} "
+          f"valid_f1_macro={ep['f1_macro']['valid']:.4f} "
+          f"valid_exact_match={ep['exact_match']['valid']:.4f}")
 
 # 或直接读 JSON
 with open('checkpoints/train/train_history.json') as f:
@@ -192,6 +194,28 @@ L = BCE(logits, label) + λ * max(0, margin - cosine_distance(z_orig, z_shift))
 正样本不做 crop/shift 等空间变换，是为了避免与位置感知 loss 的信号冲突：若正样本也经过 crop（隐含位置变化），分类 loss 会要求 crop 后的 embedding 与原图相似，而位置感知 loss 要求位置变化后 embedding 不同，两者直接矛盾。
 
 训练后 embedding 的余弦相似度隐含位置信息，可直接用于推理阶段的位置相似度计算。
+
+#### 评估指标
+
+训练过程中每个 epoch 记录以下指标（train/valid 各一份），测试集额外计算位置敏感性指标：
+
+| 指标 | 含义 | 说明 |
+|------|------|------|
+| `mAP` | macro Average Precision | 与阈值无关，基于排序质量，主要监控指标 |
+| `f1_macro` | macro F1 | 每类单独算 F1 后取均值，对稀有组合类敏感 |
+| `f1_micro` | micro F1 | 全局 TP/FP/FN 汇总后计算，反映整体表现 |
+| `exact_match` | Exact Match Ratio | 所有 8 个标签完全预测正确的样本比例，最严格 |
+| `hamming_acc` | 1 - Hamming Loss | 单个标签位的平均正确率 |
+| `shift_dist` | 平移 embedding 距离 | **仅测试集**，原图与平移 30% 版本的平均余弦距离，越大越位置敏感 |
+| `shift_false_accept` | 位置误接受率 | **仅测试集**，平移版本相似度高于同类正确位置图的比例，越低越好 |
+
+early stopping 和 checkpoint 保存均以 `valid_mAP` 为准（越高越好）。ReduceLROnPlateau 也监控 `valid_mAP`。
+
+测试日志示例：
+```
+[Test] loss=0.4821 mAP=0.9038 f1_macro=0.8712 f1_micro=0.9103 exact_match=0.7654 hamming_acc=0.9521
+[Test] shift_dist=0.3421 shift_false_accept=0.1823
+```
 
 ---
 

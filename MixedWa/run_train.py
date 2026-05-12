@@ -39,6 +39,9 @@ def parse_args():
     p.add_argument('--lr_scheduler',  type=str, default='plateau',
                    choices=['cosine', 'plateau'],
                    help='plateau=ReduceLROnPlateau，cosine=CosineAnnealingLR')
+    p.add_argument('--metrics', type=str, nargs='+',
+                   default=['mAP', 'f1_macro', 'f1_micro', 'exact_match', 'hamming_acc'],
+                   help='启用的评估指标，可选：mAP f1_macro f1_micro exact_match hamming_acc')
     # 位置感知损失
     p.add_argument('--pos_margin', type=float, default=0.5)
     p.add_argument('--pos_lambda', type=float, default=0.1)
@@ -76,6 +79,7 @@ def main():
     from models.head import LinearClassifier
     from tasks.train import WM38KTrainer
     from utils.loss import PositionAwareLoss
+    from utils.metrics import build_metrics
 
     size = (args.img_size, args.img_size)
     decouple = (args.in_channels == 2)
@@ -141,13 +145,14 @@ def main():
         loss_function=loss_fn,
         device=args.device,
         checkpoint_dir=args.checkpoint_dir,
-        freeze_layers=[],   # 已在此处冻结
+        freeze_layers=[],
         patience=args.patience,
+        metrics=build_metrics(args.metrics),
     )
     task.save_config(vars(args))
     task.run(train_set, valid_set, epochs=args.epochs,
              batch_size=args.batch_size, num_workers=args.num_workers,
-             test_set=test_set)
+             test_set=test_set, shift_transform=shift_transform)
 
     print(f"\n[Train] Done. Checkpoint saved to: {args.checkpoint_dir}")
 

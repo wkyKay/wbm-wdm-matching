@@ -110,9 +110,7 @@ def top_k_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int = 1) -> f
 
 
 def classification_metrics(logits: torch.Tensor, targets: torch.Tensor) -> dict:
-    """
-    单标签分类的 accuracy / macro recall / macro F1。
-    """
+    """单标签分类的 accuracy / macro recall / macro F1。"""
     preds = logits.argmax(dim=1).cpu().numpy()
     tgts  = targets.cpu().numpy()
     num_classes = logits.size(1)
@@ -136,19 +134,105 @@ def classification_metrics(logits: torch.Tensor, targets: torch.Tensor) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# 可插拔指标类（参考 WaPIRL metrics 字典模式）
+# ---------------------------------------------------------------------------
 
-def subset_match_recall(pred_probs: torch.Tensor, gt_probs: torch.Tensor,
-                        threshold: float = 0.5) -> float:
+class Metric:
+    """所有指标的基类，接收 (logits, targets) 并返回标量。"""
+    def __call__(self, logits: torch.Tensor, targets: torch.Tensor) -> float:
+        raise NotImplementedError
+
+    @property
+    def name(self) -> str:
+        raise NotImplementedError
+
+
+class MAPMetric(Metric):
+    """macro Average Precision（与阈值无关，基于排序）。"""
+    @property
+    def name(self):
+        return 'mAP'
+
+    def __call__(self, logits, targets):
+        return mean_ap(logits, targets)
+
+
+class F1MacroMetric(Metric):
+    """macro F1，每类单独计算后取均值，对稀有类敏感。"""
+    def __init__(self, threshold: float = 0.5):
+        self.threshold = threshold
+
+    @property
+    def name(self):
+        return 'f1_macro'
+
+    def __call__(self, logits, targets):
+        return multilabel_metrics(logits, targets, self.threshold)['f1_macro']
+
+
+class F1MicroMetric(Metric):
+    """micro F1，全局 TP/FP/FN 汇总后计算。"""
+    def __init__(self, threshold: float = 0.5):
+        self.threshold = threshold
+
+    @property
+    def name(self):
+        return 'f1_micro'
+
+    def __call__(self, logits, targets):
+        return multilabel_metrics(logits, targets, self.threshold)['f1_micro']
+
+
+class ExactMatchMetric(Metric):
+    """Exact Match Ratio，所有标签完全正确的样本比例。"""
+    def __init__(self, threshold: float = 0.5):
+        self.threshold = threshold
+
+    @property
+    def name(self):
+        return 'exact_match'
+
+    def __call__(self, logits, targets):
+        return multilabel_metrics(logits, targets, self.threshold)['exact_match']
+
+
+class HammingAccMetric(Metric):
+    """Hamming Accuracy = 1 - Hamming Loss，标签位级别的平均正确率。"""
+    def __init__(self, threshold: float = 0.5):
+        self.threshold = threshold
+
+    @property
+    def name(self):
+        return 'hamming_acc'
+
+    def __call__(self, logits, targets):
+        return multilabel_metrics(logits, targets, self.threshold)['hamming_acc']
+
+
+# 所有可用指标的注册表，key 为命令行可传入的名称
+METRIC_REGISTRY: dict[str, Metric] = {
+    'mAP':         MAPMetric(),
+    'f1_macro':    F1MacroMetric(),
+    'f1_micro':    F1MicroMetric(),
+    'exact_match': ExactMatchMetric(),
+    'hamming_acc': HammingAccMetric(),
+}
+
+# 默认启用的指标集合
+DEFAULT_METRICS = ['mAP', 'f1_macro', 'f1_micro', 'exact_match', 'hamming_acc']
+
+
+def build_metrics(names: list[str]) -> dict[str, Metric]:
     """
-    子集召回率：预测的 WDM pattern 集合是否是 WBM 的子集。
-    pred_probs: (C,) WDM 的 sigmoid 输出
-    gt_probs:   (C,) WBM 的 sigmoid 输出
+    根据名称列表构建指标字典，用法与 WaPIRL 的 metrics 参数一致：
+      metrics = build_metrics(['mAP', 'f1_macro', 'exact_match'])
     """
-    pred_set = set((pred_probs > threshold).nonzero(as_tuple=True)[0].tolist())
-    wbm_set  = set((gt_probs  > threshold).nonzero(as_tuple=True)[0].tolist())
-    if len(pred_set) == 0:
-        return 0.0
-    return len(pred_set & wbm_set) / len(pred_set)
+    unknown = [n for n in names if n not in METRIC_REGISTRY]
+    if unknown:
+        raise ValueError(f"未知指标: {unknown}。可用指标: {list(METRIC_REGISTRY.keys())}")
+    return {n: METRIC_REGISTRY[n] for n in names}
+
 
 
 def top_k_accuracy(logits: torch.Tensor, targets: torch.Tensor, k: int = 1) -> float:
