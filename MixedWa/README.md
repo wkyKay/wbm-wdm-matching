@@ -166,7 +166,7 @@ python run_train.py \
 | `--freeze_layers` | `[]` | 冻结的 backbone 层（默认全量微调） |
 | `--pos_margin` | 0.5 | 位置感知 margin |
 | `--pos_lambda` | 0.1 | 位置感知损失权重 λ |
-| `--shift` | 0.25 | 平移幅度（图宽比例） |
+| `--shift` | 0.3 | 平移幅度（图宽比例，正样本无空间增强时建议 ≥0.3） |
 | `--in_channels` | 2 | 输入通道（2=解耦双通道，1=原始单通道） |
 | `--img_size` | 96 | 输入图像尺寸（正方形） |
 | `--dropout` | 0.3 | 分类头 dropout |
@@ -183,11 +183,13 @@ WBM 原始值域为 `{0, 1, 2}`（0=背景，1=正常，2=缺陷）。`--in_chan
 
 #### 位置感知训练
 
-训练时对每张图额外生成一个大幅平移版本（`shift=0.25`，即平移 25% 图宽），通过 margin loss 推远平移版本的 embedding，迫使 encoder 学习位置敏感特征：
+训练时正样本**不做任何空间变换**（只 resize），对每张图额外生成一个大幅平移版本（`shift=0.3`，即平移 30% 图宽）作为负样本，通过 margin loss 推远平移版本的 embedding：
 
 ```
 L = BCE(logits, label) + λ * max(0, margin - cosine_distance(z_orig, z_shift))
 ```
+
+正样本不做 crop/shift 等空间变换，是为了避免与位置感知 loss 的信号冲突：若正样本也经过 crop（隐含位置变化），分类 loss 会要求 crop 后的 embedding 与原图相似，而位置感知 loss 要求位置变化后 embedding 不同，两者直接矛盾。
 
 训练后 embedding 的余弦相似度隐含位置信息，可直接用于推理阶段的位置相似度计算。
 
