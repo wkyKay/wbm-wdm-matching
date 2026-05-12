@@ -34,7 +34,7 @@ def parse_args():
                    help='生产 WDM 图像目录（与 --wdm_npz 二选一）')
     # 预训练权重
     p.add_argument('--stage2_ckpt', type=str, default=None,
-                   help='阶段二 checkpoint 路径')
+                   help='主训练阶段 checkpoint 路径（run_train.py 产出的 best_model.pt）')
     # 训练参数
     p.add_argument('--epochs',        type=int,   default=30)
     p.add_argument('--batch_size',    type=int,   default=64)

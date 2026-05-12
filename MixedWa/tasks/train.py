@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-阶段二：WM38K 多标签微调 + 位置感知训练。
-- 冻结 backbone 前 N 层（可配置），微调后续层 + 分类头
-- 损失 = BCE + λ * margin_loss(z_orig, z_shift)
-- 分类头输出 8 维 sigmoid（多热编码）
-- 支持 early stopping 和 ReduceLROnPlateau 调度器
+主训练任务：WM38K 多标签分类 + 位置感知训练。
+
+直接从 ImageNet 预训练权重初始化 backbone，在 WM38K（含单类/两类/三类组合）
+上训练多标签分类器。损失 = BCE + λ * margin_loss(z_orig, z_shift)。
+支持 early stopping 和 ReduceLROnPlateau 调度器。
 """
 
 import os
@@ -23,9 +23,10 @@ from utils.metrics import mean_ap
 from utils.logging import get_tqdm_config, make_epoch_description, get_logger
 
 
-class Stage2MultiLabel(Task):
+class WM38KTrainer(Task):
     """
-    阶段二：WM38K 多标签微调（含位置感知训练）。
+    WM38K 多标签分类训练器。
+    从 ImageNet 预训练权重出发，直接在 WM38K 上训练，无需 WM811K 预训练阶段。
     """
     def __init__(self,
                  backbone: nn.Module,
@@ -34,7 +35,7 @@ class Stage2MultiLabel(Task):
                  scheduler,
                  loss_function: PositionAwareLoss,
                  device: str = 'cpu',
-                 checkpoint_dir: str = './checkpoints/stage2',
+                 checkpoint_dir: str = './checkpoints/train',
                  freeze_layers: list = None,
                  patience: int = 15):
         super().__init__()
@@ -45,10 +46,10 @@ class Stage2MultiLabel(Task):
         self.loss_function = loss_function
         self.device = device
         self.checkpoint_dir = checkpoint_dir
-        self.freeze_layers = freeze_layers or ['layer1', 'layer2']
+        self.freeze_layers = freeze_layers or []
         self.patience = patience
         os.makedirs(checkpoint_dir, exist_ok=True)
-        self.logger = get_logger('stage2', checkpoint_dir)
+        self.logger = get_logger('train', checkpoint_dir)
         self.writer = SummaryWriter(log_dir=os.path.join(checkpoint_dir, 'tensorboard'))
 
     def run(self, train_set, valid_set, epochs: int, batch_size: int,
@@ -60,8 +61,10 @@ class Stage2MultiLabel(Task):
             self.backbone.freeze_layers(self.freeze_layers)
             self.logger.info(f"Frozen layers: {self.freeze_layers}")
 
-        self.logger.info(f"Stage2 started | epochs={epochs} batch_size={batch_size} "
-                         f"device={self.device} train={len(train_set)} valid={len(valid_set)}")
+        self.logger.info(
+            f"Training started | epochs={epochs} batch_size={batch_size} "
+            f"device={self.device} train={len(train_set)} valid={len(valid_set)}"
+        )
 
         train_loader = standard_loader(train_set, batch_size, num_workers=num_workers, shuffle=True)
         valid_loader = standard_loader(valid_set, batch_size, num_workers=num_workers, shuffle=False)
@@ -111,13 +114,18 @@ class Stage2MultiLabel(Task):
                 self.logger.info(desc.strip())
 
                 if no_improve >= self.patience:
-                    self.logger.info(f"Early stopping at epoch {epoch} (no improvement for {self.patience} epochs)")
+                    self.logger.info(
+                        f"Early stopping at epoch {epoch} "
+                        f"(no improvement for {self.patience} epochs)"
+                    )
                     break
 
         self.save_checkpoint(self.last_ckpt, epoch=epoch, history=full_history)
         self._save_history_json(full_history, 'train_history.json')
-        self.logger.info(f"Stage2 finished | best_epoch={best_epoch} "
-                         f"best_valid_loss={best_valid_loss:.4f}")
+        self.logger.info(
+            f"Training finished | best_epoch={best_epoch} "
+            f"best_valid_loss={best_valid_loss:.4f}"
+        )
 
         if test_set is not None:
             test_loader = standard_loader(test_set, batch_size, num_workers=num_workers, shuffle=False)
@@ -164,10 +172,7 @@ class Stage2MultiLabel(Task):
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
-        return {
-            'loss': total_loss / steps,
-            'mAP':  mean_ap(all_logits, all_targets),
-        }
+        return {'loss': total_loss / steps, 'mAP': mean_ap(all_logits, all_targets)}
 
     def evaluate(self, data_loader: DataLoader) -> dict:
         self.backbone.eval()
@@ -188,10 +193,7 @@ class Stage2MultiLabel(Task):
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
-        return {
-            'loss': total_loss / steps,
-            'mAP':  mean_ap(all_logits, all_targets),
-        }
+        return {'loss': total_loss / steps, 'mAP': mean_ap(all_logits, all_targets)}
 
     def save_checkpoint(self, path: str, **kwargs):
         ckpt = {
