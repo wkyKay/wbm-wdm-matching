@@ -19,7 +19,7 @@ from torch.utils.tensorboard import SummaryWriter
 from tasks.base import Task
 from datasets.loaders import standard_loader
 from utils.loss import PositionAwareLoss
-from utils.metrics import mean_ap
+from utils.metrics import multilabel_metrics
 from utils.logging import get_tqdm_config, make_epoch_description, get_logger
 
 
@@ -70,6 +70,7 @@ class WM38KTrainer(Task):
         valid_loader = standard_loader(valid_set, batch_size, num_workers=num_workers, shuffle=False)
 
         best_valid_loss = float('inf')
+        best_valid_map = 0.0
         best_epoch = 0
         no_improve = 0
         full_history = []
@@ -84,13 +85,20 @@ class WM38KTrainer(Task):
                 epoch_history = {
                     'epoch': epoch,
                     'lr': lr,
-                    'loss': {'train': train_hist['loss'], 'valid': valid_hist['loss']},
-                    'mAP':  {'train': train_hist['mAP'],  'valid': valid_hist['mAP']},
+                    'loss':        {'train': train_hist['loss'],        'valid': valid_hist['loss']},
+                    'mAP':         {'train': train_hist['mAP'],         'valid': valid_hist['mAP']},
+                    'f1_macro':    {'train': train_hist['f1_macro'],    'valid': valid_hist['f1_macro']},
+                    'f1_micro':    {'train': train_hist['f1_micro'],    'valid': valid_hist['f1_micro']},
+                    'exact_match': {'train': train_hist['exact_match'], 'valid': valid_hist['exact_match']},
+                    'hamming_acc': {'train': train_hist['hamming_acc'], 'valid': valid_hist['hamming_acc']},
                 }
                 full_history.append(epoch_history)
 
                 if valid_hist['loss'] < best_valid_loss:
                     best_valid_loss = valid_hist['loss']
+
+                if valid_hist['mAP'] > best_valid_map:
+                    best_valid_map = valid_hist['mAP']
                     best_epoch = epoch
                     no_improve = 0
                     self.save_checkpoint(self.best_ckpt, epoch=epoch, history=full_history)
@@ -99,13 +107,17 @@ class WM38KTrainer(Task):
 
                 if self.scheduler is not None:
                     if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
-                        self.scheduler.step(valid_hist['loss'])
+                        self.scheduler.step(valid_hist['mAP'])
                     else:
                         self.scheduler.step()
 
                 # TensorBoard
-                self.writer.add_scalars('loss', {'train': train_hist['loss'], 'valid': valid_hist['loss']}, epoch)
-                self.writer.add_scalars('mAP',  {'train': train_hist['mAP'],  'valid': valid_hist['mAP']},  epoch)
+                self.writer.add_scalars('loss',        {'train': train_hist['loss'],        'valid': valid_hist['loss']},        epoch)
+                self.writer.add_scalars('mAP',         {'train': train_hist['mAP'],         'valid': valid_hist['mAP']},         epoch)
+                self.writer.add_scalars('f1_macro',    {'train': train_hist['f1_macro'],    'valid': valid_hist['f1_macro']},    epoch)
+                self.writer.add_scalars('f1_micro',    {'train': train_hist['f1_micro'],    'valid': valid_hist['f1_micro']},    epoch)
+                self.writer.add_scalars('exact_match', {'train': train_hist['exact_match'], 'valid': valid_hist['exact_match']}, epoch)
+                self.writer.add_scalars('hamming_acc', {'train': train_hist['hamming_acc'], 'valid': valid_hist['hamming_acc']}, epoch)
                 self.writer.add_scalar('lr', lr, epoch)
 
                 desc = make_epoch_description(epoch_history, epoch, epochs, best_epoch)
@@ -124,13 +136,17 @@ class WM38KTrainer(Task):
         self._save_history_json(full_history, 'train_history.json')
         self.logger.info(
             f"Training finished | best_epoch={best_epoch} "
-            f"best_valid_loss={best_valid_loss:.4f}"
+            f"best_valid_mAP={best_valid_map:.4f} best_valid_loss={best_valid_loss:.4f}"
         )
 
         if test_set is not None:
             test_loader = standard_loader(test_set, batch_size, num_workers=num_workers, shuffle=False)
             test_hist = self.evaluate(test_loader)
-            self.logger.info(f"[Test] loss={test_hist['loss']:.4f} mAP={test_hist['mAP']:.4f}")
+            self.logger.info(
+                f"[Test] loss={test_hist['loss']:.4f} mAP={test_hist['mAP']:.4f} "
+                f"f1_macro={test_hist['f1_macro']:.4f} f1_micro={test_hist['f1_micro']:.4f} "
+                f"exact_match={test_hist['exact_match']:.4f} hamming_acc={test_hist['hamming_acc']:.4f}"
+            )
             self._save_history_json({'test': test_hist}, 'test_history.json')
             self.writer.add_scalars('test', test_hist, 0)
 
@@ -172,7 +188,8 @@ class WM38KTrainer(Task):
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
-        return {'loss': total_loss / steps, 'mAP': mean_ap(all_logits, all_targets)}
+        m = multilabel_metrics(all_logits, all_targets)
+        return {'loss': total_loss / steps, **m}
 
     def evaluate(self, data_loader: DataLoader) -> dict:
         self.backbone.eval()
@@ -193,7 +210,8 @@ class WM38KTrainer(Task):
 
         all_logits  = torch.cat(all_logits,  dim=0)
         all_targets = torch.cat(all_targets, dim=0)
-        return {'loss': total_loss / steps, 'mAP': mean_ap(all_logits, all_targets)}
+        m = multilabel_metrics(all_logits, all_targets)
+        return {'loss': total_loss / steps, **m}
 
     def save_checkpoint(self, path: str, **kwargs):
         ckpt = {
