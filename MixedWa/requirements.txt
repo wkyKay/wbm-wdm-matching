@@ -1,0 +1,12 @@
+torch>=1.10
+torchvision>=0.11
+tensorboard
+albumentations>=1.3
+opencv-python
+scikit-image
+scikit-learn
+scipy
+numpy
+pandas
+tqdm
+timm>=0.9.0
