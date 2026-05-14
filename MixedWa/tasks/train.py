@@ -21,7 +21,7 @@ from datasets.loaders import standard_loader
 from utils.loss import PositionAwareLoss
 from utils.metrics import multilabel_metrics, DEFAULT_METRICS, build_metrics
 from utils.logging import get_tqdm_config, make_epoch_description, get_logger
-
+import numpy as np
 
 class WM38KTrainer(Task):
     """
