@@ -130,7 +130,7 @@ MixedWa/
 ├── tasks/
 │   ├── base.py
 │   ├── train.py         # WM38KTrainer（主训练）
-│   └── stage3.py        # Stage3DomainAdaptation（生产数据域适应）
+│   └── domain_adapt.py  # DomainAdaptation（生产数据域适应）
 ├── utils/
 │   ├── loss.py          # PositionAwareLoss / WaPIRLLoss
 │   ├── metrics.py       # mAP / classification_metrics
@@ -139,7 +139,7 @@ MixedWa/
 │   ├── cam.py           # CAMExtractor，类别 CAM / weak mask / 局部相似度
 │   └── matcher.py       # WaferMatcher，全局 + CAM 融合匹配
 ├── run_train.py         # 主训练入口
-├── run_stage3.py        # 域适应（可选）
+├── run_domain_adapt.py  # 域适应（可选）
 └── run_matching.py      # 匹配推理
 ```
 
@@ -331,14 +331,115 @@ early stopping 和 checkpoint 保存均以 `valid_mAP` 为准（越高越好）�
 
 > 若生产数据与 WM38K 分布接近，可跳过此阶段直接进行匹配推理。
 
+#### mixed-pattern synthetic WDM 生成
+
+当真实生产 WDM 不足或需要测试 mixed-pattern 鲁棒性时，可先运行 `process_mixed_synthetic_wdm.py` 生成合成 WDM。该脚本与 `run_train.py` / `run_domain_adapt.py` 同级，输出可直接作为 `run_domain_adapt.py --wdm_npz` 输入。
+
+生成逻辑：
+
+```
+WM38K npz / WM811K PNG
+  → 提取 defect mask
+  → 选择 primary pattern + secondary pattern(s)
+  → 稀疏采样
+  → 旋转 / 平移 / 缩放
+  → 坐标扰动
+  → 局部扩散
+  → 随机缺失
+  → 少量背景噪声
+  → density control
+  → synthetic mixed-pattern WDM
+```
+
+默认 recipe 以 `systematic + systematic` 组合为主，少量保留 `systematic + random` 用于噪声鲁棒性，避免 synthetic 数据过度偏向 random pattern：
+
+```python
+DEFAULT_RECIPES = [
+    ['edge-ring', 'scratch'],
+    ['center', 'edge-ring'],
+    ['scratch', 'loc'],
+    ['donut', 'scratch'],
+    ['edge-loc', 'loc'],
+    ['center', 'loc'],
+    ['donut', 'edge-ring'],
+    ['edge-ring', 'scratch', 'loc'],
+    ['center', 'edge-ring', 'scratch'],
+    ['center', 'loc', 'scratch'],
+    ['edge-ring', 'random'],
+    ['scratch', 'random'],
+    ['center', 'random'],
+]
+```
+
+推荐比例是约 `70%~80%` 系统性 mixed pattern，`20%~30%` 带 random 的噪声鲁棒性样本。`random` 在这里主要表示背景散点或次级点状缺陷，不作为主 pattern。
+
+从 WM38K npz 生成：
+
 ```bash
-python run_stage3.py \
-  --wdm_npz ../../data/production/wdm.npz \
-  --stage2_ckpt ./checkpoints/train/best_model.pt \
+python process_mixed_synthetic_wdm.py \
+  --source_npz ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --output_dir ../../data/synthetic_wdm_mixed \
+  --num_samples 5000 \
+  --out_size 96 \
+  --min_components 2 \
+  --max_components 3 \
+  --save_preview
+```
+
+从 `process_wm811k.py` 导出的 WM811K PNG 目录生成：
+
+```bash
+python process_mixed_synthetic_wdm.py \
+  --source_dir ../../data/wm811k/labeled/train \
+  --source_format wm811k_png \
+  --output_dir ../../data/synthetic_wdm_mixed_wm811k \
+  --num_samples 5000 \
+  --save_preview
+```
+
+输出目录：
+
+```
+data/synthetic_wdm_mixed/
+├── synthetic_wdm.npz      # arr_0: (N,H,W)，值域 {0,2}
+├── metadata.json          # pattern 组合、primary pattern、density、source 信息
+└── preview/               # 可选 PNG 预览
+```
+
+随后接入 domain adaptation：
+
+```bash
+python run_domain_adapt.py \
+  --wdm_npz ../../data/synthetic_wdm_mixed/synthetic_wdm.npz \
+  --wdm_format wbm_values \
+  --supervised_ckpt ./checkpoints/train/best_model.pt \
   --epochs 30 \
   --batch_size 64 \
   --num_negatives 2000 \
-  --checkpoint_dir ./checkpoints/stage3
+  --checkpoint_dir ./checkpoints/domain_adapt_synthetic_mixed
+```
+
+若已有真实生产 WDM，可直接使用：
+
+```bash
+python run_domain_adapt.py \
+  --wdm_npz ../../data/production/wdm.npz \
+  --wdm_format auto \
+  --supervised_ckpt ./checkpoints/train/best_model.pt \
+  --epochs 30 \
+  --batch_size 64 \
+  --num_negatives 2000 \
+  --checkpoint_dir ./checkpoints/domain_adapt
+```
+
+若使用 `process_wm811k.py` 导出的 WM811K PNG 目录，可直接指定目录和格式：
+
+```bash
+python run_domain_adapt.py \
+  --wdm_dir ../../data/wm811k/unlabeled/train \
+  --wdm_format wm811k_png \
+  --supervised_ckpt ./checkpoints/train/best_model.pt \
+  --checkpoint_dir ./checkpoints/domain_adapt_wm811k
 ```
 
 **伪 WBM 生成流程（模拟缺陷→芯片失效的空间平均过程）：**
@@ -352,19 +453,48 @@ WDM（96×96）
   → 上采样回 96×96
 ```
 
+**domain adaptation 数据选择建议：**
+
+`run_domain_adapt.py` 不需要人工 pattern 标签，但输入 WDM 本身应尽量具有明确、稳定的空间 pattern。该阶段的目标是生产数据域适应，而不是重新学习类别；其正样本假设是 `WDM → pseudo-WBM` 后仍保留主要拓扑结构。
+
+推荐使用：
+
+- 无标签但 pattern 明显的生产 WDM，例如 center cluster、edge-ring、scratch-like、localized cluster、donut-like、near-full；
+- 少量弱 pattern 或边界不清的 WDM，用于提升对真实生产噪声的鲁棒性；
+- 若数据混杂，建议约 `70%~80%` 来自明显 pattern WDM，`20%~30%` 来自弱 pattern / 不确定 pattern WDM。
+
+不建议作为主要 domain adaptation 数据：
+
+- 纯随机散点；
+- 极稀疏孤立缺陷；
+- 几乎全空或几乎全满的图；
+- 扫描噪声、无结构背景缺陷；
+- 生成 pseudo-WBM 后几乎全 0 或全 1 的样本。
+
+可使用无监督规则做预筛选：
+
+- 缺陷密度过低或过高的样本过滤；
+- 最大连通域面积过小、全是小碎片的样本过滤；
+- pseudo-WBM 二值化后有效面积异常的样本过滤；
+- supervised 分类器所有类别置信度都很低的样本降低权重或排除。
+
+如果后续匹配阶段启用 CAM，domain adaptation 数据质量更重要：大量无结构 WDM 可能让 feature map 更关注点密度或噪声纹理，而不是类别相关 pattern 区域，导致 CAM weak mask 不稳定。
+
 主要参数：
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
 | `--wdm_npz` | — | 生产 WDM npz（arr_0 为 (N,H,W) 数组） |
-| `--stage2_ckpt` | — | 主训练阶段 checkpoint（run_train.py 产出） |
+| `--wdm_dir` | — | 生产 WDM / WM811K PNG 图像目录（与 `--wdm_npz` 二选一） |
+| `--wdm_format` | `auto` | 输入值域格式：`auto` / `binary` / `wm811k_png` / `wbm_values` |
+| `--supervised_ckpt` | — | 监督训练 checkpoint（run_train.py 产出） |
 | `--epochs` | 30 | |
 | `--batch_size` | 64 | |
 | `--num_negatives` | 2000 | 记忆库负采样数 |
 | `--memory_weight` | 0.5 | 记忆库 EMA 更新系数 |
 | `--temperature` | 0.07 | NCE Loss 温度 |
 | `--img_size` | 96 | 输入图像尺寸 |
-| `--checkpoint_dir` | `./checkpoints/stage3` | |
+| `--checkpoint_dir` | `./checkpoints/domain_adapt` | |
 
 ---
 
@@ -376,7 +506,7 @@ WDM（96×96）
 python run_matching.py \
   --wbm_path ../../data/production/wbm_sample.png \
   --wdm_dir  ../../data/production/wdm_images/ \
-  --stage2_ckpt ./checkpoints/train/best_model.pt \
+  --supervised_ckpt ./checkpoints/train/best_model.pt \
   --top_k 3
 ```
 
@@ -385,7 +515,7 @@ python run_matching.py \
 ```bash
 python run_matching.py \
   --eval_npz ../../data/wm38k/Wafer_Map_Datasets.npz \
-  --stage2_ckpt ./checkpoints/train/best_model.pt
+  --supervised_ckpt ./checkpoints/train/best_model.pt
 ```
 
 ### CAM 弱定位匹配（可选）
@@ -398,7 +528,7 @@ CAM 使用 ResNet `layer4` feature map 与线性分类头权重，为每个预�
 python run_matching.py \
   --wbm_path ../../data/production/wbm_sample.png \
   --wdm_dir  ../../data/production/wdm_images/ \
-  --stage2_ckpt ./checkpoints/train/best_model.pt \
+  --supervised_ckpt ./checkpoints/train/best_model.pt \
   --use_cam \
   --alpha 0.5 \
   --beta 0.15 \
@@ -435,8 +565,8 @@ CAM 局部相似度 = mean over c in (S_wdm ∩ S_wbm) [
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `--stage2_ckpt` | 必填 | 主训练 checkpoint |
-| `--stage3_ckpt` | — | 域适应 checkpoint（可选，覆盖 backbone） |
+| `--supervised_ckpt` | 必填 | 监督训练 checkpoint |
+| `--domain_adapt_ckpt` | — | 域适应 checkpoint（可选，覆盖 backbone） |
 | `--alpha` | 0.6 | 重叠率权重 |
 | `--beta` | 0.2 | 全局位置相似度权重 |
 | `--gamma` | 0.2 | 面积相似度权重 |

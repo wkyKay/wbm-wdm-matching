@@ -21,7 +21,7 @@ class LinearClassifier(HeadBase):
 
 class MLPProjector(HeadBase):
     """
-    MLP 投影头，用于对比学习（WaPIRL 阶段三）：
+    MLP 投影头，用于对比学习（WaPIRL 域适应）：
     Linear → BN → ReLU → Linear → L2 归一化
     """
     def __init__(self, in_dim: int, hidden_dim: int = 256, out_dim: int = 128):

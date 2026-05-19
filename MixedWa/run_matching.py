@@ -6,13 +6,13 @@
   python run_matching.py \
     --wbm_path ../../data/production/wbm_sample.png \
     --wdm_dir  ../../data/production/wdm_images/ \
-    --stage2_ckpt ./checkpoints/stage2/best_model.pt \
+    --supervised_ckpt ./checkpoints/train/best_model.pt \
     --top_k 3
 
   # 批量评估（WM38K 测试集）
   python run_matching.py \
     --eval_npz ../../data/wm38k/Wafer_Map_Datasets.npz \
-    --stage2_ckpt ./checkpoints/stage2/best_model.pt
+    --supervised_ckpt ./checkpoints/train/best_model.pt
 """
 
 import os
@@ -43,9 +43,10 @@ def parse_args():
     p.add_argument('--eval_npz',  type=str, default=None,
                    help='WM38K npz，用于批量 top-3 准确率评估')
     # 模型
-    p.add_argument('--stage2_ckpt', type=str, required=True)
-    p.add_argument('--stage3_ckpt', type=str, default=None,
-                   help='阶段三 checkpoint（可选，覆盖 backbone）')
+    p.add_argument('--supervised_ckpt', type=str, required=True,
+                   help='监督训练 checkpoint 路径（run_train.py 产出的 best_model.pt）')
+    p.add_argument('--domain_adapt_ckpt', type=str, default=None,
+                   help='域适应 checkpoint（可选，覆盖 backbone）')
     p.add_argument('--backbone',    type=str, default='resnet18',
                    help='backbone 类型，需与训练时一致：resnet18 | mobilenet_v3 | '
                         'efficientnet_b0 | vit_tiny | vit_small | vit_micro | vit_timm')
@@ -158,8 +159,8 @@ def main():
     decouple = (args.in_channels == 2)
     transform = WaferTransform(size=(args.img_size, args.img_size), mode='test')
 
-    # 保存推理参数到 stage2_ckpt 所在目录
-    ckpt_dir = os.path.dirname(os.path.abspath(args.stage2_ckpt))
+    # 保存推理参数到监督训练 checkpoint 所在目录
+    ckpt_dir = os.path.dirname(os.path.abspath(args.supervised_ckpt))
     config_path = os.path.join(ckpt_dir, 'config_matching.json')
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(vars(args), f, indent=2, ensure_ascii=False)
@@ -168,12 +169,12 @@ def main():
     backbone   = build_backbone(args.backbone, in_channels=args.in_channels, img_size=args.img_size)
     classifier = LinearClassifier(in_dim=backbone.out_dim, num_classes=8)
 
-    backbone.load_weights_from_checkpoint(args.stage2_ckpt, strict=False)
-    classifier.load_weights_from_checkpoint(args.stage2_ckpt, key='classifier', strict=False)
+    backbone.load_weights_from_checkpoint(args.supervised_ckpt, strict=False)
+    classifier.load_weights_from_checkpoint(args.supervised_ckpt, key='classifier', strict=False)
 
-    if args.stage3_ckpt and os.path.exists(args.stage3_ckpt):
-        backbone.load_weights_from_checkpoint(args.stage3_ckpt, strict=False)
-        print(f"Loaded stage3 backbone from: {args.stage3_ckpt}")
+    if args.domain_adapt_ckpt and os.path.exists(args.domain_adapt_ckpt):
+        backbone.load_weights_from_checkpoint(args.domain_adapt_ckpt, strict=False)
+        print(f"Loaded domain adaptation backbone from: {args.domain_adapt_ckpt}")
 
     matcher = WaferMatcher(
         backbone=backbone,

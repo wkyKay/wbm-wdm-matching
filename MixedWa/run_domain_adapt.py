@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-阶段三运行脚本：生产数据自监督域适应。
+生产数据自监督域适应运行脚本。
 
 用法（从 MixedWa/ 目录运行）：
-  python run_stage3.py \
+  python run_domain_adapt.py \
     --wdm_npz ../../data/production/wdm.npz \
-    --stage2_ckpt ./checkpoints/stage2/best_model.pt \
+    --supervised_ckpt ./checkpoints/train/best_model.pt \
     --epochs 30
 """
 
@@ -21,20 +21,25 @@ sys.path.insert(0, os.path.dirname(__file__))
 from datasets.transforms import WaferTransform
 from models.factory import build_backbone, BACKBONE_INFO
 from models.head import MLPProjector
-from tasks.stage3 import Stage3DomainAdaptation, ProductionWDMDataset, MemoryBank
+from tasks.domain_adapt import DomainAdaptation, ProductionWDMDataset, MemoryBank
 from utils.loss import WaPIRLLoss
 
 
 def parse_args():
-    p = argparse.ArgumentParser('Stage3: Production data self-supervised domain adaptation')
+    p = argparse.ArgumentParser('Domain adaptation: production data self-supervised adaptation')
     # 数据
     p.add_argument('--wdm_npz',  type=str, default=None,
                    help='生产 WDM 数据 npz 文件（arr_0 为 (N,H,W) 数组）')
     p.add_argument('--wdm_dir',  type=str, default=None,
                    help='生产 WDM 图像目录（与 --wdm_npz 二选一）')
+    p.add_argument('--wdm_format', type=str, default='auto',
+                   choices=['auto', 'binary', 'wm811k_png', 'wbm_values'],
+                   help='WDM 输入值域格式：auto 自动判断；binary=非零即缺陷；'
+                        'wm811k_png=process_wm811k.py 导出的 0/127/255 PNG；'
+                        'wbm_values=0/1/2 wafer map，仅 2 视为缺陷')
     # 预训练权重
-    p.add_argument('--stage2_ckpt', type=str, default=None,
-                   help='主训练阶段 checkpoint 路径（run_train.py 产出的 best_model.pt）')
+    p.add_argument('--supervised_ckpt', type=str, default=None,
+                   help='监督训练 checkpoint 路径（run_train.py 产出的 best_model.pt）')
     # 训练参数
     p.add_argument('--epochs',        type=int,   default=30)
     p.add_argument('--batch_size',    type=int,   default=64)
@@ -56,25 +61,62 @@ def parse_args():
     p.add_argument('--img_size',        type=int, default=96,
                    help='输入图像尺寸（正方形，默认 96）')
     p.add_argument('--proj_dim',       type=int, default=128)
-    p.add_argument('--checkpoint_dir', type=str, default='./checkpoints/stage3')
+    p.add_argument('--checkpoint_dir', type=str, default='./checkpoints/domain_adapt')
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     return p.parse_args()
 
 
+def normalize_wdm_array(arr: np.ndarray, data_format: str = 'auto') -> np.ndarray:
+    """将不同来源的 WDM/WBM-like 数组统一为 {0, 2} 缺陷图。"""
+    arr = np.asarray(arr)
+
+    if data_format == 'auto':
+        unique = np.unique(arr)
+        unique_set = set(unique.tolist())
+        if unique_set.issubset({0, 1}):
+            data_format = 'binary'
+        elif unique_set.issubset({0, 1, 2}):
+            data_format = 'wbm_values'
+        elif unique.max() > 2 and np.any(unique >= 200):
+            data_format = 'wm811k_png'
+        else:
+            data_format = 'binary'
+
+    if data_format == 'binary':
+        defect = arr > 0
+    elif data_format == 'wm811k_png':
+        defect = arr >= 200
+    elif data_format == 'wbm_values':
+        defect = arr == 2
+    else:
+        raise ValueError(f"Unknown wdm_format: {data_format}")
+
+    return (defect.astype(np.uint8) * 2)
+
+
 def load_wdm_arrays(args) -> np.ndarray:
-    """从 npz 或图像目录加载 WDM 数组。"""
+    """从 npz 或图像目录加载 WDM 数组，并统一为 {0, 2} 缺陷图。"""
     if args.wdm_npz:
         data = np.load(args.wdm_npz)
         key = 'arr_0' if 'arr_0' in data else list(data.keys())[0]
-        return data[key]
+        arrays = data[key]
     elif args.wdm_dir:
         import glob
         import cv2
         paths = sorted(glob.glob(os.path.join(args.wdm_dir, '**/*.png'), recursive=True))
+        if len(paths) == 0:
+            raise ValueError(f"No PNG files found under --wdm_dir: {args.wdm_dir}")
         arrays = [cv2.imread(p, cv2.IMREAD_GRAYSCALE) for p in paths]
-        return np.stack(arrays)
+        arrays = [arr for arr in arrays if arr is not None]
+        if len(arrays) == 0:
+            raise ValueError(f"Failed to read PNG files under --wdm_dir: {args.wdm_dir}")
+        arrays = np.stack(arrays)
     else:
         raise ValueError("必须指定 --wdm_npz 或 --wdm_dir")
+
+    arrays = np.asarray(arrays)
+    normalized = np.stack([normalize_wdm_array(arr, args.wdm_format) for arr in arrays])
+    return normalized
 
 
 def main():
@@ -100,12 +142,12 @@ def main():
     print(f"Backbone: {args.backbone}  params≈{info.get('params','?')}  out_dim={backbone.out_dim}"
           f"  [{info.get('note','')}]")
 
-    # 加载阶段二 backbone 权重
-    if args.stage2_ckpt and os.path.exists(args.stage2_ckpt):
-        backbone.load_weights_from_checkpoint(args.stage2_ckpt, strict=False)
-        print(f"Loaded stage2 backbone from: {args.stage2_ckpt}")
+    # 加载监督训练 backbone 权重
+    if args.supervised_ckpt and os.path.exists(args.supervised_ckpt):
+        backbone.load_weights_from_checkpoint(args.supervised_ckpt, strict=False)
+        print(f"Loaded supervised backbone from: {args.supervised_ckpt}")
     else:
-        print("No stage2 checkpoint found, using random initialization.")
+        print("No supervised checkpoint found, using random initialization.")
 
     # 记忆库
     memory = MemoryBank(
@@ -125,7 +167,7 @@ def main():
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
     loss_fn   = WaPIRLLoss(temperature=args.temperature)
 
-    task = Stage3DomainAdaptation(
+    task = DomainAdaptation(
         backbone=backbone,
         projector=projector,
         memory=memory,
@@ -141,7 +183,7 @@ def main():
     task.run(dataset, epochs=args.epochs,
              batch_size=args.batch_size, num_workers=args.num_workers)
 
-    print(f"\n[Stage3] Done. Checkpoint saved to: {args.checkpoint_dir}")
+    print(f"\n[DomainAdapt] Done. Checkpoint saved to: {args.checkpoint_dir}")
 
 
 if __name__ == '__main__':

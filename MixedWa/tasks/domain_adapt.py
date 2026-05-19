@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-阶段三：生产数据自监督域适应（WaPIRL NCE Loss）。
+生产数据自监督域适应（WaPIRL NCE Loss）。
 - 冻结 backbone 前两层，解冻后两层 + 重新初始化 projection head
 - 正样本对：(WDM, 由该 WDM 生成的伪 WBM)
 - 记忆库用生产数据 embedding 初始化
@@ -152,12 +152,12 @@ class MemoryBank:
 
 
 # ---------------------------------------------------------------------------
-# 阶段三 Task
+# 域适应 Task
 # ---------------------------------------------------------------------------
 
-class Stage3DomainAdaptation(Task):
+class DomainAdaptation(Task):
     """
-    阶段三：生产数据自监督域适应。
+    生产数据自监督域适应。
     冻结 backbone 前两层，解冻后两层 + projection head，用 WaPIRL NCE Loss 训练。
     """
     def __init__(self,
@@ -170,7 +170,7 @@ class Stage3DomainAdaptation(Task):
                  num_negatives: int = 2000,
                  loss_weight: float = 0.5,
                  device: str = 'cpu',
-                 checkpoint_dir: str = './checkpoints/stage3'):
+                 checkpoint_dir: str = './checkpoints/domain_adapt'):
         super().__init__()
         self.backbone = backbone
         self.projector = projector
@@ -183,7 +183,7 @@ class Stage3DomainAdaptation(Task):
         self.device = device
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
-        self.logger = get_logger('stage3', checkpoint_dir)
+        self.logger = get_logger('domain_adapt', checkpoint_dir)
 
     def run(self, train_set: Dataset, epochs: int, batch_size: int,
             num_workers: int = 0):
@@ -200,7 +200,7 @@ class Stage3DomainAdaptation(Task):
                                   shuffle=True, num_workers=num_workers,
                                   pin_memory=False, drop_last=True)
 
-        self.logger.info(f"Stage3 started | epochs={epochs} batch_size={batch_size} "
+        self.logger.info(f"Domain adaptation started | epochs={epochs} batch_size={batch_size} "
                          f"device={self.device} train={len(train_set)} "
                          f"num_negatives={self.num_negatives}")
         self.logger.info("Frozen layers: layer1, layer2 | Trainable: layer3, layer4, projector")
@@ -245,7 +245,7 @@ class Stage3DomainAdaptation(Task):
         self.save_checkpoint(self.last_ckpt, epoch=epochs, history=full_history)
         self.memory.save(os.path.join(self.checkpoint_dir, 'last_memory.pt'))
         self._save_history_json(full_history, 'train_history.json')
-        self.logger.info(f"Stage3 finished | best_epoch={best_epoch} "
+        self.logger.info(f"Domain adaptation finished | best_epoch={best_epoch} "
                          f"best_loss={best_loss:.4f}")
 
     def train(self, data_loader: DataLoader) -> dict:
