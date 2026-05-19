@@ -2,12 +2,13 @@
 """
 WBM-WDM 匹配推理模块。
 
-匹配得分 = α × 重叠率 + β × 位置相似度 + γ × 面积相似度
+匹配得分 = α × 重叠率 + β × 位置相似度 + γ × 面积相似度 + δ × CAM 局部相似度
 过滤条件：重叠率 ≥ θ
 
 - 重叠率：|S_wdm ∩ S_wbm| / |S_wdm|，衡量 pattern 类型一致性
 - 位置相似度：cosine(z_wbm, z_wdm)，由位置感知训练的 embedding 隐含位置信息
 - 面积相似度：1 - |area_wbm_i - area_wdm_i| / max(...)，衡量 pattern 大小一致性
+- CAM 局部相似度：共同 pattern 类别的 weak mask IoU 与 CAM 加权局部特征相似度
 """
 
 import torch
@@ -15,6 +16,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import List, Tuple, Dict
+
+from matching.cam import CAMExtractor, compute_cam_local_score
 
 
 # ---------------------------------------------------------------------------
@@ -85,9 +88,11 @@ def match_score(z_wbm: torch.Tensor,
                 s_wdm: set,
                 areas_wbm: Dict[int, float] = None,
                 areas_wdm: Dict[int, float] = None,
+                cam_score: float = None,
                 alpha: float = 0.6,
                 beta: float = 0.2,
                 gamma: float = 0.2,
+                delta: float = 0.0,
                 theta: float = 0.6) -> float:
     """
     计算单对 (WBM, WDM) 的匹配得分。
@@ -117,14 +122,20 @@ def match_score(z_wbm: torch.Tensor,
     # cosine 值域 [-1, 1]，归一化到 [0, 1]
     pos_score = (pos_score + 1.0) / 2.0
 
+    area_score = None
     if areas_wbm is not None and areas_wdm is not None:
         area_score = area_similarity(areas_wbm, areas_wdm)
-        score = alpha * overlap_ratio + beta * pos_score + gamma * area_score
-    else:
-        # 无面积信息时，将权重重新分配给前两项
-        total = alpha + beta
-        score = (alpha / total) * overlap_ratio + (beta / total) * pos_score
 
+    terms = [(alpha, overlap_ratio), (beta, pos_score)]
+    if area_score is not None and gamma > 0:
+        terms.append((gamma, area_score))
+    if cam_score is not None and delta > 0:
+        terms.append((delta, cam_score))
+
+    total = sum(weight for weight, _ in terms)
+    if total <= 0:
+        return 0.0
+    score = sum((weight / total) * value for weight, value in terms)
     return float(score)
 
 
@@ -144,7 +155,13 @@ class WaferMatcher:
                  beta: float = 0.2,
                  gamma: float = 0.2,
                  theta: float = 0.6,
-                 cls_threshold: float = 0.5):
+                 cls_threshold: float = 0.5,
+                 use_cam: bool = False,
+                 cam_delta: float = 0.0,
+                 cam_lambda: float = 0.5,
+                 cam_threshold: float = 0.5,
+                 cam_min_area: float = 0.005,
+                 cam_classes: str = 'common'):
         """
         Args:
             backbone:      训练好的 encoder
@@ -161,9 +178,25 @@ class WaferMatcher:
         self.gamma = gamma
         self.theta = theta
         self.cls_threshold = cls_threshold
+        self.use_cam = use_cam
+        self.cam_delta = cam_delta
+        self.cam_lambda = cam_lambda
+        self.cam_threshold = cam_threshold
+        self.cam_min_area = cam_min_area
+        self.cam_classes = cam_classes
+        self.cam_extractor = None
 
         self.backbone.eval()
         self.classifier.eval()
+
+        if self.use_cam:
+            self.cam_extractor = CAMExtractor(
+                self.backbone,
+                self.classifier,
+                device=self.device,
+                cam_threshold=self.cam_threshold,
+                cam_min_area=self.cam_min_area,
+            )
 
     @torch.no_grad()
     def encode(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -215,11 +248,23 @@ class WaferMatcher:
         # 批量编码 WDM
         z_wdms, probs_wdms, _ = self.encode(wdm_tensors)  # (N, D), (N, C)
 
+        cam_wbm = None
+        if self.use_cam:
+            if self.cam_classes == 'all':
+                wbm_cam_classes = None
+            else:
+                wbm_cam_classes = sorted(s_wbm)
+            cam_wbm = self.cam_extractor.compute_cam(wbm_tensor, wbm_cam_classes)
+
         results = []
         for i in range(len(wdm_tensors)):
             z_wdm_i = z_wdms[i]
             probs_wdm_i = probs_wdms[i]
             s_wdm_i = set((probs_wdm_i > self.cls_threshold).nonzero(as_tuple=True)[0].tolist())
+            common_classes = s_wdm_i & s_wbm
+            overlap = len(common_classes) / len(s_wdm_i) if s_wdm_i else 0.0
+            if overlap < self.theta:
+                continue
 
             # 面积估算（WDM）
             areas_wdm_i = None
@@ -227,14 +272,34 @@ class WaferMatcher:
                 areas_wdm_i = estimate_pattern_areas(probs_wdm_i, wdm_maps[i],
                                                      self.cls_threshold)
 
+            cam_sim = None
+            if self.use_cam and common_classes:
+                if self.cam_classes == 'all':
+                    wdm_cam_classes = None
+                elif self.cam_classes == 'active':
+                    wdm_cam_classes = sorted(s_wdm_i)
+                else:
+                    wdm_cam_classes = sorted(common_classes)
+
+                cam_wdm = self.cam_extractor.compute_cam(
+                    wdm_tensors[i].unsqueeze(0), wdm_cam_classes
+                )
+                cam_sim = compute_cam_local_score(
+                    cam_wbm,
+                    cam_wdm,
+                    sorted(common_classes),
+                    self.cam_extractor,
+                    cam_lambda=self.cam_lambda,
+                )
+
             score = match_score(
                 z_wbm, z_wdm_i, s_wbm, s_wdm_i,
                 areas_wbm, areas_wdm_i,
-                self.alpha, self.beta, self.gamma, self.theta,
+                cam_sim,
+                self.alpha, self.beta, self.gamma, self.cam_delta, self.theta,
             )
 
             if score > 0:
-                overlap = len(s_wdm_i & s_wbm) / len(s_wdm_i) if s_wdm_i else 0.0
                 pos_sim = ((F.cosine_similarity(z_wbm.unsqueeze(0),
                                                 z_wdm_i.unsqueeze(0)).item() + 1) / 2)
                 area_sim = (area_similarity(areas_wbm, areas_wdm_i)
@@ -245,7 +310,9 @@ class WaferMatcher:
                     'overlap':  overlap,
                     'pos_sim':  pos_sim,
                     'area_sim': area_sim,
+                    'cam_sim':  cam_sim,
                     's_wdm':    s_wdm_i,
+                    'common_classes': common_classes,
                 })
 
         results.sort(key=lambda r: r['score'], reverse=True)

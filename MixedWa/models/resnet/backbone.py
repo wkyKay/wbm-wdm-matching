@@ -92,12 +92,17 @@ class ResNet18Backbone(BackboneBase):
                 nn.init.constant_(m.weight, 1)
                 nn.init.constant_(m.bias, 0)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """返回 (B, 512) 特征向量。"""
+    def forward_features(self, x: torch.Tensor):
+        """返回 layer4 feature map 和 GAP 后的特征向量。"""
         x = self.stem(x)
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.gap(x)
-        return x.flatten(1)
+        feature_map = self.layer4(x)
+        pooled = self.gap(feature_map).flatten(1)
+        return feature_map, pooled
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """返回 (B, 512) 特征向量。"""
+        _, pooled = self.forward_features(x)
+        return pooled

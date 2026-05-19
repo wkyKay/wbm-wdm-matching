@@ -60,6 +60,19 @@ def parse_args():
                    help='重叠率过滤阈值')
     p.add_argument('--cls_threshold', type=float, default=0.5)
     p.add_argument('--top_k',         type=int,   default=3)
+    # CAM 弱定位局部匹配参数
+    p.add_argument('--use_cam', action='store_true',
+                   help='启用 CAM 弱定位局部匹配')
+    p.add_argument('--cam_delta', type=float, default=0.0,
+                   help='CAM 局部匹配分数权重，启用 CAM 时建议 0.2')
+    p.add_argument('--cam_lambda', type=float, default=0.5,
+                   help='CAM mask IoU 与 CAM 加权局部 embedding 的融合权重')
+    p.add_argument('--cam_threshold', type=float, default=0.5,
+                   help='CAM heatmap 二值化阈值')
+    p.add_argument('--cam_min_area', type=float, default=0.005,
+                   help='CAM mask 最小面积比例')
+    p.add_argument('--cam_classes', type=str, default='common', choices=['common', 'active', 'all'],
+                   help='CAM 计算类别范围')
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
     return p.parse_args()
 
@@ -171,6 +184,12 @@ def main():
         gamma=args.gamma,
         theta=args.theta,
         cls_threshold=args.cls_threshold,
+        use_cam=args.use_cam,
+        cam_delta=args.cam_delta,
+        cam_lambda=args.cam_lambda,
+        cam_threshold=args.cam_threshold,
+        cam_min_area=args.cam_min_area,
+        cam_classes=args.cam_classes,
     )
 
     # 批量评估模式
@@ -195,11 +214,13 @@ def main():
     for rank, r in enumerate(results, 1):
         s_names = [DEFECT_CLASSES[c] for c in sorted(r['s_wdm'])]
         area_str = f"{r['area_sim']:.3f}" if r['area_sim'] is not None else 'N/A'
+        cam_str = f"{r['cam_sim']:.3f}" if r.get('cam_sim') is not None else 'N/A'
         print(f"  #{rank}: WDM[{r['wdm_idx']:>4d}] "
               f"score={r['score']:.4f} "
               f"overlap={r['overlap']:.3f} "
               f"pos={r['pos_sim']:.3f} "
               f"area={area_str} "
+              f"cam={cam_str} "
               f"patterns={s_names}")
 
 

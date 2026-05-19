@@ -8,6 +8,111 @@
 
 WM38K 包含单类、两类、三类组合的多标签晶圆图（如 `center_edge-ring_loc`），标签空间与匹配任务完全一致。WM811K 是单标签数据集（9 类互斥），其 softmax 训练目标与多标签任务的 sigmoid 目标在 embedding 空间的组织方式上存在冲突，迁移收益有限。因此直接从 ImageNet 预训练权重出发，在 WM38K 上端到端训练。
 
+**为什么引入弱分离？**
+
+WBM/WDM 匹配不是普通的整图分类或整图检索，而是 pattern-level matching：给定 WBM 中的多个失效 pattern，需要从候选 WDM 中找到 pattern 类型、形状、大小和位置一致的图；同时允许 WDM 只包含 WBM pattern 的子集。例如 `WBM={A,B,C,D}`，`WDM={A,B}` 应视为匹配成功。
+
+因此，仅使用单一 global embedding 容易受到 WBM 中额外 pattern 的干扰。更合理的方向是将 wafer map 表示为一组局部 pattern 证据，再进行 set-to-set / subset matching。这里采用“弱分离”而不是强分割：不要求像素级 mask 或精确实例边界，只要求得到可用于匹配的局部 pattern token、候选区域或类别响应。
+
+## 论文研究方案：弱分离匹配
+
+### CAM 与 token weak separation 的定位
+
+| 方案 | 核心思想 | 优点 | 风险 | 推荐用途 |
+|------|----------|------|------|----------|
+| CAM / Grad-CAM 弱定位 | 用多标签分类器的类别激活图定位每类 pattern 的高响应区域 | 简单、可解释、无需额外 mask、GPU 成本低 | 热力图分辨率低；多 pattern 易混合；更像分类器后处理 | baseline 与可解释性分析 |
+| Token weak separation / MIL-token | 将 encoder feature map 的空间位置或 patch 表示为 local tokens，再用 MIL/attention 从 wafer-level 多标签中学习局部 pattern 证据 | 更贴合子集匹配；可直接做 set-to-set matching；论文贡献更强 | 实现和调参更复杂；需过滤背景 token；训练稳定性略低 | 推荐作为硕士论文主方案 |
+
+推荐论文主线：
+
+```
+Weak Pattern Token Matching for WBM-WDM Retrieval
+```
+
+即：
+
+1. 使用 WM38K 多标签数据训练共享 encoder；
+2. 在 encoder feature map 上构造局部 pattern tokens；
+3. 用 MIL pooling 或 attention pooling 仅凭 wafer-level 多标签监督学习弱分离；
+4. 推理时使用 token-level subset matching，使 WDM 中每个局部 pattern 证据都能在 WBM token 集合中寻找对应；
+5. 保留 CAM 作为弱定位 baseline 和可解释性可视化；
+6. 生产数据阶段可继续使用 WDM → pseudo-WBM 的 WaPIRL/NCE 域适应缓解跨域差异。
+
+### 推荐训练目标
+
+主训练仍以多标签分类为基础：
+
+```
+L_cls = BCE(y_pred, y)
+```
+
+token weak separation 可加入 MIL 目标：
+
+```
+每个 token 输出类别概率
+→ 对 token 维度做 max pooling 或 attention pooling
+→ 得到整图多标签预测
+→ 使用 wafer-level 多热标签计算 BCE
+```
+
+整体训练目标建议为：
+
+```
+L = L_cls + λ_mil * L_MIL + λ_pos * L_pos + λ_nce * L_NCE
+```
+
+其中：
+
+- `L_cls`：整图多标签分类损失；
+- `L_MIL`：局部 token 到整图标签的多实例学习损失；
+- `L_pos`：位置感知损失，推远大幅平移后的 embedding；
+- `L_NCE`：生产数据无标签域适应时使用的 WaPIRL/NCE 对比损失。
+
+### Token-level 子集匹配
+
+对一张 WBM 和一张候选 WDM，分别得到：
+
+```
+WBM: global embedding z_wbm, label set S_wbm, local tokens T_wbm
+WDM: global embedding z_wdm, label set S_wdm, local tokens T_wdm
+```
+
+局部 token 匹配分数可定义为：
+
+```
+score_local = mean_i max_j cosine(t_wdm_i, t_wbm_j)
+```
+
+含义是：WDM 中每个局部 pattern token 都尝试在 WBM token 集合中找到最相似的对应项，因此天然支持 `WDM ⊆ WBM` 的子集匹配语义。最终匹配分数建议融合：
+
+```
+score = α * label_overlap + β * token_subset_score + γ * global_similarity + δ * position_consistency
+```
+
+其中 CAM 不作为主匹配表示，而用于：
+
+- 与 token 方法对比，证明 token weak separation 的收益；
+- 可视化模型关注区域，增强论文可解释性；
+- 在 token 方法不稳定时作为保底 baseline。
+
+### GPU 资源预估
+
+| 方案 | 推荐模型 | GPU 需求 | batch size | 训练成本 | 备注 |
+|------|----------|----------|------------|----------|------|
+| 整图匹配 baseline | ResNet-18 | 8GB 可用 | 128-256 | 低 | 当前实现主线 |
+| CAM baseline | ResNet-18/34 | 8-12GB | 64-256 | 低 | 主要成本是多标签训练，CAM 为推理后处理 |
+| ResNet feature token + MIL | ResNet-18 + token/MIL head | 12GB 推荐，8GB 可降 batch | 32-128 | 中 | 推荐论文主方案 |
+| ViT/Swin token | ViT-Tiny/Swin-T | 16-24GB 更稳 | 32-64 | 中高 | 不建议作为第一版主线 |
+| 强分割 U-Net/Mask R-CNN | segmentation model | 16-24GB | 依模型而定 | 高 | 需要 mask/伪 mask，暂不推荐 |
+
+建议实验顺序：
+
+1. `global embedding + label overlap` 整图匹配 baseline；
+2. `CAM region + local embedding` 弱定位 baseline；
+3. `ResNet feature token + MIL pooling` 作为 proposed method；
+4. `pseudo-WBM + NCE` 生产数据域适应；
+5. 消融实验比较 global / CAM / token / token+position / token+domain adaptation。
+
 ## 目录结构
 
 ```
@@ -31,7 +136,8 @@ MixedWa/
 │   ├── metrics.py       # mAP / classification_metrics
 │   └── logging.py
 ├── matching/
-│   └── matcher.py       # WaferMatcher
+│   ├── cam.py           # CAMExtractor，类别 CAM / weak mask / 局部相似度
+│   └── matcher.py       # WaferMatcher，全局 + CAM 融合匹配
 ├── run_train.py         # 主训练入口
 ├── run_stage3.py        # 域适应（可选）
 └── run_matching.py      # 匹配推理
@@ -282,17 +388,48 @@ python run_matching.py \
   --stage2_ckpt ./checkpoints/train/best_model.pt
 ```
 
+### CAM 弱定位匹配（可选）
+
+CAM 使用 ResNet `layer4` feature map 与线性分类头权重，为每个预测 pattern 生成类别相关 heatmap。heatmap 经阈值化后得到 weak mask，并用于计算共同 pattern 的局部相似度。该 mask 是弱定位区域，不是精确像素级分割。
+
+第一版 CAM 匹配主要支持 `resnet18` backbone，因为它需要 `forward_features()` 暴露卷积 feature map。
+
+```bash
+python run_matching.py \
+  --wbm_path ../../data/production/wbm_sample.png \
+  --wdm_dir  ../../data/production/wdm_images/ \
+  --stage2_ckpt ./checkpoints/train/best_model.pt \
+  --use_cam \
+  --alpha 0.5 \
+  --beta 0.15 \
+  --gamma 0.15 \
+  --cam_delta 0.2 \
+  --cam_lambda 0.5 \
+  --cam_threshold 0.5 \
+  --top_k 3
+```
+
 ### 匹配得分
 
 ```
-最终得分 = α × 重叠率 + β × 位置相似度 + γ × 面积相似度
+最终得分 = α × 重叠率
+        + β × 全局位置相似度
+        + γ × 面积相似度
+        + δ × CAM 局部相似度
 
-重叠率     = |S_wdm ∩ S_wbm| / |S_wdm|        # pattern 类型一致性
-位置相似度 = cosine(z_wbm, z_wdm)              # embedding 空间距离
-面积相似度 = 1 - |area_wbm - area_wdm| / max   # pattern 大小一致性
+重叠率         = |S_wdm ∩ S_wbm| / |S_wdm|        # pattern 类型一致性
+全局位置相似度 = cosine(z_wbm, z_wdm)              # embedding 空间距离
+面积相似度     = 1 - |area_wbm - area_wdm| / max   # pattern 大小一致性
+
+CAM 局部相似度 = mean over c in (S_wdm ∩ S_wbm) [
+    λ × CAM_mask_IoU(c)
+  + (1-λ) × CAM_weighted_feature_cosine(c)
+]
 
 过滤条件：重叠率 ≥ θ（默认 0.6），低于阈值直接排除
 ```
+
+默认不启用 CAM，旧命令和旧实验结果保持兼容。启用 CAM 后，建议从 `--cam_delta 0.2` 开始调参，不宜一开始给 CAM 过高权重。
 
 主要参数：
 
@@ -301,12 +438,18 @@ python run_matching.py \
 | `--stage2_ckpt` | 必填 | 主训练 checkpoint |
 | `--stage3_ckpt` | — | 域适应 checkpoint（可选，覆盖 backbone） |
 | `--alpha` | 0.6 | 重叠率权重 |
-| `--beta` | 0.2 | 位置相似度权重 |
+| `--beta` | 0.2 | 全局位置相似度权重 |
 | `--gamma` | 0.2 | 面积相似度权重 |
 | `--theta` | 0.6 | 重叠率过滤阈值 |
 | `--cls_threshold` | 0.5 | 多标签分类阈值 |
 | `--top_k` | 3 | 返回前 k 个匹配结果 |
 | `--img_size` | 96 | 输入图像尺寸 |
+| `--use_cam` | False | 是否启用 CAM 弱定位局部匹配 |
+| `--cam_delta` | 0.0 | CAM 局部匹配分数权重，启用后建议 0.2 |
+| `--cam_lambda` | 0.5 | CAM mask IoU 与 CAM 加权局部 embedding cosine 的融合权重 |
+| `--cam_threshold` | 0.5 | CAM heatmap 二值化阈值 |
+| `--cam_min_area` | 0.005 | CAM mask 最小面积比例，过小区域用 top-k 高响应兜底 |
+| `--cam_classes` | `common` | CAM 计算类别范围：`common` / `active` / `all` |
 
 ---
 
