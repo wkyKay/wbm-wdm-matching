@@ -35,8 +35,11 @@ def parse_args():
     p.add_argument('--wdm_format', type=str, default='auto',
                    choices=['auto', 'binary', 'wm811k_png', 'wbm_values'],
                    help='WDM 输入值域格式：auto 自动判断；binary=非零即缺陷；'
-                        'wm811k_png=process_wm811k.py 导出的 0/127/255 PNG；'
-                        'wbm_values=0/1/2 wafer map，仅 2 视为缺陷')
+                         'wm811k_png=process_wm811k.py 导出的 0/127/255 PNG；'
+                         'wbm_values=0/1/2 wafer map，仅 2 视为缺陷')
+    p.add_argument('--wafer_mask_mode', type=str, default='auto',
+                   choices=['auto', 'circular', 'nonzero', 'full'],
+                   help='生成 WBM-like 存在掩码的方式；binary WDM 默认使用 circular')
     # 预训练权重
     p.add_argument('--supervised_ckpt', type=str, default=None,
                    help='监督训练 checkpoint 路径（run_train.py 产出的 best_model.pt）')
@@ -66,9 +69,31 @@ def parse_args():
     return p.parse_args()
 
 
-def normalize_wdm_array(arr: np.ndarray, data_format: str = 'auto') -> np.ndarray:
-    """将不同来源的 WDM/WBM-like 数组统一为 {0, 2} 缺陷图。"""
+def make_circular_mask(shape: tuple) -> np.ndarray:
+    """生成与 WM38K/WBM 输入一致的晶圆有效区域掩码。"""
+    h, w = shape
+    yy, xx = np.ogrid[:h, :w]
+    cy = (h - 1) / 2.0
+    cx = (w - 1) / 2.0
+    radius = min(h, w) * 0.48
+    return ((yy - cy) ** 2 + (xx - cx) ** 2) <= radius ** 2
+
+
+def normalize_wdm_array(arr: np.ndarray,
+                        data_format: str = 'auto',
+                        wafer_mask_mode: str = 'auto') -> np.ndarray:
+    """
+    将不同来源的 WDM/WBM-like 数组统一为 run_train 使用的 WBM 值域：
+      0=背景，1=晶圆有效区域正常，2=缺陷。
+
+    这样 decouple_mask(x) 后：
+      channel 0 = defect map，channel 1 = wafer existence mask。
+    """
     arr = np.asarray(arr)
+    if arr.ndim == 3 and arr.shape[-1] == 1:
+        arr = arr[..., 0]
+    if arr.ndim != 2:
+        raise ValueError(f"Expected 2D WDM array, got shape: {arr.shape}")
 
     if data_format == 'auto':
         unique = np.unique(arr)
@@ -84,18 +109,35 @@ def normalize_wdm_array(arr: np.ndarray, data_format: str = 'auto') -> np.ndarra
 
     if data_format == 'binary':
         defect = arr > 0
+        default_mask_mode = 'circular'
     elif data_format == 'wm811k_png':
         defect = arr >= 200
+        default_mask_mode = 'nonzero'
     elif data_format == 'wbm_values':
         defect = arr == 2
+        default_mask_mode = 'nonzero'
     else:
         raise ValueError(f"Unknown wdm_format: {data_format}")
 
-    return (defect.astype(np.uint8) * 2)
+    mask_mode = default_mask_mode if wafer_mask_mode == 'auto' else wafer_mask_mode
+    if mask_mode == 'circular':
+        valid = make_circular_mask(arr.shape)
+    elif mask_mode == 'nonzero':
+        valid = arr > 0
+        if valid.sum() <= defect.sum():
+            valid = make_circular_mask(arr.shape)
+    elif mask_mode == 'full':
+        valid = np.ones(arr.shape, dtype=bool)
+    else:
+        raise ValueError(f"Unknown wafer_mask_mode: {wafer_mask_mode}")
+
+    wbm_like = valid.astype(np.uint8)
+    wbm_like[defect] = 2
+    return wbm_like
 
 
 def load_wdm_arrays(args) -> np.ndarray:
-    """从 npz 或图像目录加载 WDM 数组，并统一为 {0, 2} 缺陷图。"""
+    """从 npz 或图像目录加载 WDM 数组，并统一为 {0,1,2} WBM-like 图。"""
     if args.wdm_npz:
         data = np.load(args.wdm_npz)
         key = 'arr_0' if 'arr_0' in data else list(data.keys())[0]
@@ -115,7 +157,10 @@ def load_wdm_arrays(args) -> np.ndarray:
         raise ValueError("必须指定 --wdm_npz 或 --wdm_dir")
 
     arrays = np.asarray(arrays)
-    normalized = np.stack([normalize_wdm_array(arr, args.wdm_format) for arr in arrays])
+    normalized = np.stack([
+        normalize_wdm_array(arr, args.wdm_format, args.wafer_mask_mode)
+        for arr in arrays
+    ])
     return normalized
 
 

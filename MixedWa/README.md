@@ -1,6 +1,6 @@
 # MixedWa — WBM/WDM 晶圆图匹配框架
 
-基于多标签分类 + 位置感知对比学习的三阶段训练流程，实现晶圆图（WBM）与缺陷图（WDM）的 pattern 匹配。
+基于多标签分类 + 显式几何相似度的训练/匹配流程，实现晶圆图（WBM）与缺陷图（WDM）的 pattern 匹配。
 
 ## 设计思路
 
@@ -65,7 +65,7 @@ L = L_cls + λ_mil * L_MIL + λ_pos * L_pos + λ_nce * L_NCE
 
 - `L_cls`：整图多标签分类损失；
 - `L_MIL`：局部 token 到整图标签的多实例学习损失；
-- `L_pos`：位置感知损失，推远大幅平移后的 embedding；
+  - `L_pos`：已不作为默认训练目标；位置、形状、大小相似性在匹配阶段显式计算；
 - `L_NCE`：生产数据无标签域适应时使用的 WaPIRL/NCE 对比损失。
 
 ### Token-level 子集匹配
@@ -233,7 +233,7 @@ tensorboard --logdir ./checkpoints/train/tensorboard
 
 ### 阶段一：WM38K 多标签分类（主训练）
 
-从 ImageNet 预训练权重出发，在 WM38K 上训练多标签分类器。同时加入平移负样本，迫使 encoder 学习位置敏感特征。
+从 ImageNet 预训练权重出发，在 WM38K 上训练多标签分类器。默认使用纯 BCE，不再把位置敏感性作为 encoder 训练标准；位置、形状、大小在匹配阶段通过 CAM mask / weak mask 显式计算。
 
 ```bash
 # 推荐配置
@@ -273,7 +273,7 @@ python run_train.py \
 | `--patience` | 15 | early stopping 容忍轮数 |
 | `--freeze_layers` | `[]` | 冻结的 backbone 层（默认全量微调） |
 | `--pos_margin` | 0.5 | 位置感知 margin |
-| `--pos_lambda` | 0.1 | 位置感知损失权重 λ |
+| `--pos_lambda` | 0.0 | 位置感知损失权重 λ；默认关闭，使用纯 BCE |
 | `--shift` | 0.3 | 平移幅度（图宽比例，正样本无空间增强时建议 ≥0.3） |
 | `--in_channels` | 2 | 输入通道（2=解耦双通道，1=原始单通道） |
 | `--img_size` | 96 | 输入图像尺寸（正方形） |
@@ -289,9 +289,11 @@ WBM 原始值域为 `{0, 1, 2}`（0=背景，1=正常，2=缺陷）。`--in_chan
 
 这使 encoder 能同时感知缺陷位置和晶圆有效区域边界。
 
-#### 位置感知训练
+#### 位置相似性处理
 
-训练时正样本**不做任何空间变换**（只 resize），对每张图额外生成一个大幅平移版本（`shift=0.3`，即平移 30% 图宽）作为负样本，通过 margin loss 推远平移版本的 embedding：
+默认训练不再加入平移负样本，不要求 encoder embedding 对位置偏移敏感。位置相似性在匹配阶段由 CAM mask / weak mask 的质心距离显式计算。
+
+如果需要复现实验中的旧位置感知训练，可手动设置 `--pos_lambda > 0`，此时会对每张图额外生成一个大幅平移版本（`shift=0.3`）作为负样本：
 
 ```
 L = BCE(logits, label) + λ * max(0, margin - cosine_distance(z_orig, z_shift))
@@ -299,7 +301,7 @@ L = BCE(logits, label) + λ * max(0, margin - cosine_distance(z_orig, z_shift))
 
 正样本不做 crop/shift 等空间变换，是为了避免与位置感知 loss 的信号冲突：若正样本也经过 crop（隐含位置变化），分类 loss 会要求 crop 后的 embedding 与原图相似，而位置感知 loss 要求位置变化后 embedding 不同，两者直接矛盾。
 
-训练后 embedding 的余弦相似度隐含位置信息，可直接用于推理阶段的位置相似度计算。
+新方案中不建议把 embedding 余弦相似度解释为位置相似度；它只作为全局/局部特征相似度辅助项。
 
 #### 评估指标
 
@@ -457,6 +459,8 @@ WDM（96×96）
 
 `run_domain_adapt.py` 不需要人工 pattern 标签，但输入 WDM 本身应尽量具有明确、稳定的空间 pattern。该阶段的目标是生产数据域适应，而不是重新学习类别；其正样本假设是 `WDM → pseudo-WBM` 后仍保留主要拓扑结构。
 
+第二阶段会先将不同来源的 WDM 统一成与 `run_train.py` 一致的 WBM-like 值域：`0=背景，1=晶圆有效区域正常，2=缺陷`。随后再调用同一个 `decouple_mask()`，得到 `[defect_map, existence_mask]` 双通道输入。对于只有缺陷点的 binary WDM，默认用 circular wafer mask 生成晶圆有效区域，避免 existence mask 退化成缺陷点 mask。
+
 推荐使用：
 
 - 无标签但 pattern 明显的生产 WDM，例如 center cluster、edge-ring、scratch-like、localized cluster、donut-like、near-full；
@@ -487,6 +491,7 @@ WDM（96×96）
 | `--wdm_npz` | — | 生产 WDM npz（arr_0 为 (N,H,W) 数组） |
 | `--wdm_dir` | — | 生产 WDM / WM811K PNG 图像目录（与 `--wdm_npz` 二选一） |
 | `--wdm_format` | `auto` | 输入值域格式：`auto` / `binary` / `wm811k_png` / `wbm_values` |
+| `--wafer_mask_mode` | `auto` | 存在掩码生成方式：`auto` / `circular` / `nonzero` / `full` |
 | `--supervised_ckpt` | — | 监督训练 checkpoint（run_train.py 产出） |
 | `--epochs` | 30 | |
 | `--batch_size` | 64 | |
@@ -533,7 +538,8 @@ python run_matching.py \
   --alpha 0.5 \
   --beta 0.15 \
   --gamma 0.15 \
-  --cam_delta 0.2 \
+  --delta 0.1 \
+  --epsilon 0.1 \
   --cam_lambda 0.5 \
   --cam_threshold 0.5 \
   --top_k 3
@@ -542,24 +548,24 @@ python run_matching.py \
 ### 匹配得分
 
 ```
-最终得分 = α × 重叠率
-        + β × 全局位置相似度
-        + γ × 面积相似度
-        + δ × CAM 局部相似度
+最终得分 = α × 标签重叠率
+        + β × 形状相似度
+        + γ × 大小相似度
+        + δ × 显式位置相似度
+        + ε × 局部特征相似度
 
 重叠率         = |S_wdm ∩ S_wbm| / |S_wdm|        # pattern 类型一致性
-全局位置相似度 = cosine(z_wbm, z_wdm)              # embedding 空间距离
-面积相似度     = 1 - |area_wbm - area_wdm| / max   # pattern 大小一致性
+形状相似度     = mean CAM_mask_IoU(c)              # 共同 pattern 的 weak mask IoU
+大小相似度     = mean [1 - |area_wbm - area_wdm| / max]
+显式位置相似度 = mean [1 - centroid_distance / diagonal]
+局部特征相似度 = mean CAM_weighted_feature_cosine(c)
 
-CAM 局部相似度 = mean over c in (S_wdm ∩ S_wbm) [
-    λ × CAM_mask_IoU(c)
-  + (1-λ) × CAM_weighted_feature_cosine(c)
-]
+未启用 CAM 时，局部特征相似度会退化为 global embedding cosine 兜底，但不再称为位置相似度。
 
 过滤条件：重叠率 ≥ θ（默认 0.6），低于阈值直接排除
 ```
 
-默认不启用 CAM，旧命令和旧实验结果保持兼容。启用 CAM 后，建议从 `--cam_delta 0.2` 开始调参，不宜一开始给 CAM 过高权重。
+默认不启用 CAM，旧命令和旧实验结果保持兼容。启用 CAM 后，建议先使用默认 `--delta 0.1 --epsilon 0.1`，再按验证集表现调参。
 
 主要参数：
 
@@ -567,16 +573,18 @@ CAM 局部相似度 = mean over c in (S_wdm ∩ S_wbm) [
 |------|--------|------|
 | `--supervised_ckpt` | 必填 | 监督训练 checkpoint |
 | `--domain_adapt_ckpt` | — | 域适应 checkpoint（可选，覆盖 backbone） |
-| `--alpha` | 0.6 | 重叠率权重 |
-| `--beta` | 0.2 | 全局位置相似度权重 |
-| `--gamma` | 0.2 | 面积相似度权重 |
+| `--alpha` | 0.45 | 标签重叠率权重 |
+| `--beta` | 0.20 | 形状相似度权重 |
+| `--gamma` | 0.15 | 大小相似度权重 |
+| `--delta` | 0.10 | 显式位置相似度权重 |
+| `--epsilon` | 0.10 | 局部特征相似度权重 |
 | `--theta` | 0.6 | 重叠率过滤阈值 |
 | `--cls_threshold` | 0.5 | 多标签分类阈值 |
 | `--top_k` | 3 | 返回前 k 个匹配结果 |
 | `--img_size` | 96 | 输入图像尺寸 |
 | `--use_cam` | False | 是否启用 CAM 弱定位局部匹配 |
-| `--cam_delta` | 0.0 | CAM 局部匹配分数权重，启用后建议 0.2 |
-| `--cam_lambda` | 0.5 | CAM mask IoU 与 CAM 加权局部 embedding cosine 的融合权重 |
+| `--cam_delta` | — | 已废弃，仅兼容旧命令；若设置则覆盖 `--delta` |
+| `--cam_lambda` | 0.5 | 兼容旧 CAM 融合分数；新评分已拆分为 shape/local_feature，默认不使用 |
 | `--cam_threshold` | 0.5 | CAM heatmap 二值化阈值 |
 | `--cam_min_area` | 0.005 | CAM mask 最小面积比例，过小区域用 top-k 高响应兜底 |
 | `--cam_classes` | `common` | CAM 计算类别范围：`common` / `active` / `all` |

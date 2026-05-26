@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-主训练任务：WM38K 多标签分类 + 位置感知训练。
+主训练任务：WM38K 多标签分类。
 
 直接从 ImageNet 预训练权重初始化 backbone，在 WM38K（含单类/两类/三类组合）
-上训练多标签分类器。损失 = BCE + λ * margin_loss(z_orig, z_shift)。
+上训练多标签分类器。默认使用纯 BCE；仅当数据 batch 提供 x_shift 且
+pos_lambda > 0 时才启用位置感知 margin loss。
 支持 early stopping 和 ReduceLROnPlateau 调度器。
 """
 
@@ -170,7 +171,7 @@ class WM38KTrainer(Task):
                 feat_orig = self.backbone(x)
                 logits = self.classifier(feat_orig)
 
-                if 'x_shift' in batch:
+                if 'x_shift' in batch and self.loss_function.lam > 0:
                     x_shift = batch['x_shift'].to(self.device)
                     feat_shift = self.backbone(x_shift)
                     z_orig  = F.normalize(feat_orig,  dim=1)

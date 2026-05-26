@@ -54,9 +54,16 @@ def parse_args():
     p.add_argument('--img_size',    type=int, default=96,
                    help='输入图像尺寸（正方形，默认 96）')
     # 匹配参数
-    p.add_argument('--alpha',         type=float, default=0.6)
-    p.add_argument('--beta',          type=float, default=0.2)
-    p.add_argument('--gamma',         type=float, default=0.2)
+    p.add_argument('--alpha',         type=float, default=0.45,
+                   help='标签重叠率权重')
+    p.add_argument('--beta',          type=float, default=0.20,
+                   help='显式形状相似度权重（CAM mask IoU）')
+    p.add_argument('--gamma',         type=float, default=0.15,
+                   help='显式大小相似度权重（CAM mask 面积相似度）')
+    p.add_argument('--delta',         type=float, default=0.10,
+                   help='显式位置相似度权重（CAM mask 质心距离）')
+    p.add_argument('--epsilon',       type=float, default=0.10,
+                   help='局部特征相似度权重；未启用 CAM 时用 global embedding 兜底')
     p.add_argument('--theta',         type=float, default=0.6,
                    help='重叠率过滤阈值')
     p.add_argument('--cls_threshold', type=float, default=0.5)
@@ -64,8 +71,8 @@ def parse_args():
     # CAM 弱定位局部匹配参数
     p.add_argument('--use_cam', action='store_true',
                    help='启用 CAM 弱定位局部匹配')
-    p.add_argument('--cam_delta', type=float, default=0.0,
-                   help='CAM 局部匹配分数权重，启用 CAM 时建议 0.2')
+    p.add_argument('--cam_delta', type=float, default=None,
+                   help='已废弃：兼容旧命令，若设置则覆盖 --delta')
     p.add_argument('--cam_lambda', type=float, default=0.5,
                    help='CAM mask IoU 与 CAM 加权局部 embedding 的融合权重')
     p.add_argument('--cam_threshold', type=float, default=0.5,
@@ -82,9 +89,10 @@ def load_image_tensor(path: str, transform, decouple: bool, device: str) -> torc
     img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     x_np = np.expand_dims(img, axis=2)
     x = transform(x_np)
+    raw = x
     if decouple:
         x = decouple_mask(x)
-    return x.unsqueeze(0).to(device)
+    return x.unsqueeze(0).to(device), raw.unsqueeze(0).to(device)
 
 
 def load_wdm_tensors(args, transform, decouple: bool, device: str):
@@ -156,6 +164,8 @@ def evaluate_top3(matcher: WaferMatcher, npz_file: str, device: str, img_size: i
 
 def main():
     args = parse_args()
+    if args.cam_delta is not None:
+        args.delta = args.cam_delta
     decouple = (args.in_channels == 2)
     transform = WaferTransform(size=(args.img_size, args.img_size), mode='test')
 
@@ -183,10 +193,11 @@ def main():
         alpha=args.alpha,
         beta=args.beta,
         gamma=args.gamma,
+        delta=args.delta,
+        epsilon=args.epsilon,
         theta=args.theta,
         cls_threshold=args.cls_threshold,
         use_cam=args.use_cam,
-        cam_delta=args.cam_delta,
         cam_lambda=args.cam_lambda,
         cam_threshold=args.cam_threshold,
         cam_min_area=args.cam_min_area,
@@ -202,26 +213,30 @@ def main():
     assert args.wbm_path, "单次推理需要指定 --wbm_path"
     assert args.wdm_dir or args.wdm_npz, "单次推理需要指定 --wdm_dir 或 --wdm_npz"
 
-    wbm_tensor = load_image_tensor(args.wbm_path, transform, decouple, args.device)
+    wbm_tensor, wbm_map = load_image_tensor(args.wbm_path, transform, decouple, args.device)
     wdm_tensors, wdm_maps = load_wdm_tensors(args, transform, decouple, args.device)
 
     print(f"WBM: {args.wbm_path}")
     print(f"WDM candidates: {len(wdm_tensors)}")
 
     results = matcher.match(wbm_tensor, wdm_tensors,
-                            wdm_maps=wdm_maps, top_k=args.top_k)
+                            wbm_map=wbm_map, wdm_maps=wdm_maps, top_k=args.top_k)
 
     print(f"\nTop-{args.top_k} matches:")
     for rank, r in enumerate(results, 1):
         s_names = [DEFECT_CLASSES[c] for c in sorted(r['s_wdm'])]
-        area_str = f"{r['area_sim']:.3f}" if r['area_sim'] is not None else 'N/A'
-        cam_str = f"{r['cam_sim']:.3f}" if r.get('cam_sim') is not None else 'N/A'
+        shape_str = f"{r['shape_sim']:.3f}" if r['shape_sim'] is not None else 'N/A'
+        size_str = f"{r['size_sim']:.3f}" if r['size_sim'] is not None else 'N/A'
+        position_str = f"{r['position_sim']:.3f}" if r['position_sim'] is not None else 'N/A'
+        local_str = f"{r['local_feature_sim']:.3f}" if r['local_feature_sim'] is not None else 'N/A'
         print(f"  #{rank}: WDM[{r['wdm_idx']:>4d}] "
               f"score={r['score']:.4f} "
               f"overlap={r['overlap']:.3f} "
-              f"pos={r['pos_sim']:.3f} "
-              f"area={area_str} "
-              f"cam={cam_str} "
+              f"shape={shape_str} "
+              f"size={size_str} "
+              f"position={position_str} "
+              f"local={local_str} "
+              f"global={r['global_sim']:.3f} "
               f"patterns={s_names}")
 
 

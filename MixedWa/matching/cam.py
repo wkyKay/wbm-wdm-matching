@@ -91,11 +91,111 @@ def cam_iou(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
     return intersection / union
 
 
+def mask_area(mask: torch.Tensor) -> float:
+    return float(mask.float().mean().item())
+
+
+def size_similarity(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
+    area_a = mask_area(mask_a)
+    area_b = mask_area(mask_b)
+    denom = max(area_a, area_b)
+    if denom <= 1e-8:
+        return 1.0
+    return float(1.0 - abs(area_a - area_b) / denom)
+
+
+def mask_centroid(mask: torch.Tensor) -> Optional[torch.Tensor]:
+    coords = mask.nonzero(as_tuple=False).float()
+    if coords.numel() == 0:
+        return None
+    return coords.mean(dim=0)
+
+
+def position_similarity(mask_a: torch.Tensor, mask_b: torch.Tensor) -> float:
+    centroid_a = mask_centroid(mask_a)
+    centroid_b = mask_centroid(mask_b)
+    if centroid_a is None or centroid_b is None:
+        return 0.0
+    h, w = mask_a.shape[-2:]
+    max_dist = float((h ** 2 + w ** 2) ** 0.5)
+    dist = torch.norm(centroid_a - centroid_b).item()
+    return float(max(0.0, 1.0 - dist / (max_dist + 1e-8)))
+
+
+def compute_cam_similarity_components(cam_wbm: Dict[str, torch.Tensor],
+                                      cam_wdm: Dict[str, torch.Tensor],
+                                      common_classes: Iterable[int],
+                                      extractor: CAMExtractor) -> Dict[str, float]:
+    """
+    基于共同类别的 CAM weak mask 显式计算局部匹配指标。
+
+    WDM 是 WBM 子集时，对 WDM 的每个共同类别在 WBM 同类 CAM 中找对应，
+    然后对类别维度取均值。当前实现是一图一类一个 CAM，因此同类对应为一对一。
+    """
+    common_classes = list(common_classes)
+    if len(common_classes) == 0:
+        return {}
+
+    wbm_class_to_pos = {int(c): idx for idx, c in enumerate(cam_wbm['class_indices'].tolist())}
+    wdm_class_to_pos = {int(c): idx for idx, c in enumerate(cam_wdm['class_indices'].tolist())}
+    feature_wbm = cam_wbm['feature_map'][0]
+    feature_wdm = cam_wdm['feature_map'][0]
+
+    shape_scores: List[float] = []
+    size_scores: List[float] = []
+    position_scores: List[float] = []
+    local_feature_scores: List[float] = []
+
+    for class_idx in common_classes:
+        if class_idx not in wbm_class_to_pos or class_idx not in wdm_class_to_pos:
+            continue
+
+        cam_a = cam_wbm['cams'][0, wbm_class_to_pos[class_idx]]
+        cam_b = cam_wdm['cams'][0, wdm_class_to_pos[class_idx]]
+        mask_a = extractor.cam_to_mask(cam_a)
+        mask_b = extractor.cam_to_mask(cam_b)
+        if mask_a is None or mask_b is None:
+            continue
+
+        shape_scores.append(cam_iou(mask_a, mask_b))
+        size_scores.append(size_similarity(mask_a, mask_b))
+        position_scores.append(position_similarity(mask_a, mask_b))
+
+        local_a = weighted_pool(feature_wbm, cam_a)
+        local_b = weighted_pool(feature_wdm, cam_b)
+        feat_score = F.cosine_similarity(local_a.unsqueeze(0), local_b.unsqueeze(0)).item()
+        local_feature_scores.append((feat_score + 1.0) / 2.0)
+
+    if not shape_scores:
+        return {}
+
+    return {
+        'shape_sim': float(sum(shape_scores) / len(shape_scores)),
+        'size_sim': float(sum(size_scores) / len(size_scores)),
+        'position_sim': float(sum(position_scores) / len(position_scores)),
+        'local_feature_sim': float(sum(local_feature_scores) / len(local_feature_scores)),
+    }
+
+
 def compute_cam_local_score(cam_wbm: Dict[str, torch.Tensor],
                             cam_wdm: Dict[str, torch.Tensor],
                             common_classes: Iterable[int],
                             extractor: CAMExtractor,
                             cam_lambda: float = 0.5) -> float:
+    components = compute_cam_similarity_components(cam_wbm, cam_wdm, common_classes, extractor)
+    if not components:
+        return 0.0
+    return float(
+        cam_lambda * components['shape_sim']
+        + (1.0 - cam_lambda) * components['local_feature_sim']
+    )
+
+
+def _legacy_compute_cam_local_score(cam_wbm: Dict[str, torch.Tensor],
+                                    cam_wdm: Dict[str, torch.Tensor],
+                                    common_classes: Iterable[int],
+                                    extractor: CAMExtractor,
+                                    cam_lambda: float = 0.5) -> float:
     common_classes = list(common_classes)
     if len(common_classes) == 0:
         return 0.0

@@ -2,13 +2,15 @@
 """
 WBM-WDM 匹配推理模块。
 
-匹配得分 = α × 重叠率 + β × 位置相似度 + γ × 面积相似度 + δ × CAM 局部相似度
+匹配得分 = α × 标签重叠率 + β × 形状相似度 + γ × 大小相似度
+        + δ × 显式位置相似度 + ε × 局部特征相似度
 过滤条件：重叠率 ≥ θ
 
 - 重叠率：|S_wdm ∩ S_wbm| / |S_wdm|，衡量 pattern 类型一致性
-- 位置相似度：cosine(z_wbm, z_wdm)，由位置感知训练的 embedding 隐含位置信息
-- 面积相似度：1 - |area_wbm_i - area_wdm_i| / max(...)，衡量 pattern 大小一致性
-- CAM 局部相似度：共同 pattern 类别的 weak mask IoU 与 CAM 加权局部特征相似度
+- 形状相似度：共同 pattern 类别 CAM weak mask IoU 的均值
+- 大小相似度：共同 pattern 类别 CAM weak mask 面积相似度的均值
+- 显式位置相似度：共同 pattern 类别 CAM weak mask 质心距离相似度的均值
+- 局部特征相似度：共同 pattern 类别 CAM 加权局部特征 cosine 的均值
 """
 
 import torch
@@ -17,7 +19,7 @@ import torch.nn.functional as F
 import numpy as np
 from typing import List, Tuple, Dict
 
-from matching.cam import CAMExtractor, compute_cam_local_score
+from matching.cam import CAMExtractor, compute_cam_similarity_components
 
 
 # ---------------------------------------------------------------------------
@@ -88,22 +90,22 @@ def match_score(z_wbm: torch.Tensor,
                 s_wdm: set,
                 areas_wbm: Dict[int, float] = None,
                 areas_wdm: Dict[int, float] = None,
-                cam_score: float = None,
+                explicit_scores: Dict[str, float] = None,
                 alpha: float = 0.6,
                 beta: float = 0.2,
                 gamma: float = 0.2,
                 delta: float = 0.0,
+                epsilon: float = 0.0,
                 theta: float = 0.6) -> float:
     """
     计算单对 (WBM, WDM) 的匹配得分。
 
     Args:
-        z_wbm, z_wdm: (D,) L2 归一化 embedding
+        z_wbm, z_wdm: (D,) L2 归一化 embedding，仅作为无 CAM 时的局部特征兜底
         s_wbm, s_wdm: pattern 类别集合（int 集合）
         areas_wbm, areas_wdm: {class_idx: area_ratio}，可为 None（跳过面积项）
-        alpha: 重叠率权重
-        beta:  位置相似度权重
-        gamma: 面积相似度权重（alpha + beta + gamma 应 = 1）
+        explicit_scores: CAM 或 token 产生的显式 shape/size/position/local_feature 指标
+        alpha/beta/gamma/delta/epsilon: label/shape/size/position/local_feature 权重
         theta: 重叠率过滤阈值
 
     Returns:
@@ -116,21 +118,35 @@ def match_score(z_wbm: torch.Tensor,
     if overlap_ratio < theta:
         return 0.0
 
-    pos_score = F.cosine_similarity(
+    global_score = F.cosine_similarity(
         z_wbm.unsqueeze(0), z_wdm.unsqueeze(0)
     ).item()
     # cosine 值域 [-1, 1]，归一化到 [0, 1]
-    pos_score = (pos_score + 1.0) / 2.0
+    global_score = (global_score + 1.0) / 2.0
 
-    area_score = None
-    if areas_wbm is not None and areas_wdm is not None:
-        area_score = area_similarity(areas_wbm, areas_wdm)
+    explicit_scores = explicit_scores or {}
+    shape_score = explicit_scores.get('shape_sim')
+    size_score = explicit_scores.get('size_sim')
+    position_score = explicit_scores.get('position_sim')
+    local_feature_score = explicit_scores.get('local_feature_sim')
 
-    terms = [(alpha, overlap_ratio), (beta, pos_score)]
-    if area_score is not None and gamma > 0:
-        terms.append((gamma, area_score))
-    if cam_score is not None and delta > 0:
-        terms.append((delta, cam_score))
+    # 未启用 CAM/token 时，保留全局 embedding cosine 作为 local_feature 的弱兜底，
+    # 但不再把它解释为位置相似度。
+    if local_feature_score is None:
+        local_feature_score = global_score
+
+    if size_score is None and areas_wbm is not None and areas_wdm is not None:
+        size_score = area_similarity(areas_wbm, areas_wdm)
+
+    terms = [(alpha, overlap_ratio)]
+    if shape_score is not None and beta > 0:
+        terms.append((beta, shape_score))
+    if size_score is not None and gamma > 0:
+        terms.append((gamma, size_score))
+    if position_score is not None and delta > 0:
+        terms.append((delta, position_score))
+    if local_feature_score is not None and epsilon > 0:
+        terms.append((epsilon, local_feature_score))
 
     total = sum(weight for weight, _ in terms)
     if total <= 0:
@@ -154,10 +170,11 @@ class WaferMatcher:
                  alpha: float = 0.6,
                  beta: float = 0.2,
                  gamma: float = 0.2,
+                 delta: float = 0.0,
+                 epsilon: float = 0.0,
                  theta: float = 0.6,
                  cls_threshold: float = 0.5,
                  use_cam: bool = False,
-                 cam_delta: float = 0.0,
                  cam_lambda: float = 0.5,
                  cam_threshold: float = 0.5,
                  cam_min_area: float = 0.005,
@@ -166,7 +183,7 @@ class WaferMatcher:
         Args:
             backbone:      训练好的 encoder
             classifier:    多标签分类头（8 类）
-            alpha/beta/gamma: 重叠率/位置/面积权重
+            alpha/beta/gamma/delta/epsilon: 标签/形状/大小/位置/局部特征权重
             theta:         重叠率过滤阈值
             cls_threshold: 多标签分类阈值
         """
@@ -176,10 +193,11 @@ class WaferMatcher:
         self.alpha = alpha
         self.beta = beta
         self.gamma = gamma
+        self.delta = delta
+        self.epsilon = epsilon
         self.theta = theta
         self.cls_threshold = cls_threshold
         self.use_cam = use_cam
-        self.cam_delta = cam_delta
         self.cam_lambda = cam_lambda
         self.cam_threshold = cam_threshold
         self.cam_min_area = cam_min_area
@@ -231,7 +249,8 @@ class WaferMatcher:
         Returns:
             List of dicts，按得分降序排列：
             [{'wdm_idx': int, 'score': float, 'overlap': float,
-              'pos_sim': float, 'area_sim': float, 's_wdm': set}, ...]
+              'shape_sim': float, 'size_sim': float, 'position_sim': float,
+              'local_feature_sim': float, 'global_sim': float, 's_wdm': set}, ...]
         """
         # 编码 WBM
         z_wbm, probs_wbm, _ = self.encode(wbm_tensor)
@@ -272,7 +291,7 @@ class WaferMatcher:
                 areas_wdm_i = estimate_pattern_areas(probs_wdm_i, wdm_maps[i],
                                                      self.cls_threshold)
 
-            cam_sim = None
+            explicit_scores = {}
             if self.use_cam and common_classes:
                 if self.cam_classes == 'all':
                     wdm_cam_classes = None
@@ -284,34 +303,36 @@ class WaferMatcher:
                 cam_wdm = self.cam_extractor.compute_cam(
                     wdm_tensors[i].unsqueeze(0), wdm_cam_classes
                 )
-                cam_sim = compute_cam_local_score(
+                explicit_scores = compute_cam_similarity_components(
                     cam_wbm,
                     cam_wdm,
                     sorted(common_classes),
                     self.cam_extractor,
-                    cam_lambda=self.cam_lambda,
                 )
 
             score = match_score(
                 z_wbm, z_wdm_i, s_wbm, s_wdm_i,
                 areas_wbm, areas_wdm_i,
-                cam_sim,
-                self.alpha, self.beta, self.gamma, self.cam_delta, self.theta,
+                explicit_scores,
+                self.alpha, self.beta, self.gamma, self.delta, self.epsilon, self.theta,
             )
 
             if score > 0:
-                pos_sim = ((F.cosine_similarity(z_wbm.unsqueeze(0),
-                                                z_wdm_i.unsqueeze(0)).item() + 1) / 2)
-                area_sim = (area_similarity(areas_wbm, areas_wdm_i)
+                global_sim = ((F.cosine_similarity(z_wbm.unsqueeze(0),
+                                                   z_wdm_i.unsqueeze(0)).item() + 1) / 2)
+                size_sim = (area_similarity(areas_wbm, areas_wdm_i)
                             if areas_wbm and areas_wdm_i else None)
+                size_sim = explicit_scores.get('size_sim', size_sim)
                 results.append({
-                    'wdm_idx':  i,
-                    'score':    score,
-                    'overlap':  overlap,
-                    'pos_sim':  pos_sim,
-                    'area_sim': area_sim,
-                    'cam_sim':  cam_sim,
-                    's_wdm':    s_wdm_i,
+                    'wdm_idx':           i,
+                    'score':             score,
+                    'overlap':           overlap,
+                    'shape_sim':         explicit_scores.get('shape_sim'),
+                    'size_sim':          size_sim,
+                    'position_sim':      explicit_scores.get('position_sim'),
+                    'local_feature_sim': explicit_scores.get('local_feature_sim', global_sim),
+                    'global_sim':        global_sim,
+                    's_wdm':             s_wdm_i,
                     'common_classes': common_classes,
                 })
 

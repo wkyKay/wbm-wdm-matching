@@ -35,10 +35,16 @@ def generate_pseudo_wbm(wdm: np.ndarray, out_size: int = 96) -> np.ndarray:
     将 WDM 转换为伪 WBM：
       形态学闭运算 → 高斯模糊 → 下采样到 11×11 → 二值化 → 上采样回 out_size
     物理假设：缺陷密集区域对应芯片失效区域，pattern 形状在低分辨率下保持拓扑一致。
+
+    输入/输出均使用与 run_train 一致的 WBM-like 值域：
+      0=背景，1=晶圆有效区域正常，2=缺陷。
     """
-    arr = wdm.astype(np.float32)
+    arr = wdm.astype(np.uint8)
+    defect = arr == 2
+    valid = arr > 0
+
     # 形态学闭运算（填充稀疏缺陷点）
-    closed = closing(arr > 0, disk(3)).astype(np.float32)
+    closed = closing(defect, disk(3)).astype(np.float32)
     # 高斯模糊（模拟芯片级空间平均效应）
     blurred = gaussian_filter(closed, sigma=2)
     # 下采样到 11×11
@@ -49,9 +55,13 @@ def generate_pseudo_wbm(wdm: np.ndarray, out_size: int = 96) -> np.ndarray:
     except Exception:
         thresh = 0.5
     binary = (small > thresh).astype(np.float32)
-    # 上采样回 out_size
-    pseudo = sk_resize(binary, (out_size, out_size), order=0, anti_aliasing=False)
-    return (pseudo * 2).astype(np.uint8)  # 值域 {0, 2}，与 WBM 格式一致
+    # 上采样回 out_size，同时保留晶圆有效区域掩码
+    pseudo_defect = sk_resize(binary, (out_size, out_size), order=0, anti_aliasing=False) > 0
+    valid_resized = sk_resize(valid.astype(np.float32), (out_size, out_size),
+                              order=0, anti_aliasing=False) > 0
+    pseudo = valid_resized.astype(np.uint8)
+    pseudo[pseudo_defect] = 2
+    return pseudo.astype(np.uint8)
 
 
 # ---------------------------------------------------------------------------

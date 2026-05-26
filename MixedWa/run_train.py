@@ -44,7 +44,8 @@ def parse_args():
                    help='启用的评估指标，可选：mAP f1_macro f1_micro exact_match hamming_acc')
     # 位置感知损失
     p.add_argument('--pos_margin', type=float, default=0.5)
-    p.add_argument('--pos_lambda', type=float, default=0.1)
+    p.add_argument('--pos_lambda', type=float, default=0.0,
+                   help='位置感知损失权重；默认 0 表示纯 BCE 训练，不训练位置敏感 embedding')
     p.add_argument('--shift',      type=float, default=0.3,
                    help='平移幅度（图宽比例，正样本无空间增强时建议 ≥0.3）')
     # 模型
@@ -84,7 +85,8 @@ def main():
     size = (args.img_size, args.img_size)
     decouple = (args.in_channels == 2)
     train_transform = WaferTransform(size=size, mode='test')   # 不做空间变换，避免与位置感知 loss 冲突
-    shift_transform = WaferTransform(size=size, mode='shift', shift=args.shift)
+    shift_transform = (WaferTransform(size=size, mode='shift', shift=args.shift)
+                       if args.pos_lambda > 0 else None)
     test_transform  = WaferTransform(size=size, mode='test')
 
     if args.npz_file:
