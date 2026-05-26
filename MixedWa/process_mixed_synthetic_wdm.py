@@ -10,7 +10,8 @@
     --save_preview
 
 输出：
-  output_dir/synthetic_wdm.npz   # arr_0: (N,H,W), 值域 {0,2}
+  output_dir/synthetic_wdm.npz   # arr_0: (N,H,W), 值域 {0,1,2}
+                                  # 0=背景黑，1=晶圆有效区灰，2=缺陷白
   output_dir/metadata.json       # 每张 synthetic WDM 的 pattern 组合与生成参数
   output_dir/preview/*.png       # 可选预览图
 """
@@ -223,6 +224,15 @@ def limit_density(mask: np.ndarray, max_density: float, rng: np.random.RandomSta
     return out
 
 
+def circular_wafer_mask(size: int) -> np.ndarray:
+    """生成圆形晶圆有效区域：圆外背景=0，圆内正常区域=1。"""
+    yy, xx = np.ogrid[:size, :size]
+    center = (size - 1) / 2.0
+    radius = size * 0.48
+    dist2 = (yy - center) ** 2 + (xx - center) ** 2
+    return (dist2 <= radius ** 2).astype(np.uint8)
+
+
 def stylize_component(sample: dict, out_size: int, keep_ratio: float, args,
                       rng: np.random.RandomState) -> np.ndarray:
     mask = resize_mask(sample['mask'], out_size)
@@ -295,7 +305,10 @@ def synthesize_mixed_wdm(samples, label_index, args, rng: np.random.RandomState)
 
     final_mask = add_background_noise(final_mask, args.noise_density, rng)
     final_mask = limit_density(final_mask, args.max_density, rng)
-    wdm = (final_mask.astype(np.uint8) * 2)
+    wafer_mask = circular_wafer_mask(args.out_size)
+    final_mask = np.logical_and(final_mask > 0, wafer_mask > 0).astype(np.uint8)
+    wdm = wafer_mask.astype(np.uint8)
+    wdm[final_mask > 0] = 2
 
     labels = []
     for comp in metadata_components:

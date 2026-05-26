@@ -403,7 +403,7 @@ python process_mixed_synthetic_wdm.py \
 
 ```
 data/synthetic_wdm_mixed/
-├── synthetic_wdm.npz      # arr_0: (N,H,W)，值域 {0,2}
+├── synthetic_wdm.npz      # arr_0: (N,H,W)，值域 {0,1,2}；0=背景，1=晶圆有效区，2=缺陷
 ├── metadata.json          # pattern 组合、primary pattern、density、source 信息
 └── preview/               # 可选 PNG 预览
 ```
