@@ -144,10 +144,12 @@ WDM -> pseudo-WBM
 512x512 WDM
   -> morphology closing
   -> gaussian blur
-  -> downsample 到 11x11
+  -> downsample 到 pseudo_grid_size x pseudo_grid_size
   -> Otsu / adaptive threshold
-  -> upsample 到 96x96
+  -> upsample 到 pseudo_out_size x pseudo_out_size
 ```
+
+清洗脚本中 `--pseudo_grid_size` 是必传参数，应按产品实际 WBM die map 尺寸设置；不同产品 die 数不同，不应固定为 `11x11`。`pseudo_out_size` 只控制伪 WBM 输出像素尺寸，可与后续模型输入尺寸一致，也可在 transform 阶段再 resize。
 
 需要检查的指标：
 
@@ -169,7 +171,7 @@ pseudo_density < 0.02   -> 过滤或降权
 pseudo_density > 0.85   -> 过滤或降权
 ```
 
-其中 `11x11` pseudo-WBM 总共 121 个 die，实际阈值应结合真实生产 WBM 的 fail die 分布调整。
+其中 fail die 阈值应结合 `pseudo_grid_size x pseudo_grid_size` 的总 die 数，以及真实生产 WBM 的 fail die 分布调整。
 
 ## 5. Stage1 Encoder / Classifier 辅助筛选
 

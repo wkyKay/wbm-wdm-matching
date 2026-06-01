@@ -55,8 +55,11 @@ def parse_args():
     p.add_argument('--expected_size', type=int, default=512,
                    help='期望输入尺寸；非该尺寸时会 resize 到该尺寸后清洗')
     p.add_argument('--model_img_size', type=int, default=96,
-                   help='stage1 classifier 输入尺寸')
-    p.add_argument('--pseudo_out_size', type=int, default=96)
+                    help='stage1 classifier 输入尺寸')
+    p.add_argument('--pseudo_out_size', type=int, default=96,
+                   help='pseudo-WBM 最终输出尺寸')
+    p.add_argument('--pseudo_grid_size', type=int, default= 11,
+                   help='pseudo-WBM 中间 die-level 网格尺寸，需按产品实际 WBM 尺寸设置')
 
     p.add_argument('--min_density', type=float, default=0.00005)
     p.add_argument('--max_density', type=float, default=0.50)
@@ -68,7 +71,8 @@ def parse_args():
     p.add_argument('--max_fragmented_components', type=int, default=1500)
 
     p.add_argument('--pseudo_min_fail_die', type=int, default=2)
-    p.add_argument('--pseudo_max_fail_die', type=int, default=100)
+    p.add_argument('--pseudo_max_fail_die', type=int, default=None,
+                   help='pseudo-WBM 最大 fail die 数；默认按 pseudo_grid_size^2 * pseudo_max_density 计算')
     p.add_argument('--pseudo_min_density', type=float, default=0.02)
     p.add_argument('--pseudo_max_density', type=float, default=0.85)
 
@@ -313,13 +317,19 @@ def pseudo_metrics(wdm: np.ndarray, args):
     domain adaptation 的正样本对依赖 WDM -> pseudo-WBM。如果 pseudo-WBM 变成全 0、
     全 1 或 fail die 数异常，则该正样本对不可靠，应过滤或降权。
     """
-    pseudo = generate_pseudo_wbm(wdm, out_size=args.pseudo_out_size)
+    pseudo = generate_pseudo_wbm(wdm, out_size=args.pseudo_out_size, grid_size=args.pseudo_grid_size)
     fail = pseudo == 2
     valid = pseudo > 0
-    fail_die_count_11 = int(cv2.resize(fail.astype(np.uint8), (11, 11), interpolation=cv2.INTER_NEAREST).sum())
+    fail_die_count = int(cv2.resize(
+        fail.astype(np.uint8),
+        (args.pseudo_grid_size, args.pseudo_grid_size),
+        interpolation=cv2.INTER_NEAREST,
+    ).sum())
     pseudo_density = safe_div(float(fail.sum()), float(valid.sum()))
     return pseudo, {
-        'pseudo_fail_die_count': fail_die_count_11,
+        'pseudo_fail_die_count': fail_die_count,
+        'pseudo_out_size': int(args.pseudo_out_size),
+        'pseudo_grid_size': int(args.pseudo_grid_size),
         'pseudo_density': pseudo_density,
         'pseudo_all_zero': bool(fail.sum() == 0),
         'pseudo_all_one': bool(valid.sum() > 0 and fail.sum() >= valid.sum()),
@@ -498,6 +508,12 @@ def save_preview(arr: np.ndarray, path: str):
 
 def main():
     args = parse_args()
+    if args.pseudo_grid_size <= 0:
+        raise ValueError(f'--pseudo_grid_size must be positive, got {args.pseudo_grid_size}')
+    if args.pseudo_out_size <= 0:
+        raise ValueError(f'--pseudo_out_size must be positive, got {args.pseudo_out_size}')
+    if args.pseudo_max_fail_die is None:
+        args.pseudo_max_fail_die = int(round(args.pseudo_grid_size * args.pseudo_grid_size * args.pseudo_max_density))
     rng = np.random.RandomState(args.seed)
     os.makedirs(args.output_dir, exist_ok=True)
 

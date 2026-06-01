@@ -62,7 +62,11 @@ def parse_args():
                         'vit_tiny | vit_small | vit_micro | vit_timm')
     p.add_argument('--in_channels',    type=int, default=2)
     p.add_argument('--img_size',        type=int, default=96,
-                   help='输入图像尺寸（正方形，默认 96）')
+                    help='输入图像尺寸（正方形，默认 96）')
+    p.add_argument('--pseudo_out_size', type=int, default=None,
+                   help='pseudo-WBM 最终输出尺寸；默认跟随 --img_size')
+    p.add_argument('--pseudo_grid_size', type=int, default=11,
+                   help='pseudo-WBM 中间 die-level 网格尺寸，需按产品实际 WBM 尺寸设置')
     p.add_argument('--proj_dim',       type=int, default=128)
     p.add_argument('--checkpoint_dir', type=str, default='./checkpoints/domain_adapt')
     p.add_argument('--device', type=str, default='cuda' if torch.cuda.is_available() else 'cpu')
@@ -166,18 +170,23 @@ def load_wdm_arrays(args) -> np.ndarray:
 
 def main():
     args = parse_args()
+    if args.pseudo_out_size is None:
+        args.pseudo_out_size = args.img_size
 
     wdm_arrays = load_wdm_arrays(args)
     print(f"Loaded {len(wdm_arrays)} WDM samples, shape: {wdm_arrays[0].shape}")
 
     decouple = (args.in_channels == 2)
     transform = WaferTransform(size=(args.img_size, args.img_size), mode='test')
+    if args.pseudo_out_size != args.img_size:
+        print(f"pseudo_out_size={args.pseudo_out_size} will be resized to img_size={args.img_size} by WaferTransform")
 
     dataset = ProductionWDMDataset(
         wdm_arrays=wdm_arrays,
         transform=transform,
         decouple_input=decouple,
-        img_size=args.img_size,
+        img_size=args.pseudo_out_size,
+        pseudo_grid_size=args.pseudo_grid_size,
     )
 
     # 模型

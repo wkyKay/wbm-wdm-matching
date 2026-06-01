@@ -511,10 +511,12 @@ python run_domain_adapt.py \
 WDM（96×96）
   → 形态学闭运算（填充稀疏缺陷点）
   → 高斯模糊（模拟芯片级空间平均效应）
-  → 下采样到 11×11（模拟 WBM 芯片级分辨率）
+  → 下采样到 pseudo_grid_size×pseudo_grid_size（模拟产品对应的 WBM 芯片级分辨率）
   → 二值化（Otsu 阈值）
-  → 上采样回 96×96
+  → 上采样回 pseudo_out_size，再由 transform resize 到 img_size
 ```
+
+`--pseudo_grid_size` 应按产品实际 WBM die map 尺寸设置；不同产品 die 数不同，不应固定为 `11×11`。`--pseudo_out_size` 控制伪 WBM 生成后的像素尺寸，默认跟随 `--img_size`。
 
 **domain adaptation 数据选择建议：**
 
@@ -560,6 +562,8 @@ WDM（96×96）
 | `--memory_weight` | 0.5 | 记忆库 EMA 更新系数 |
 | `--temperature` | 0.07 | NCE Loss 温度 |
 | `--img_size` | 96 | 输入图像尺寸 |
+| `--pseudo_out_size` | `--img_size` | pseudo-WBM 最终输出尺寸 |
+| `--pseudo_grid_size` | 11 | pseudo-WBM 中间 die-level 网格尺寸，按产品实际 WBM 尺寸设置 |
 | `--checkpoint_dir` | `./checkpoints/domain_adapt` | |
 
 ---

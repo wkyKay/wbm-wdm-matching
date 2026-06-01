@@ -59,6 +59,9 @@ def parse_args():
                    help='输出目录')
     p.add_argument('--num_samples', type=int, default=5000)
     p.add_argument('--out_size', type=int, default=96)
+    p.add_argument('--generation_mode', type=str, default='probability_map',
+                   choices=['sparse_mask', 'probability_map'],
+                   help='sparse_mask 保留旧逻辑；probability_map 将 WBM mask 转为概率场后采样 WDM 点云')
     p.add_argument('--min_components', type=int, default=2)
     p.add_argument('--max_components', type=int, default=3)
     p.add_argument('--primary_keep_min', type=float, default=0.5)
@@ -70,6 +73,20 @@ def parse_args():
     p.add_argument('--dilation_prob', type=float, default=0.3)
     p.add_argument('--noise_density', type=float, default=0.002)
     p.add_argument('--max_density', type=float, default=0.20)
+    p.add_argument('--min_density', type=float, default=0.002,
+                   help='probability_map 模式下单个 component 的最低采样密度')
+    p.add_argument('--core_weight', type=float, default=0.60,
+                   help='probability_map: resized defect core 权重 α')
+    p.add_argument('--blur_weight', type=float, default=0.35,
+                   help='probability_map: blurred neighborhood 权重 β')
+    p.add_argument('--background_weight', type=float, default=0.05,
+                   help='probability_map: wafer background prior 权重 γ')
+    p.add_argument('--blur_sigma_ratio', type=float, default=0.015,
+                   help='probability_map: Gaussian sigma = out_size * ratio')
+    p.add_argument('--cluster_prob', type=float, default=0.35,
+                   help='probability_map: 对采样点做局部扩散的概率')
+    p.add_argument('--background_noise_for_random', type=float, default=0.01,
+                   help='recipe 含 random 时额外提高背景噪声密度')
     p.add_argument('--recipe_mode', type=str, default='default',
                    choices=['default', 'random'],
                    help='default 使用预设 pattern 组合；random 从样本中随机抽 component')
@@ -195,6 +212,56 @@ def local_diffusion(mask: np.ndarray, rng: np.random.RandomState) -> np.ndarray:
     return cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)
 
 
+def gaussian_blur_mask(mask: np.ndarray, sigma: float) -> np.ndarray:
+    if sigma <= 0:
+        return mask.astype(np.float32)
+    k = int(max(3, round(sigma * 6) | 1))
+    return cv2.GaussianBlur(mask.astype(np.float32), (k, k), sigmaX=sigma, sigmaY=sigma)
+
+
+def normalize_probability(prob: np.ndarray, wafer_mask: np.ndarray) -> np.ndarray:
+    prob = np.maximum(prob.astype(np.float64), 0.0)
+    prob = prob * (wafer_mask > 0)
+    total = prob.sum()
+    if total <= 0:
+        prob = wafer_mask.astype(np.float64)
+        total = prob.sum()
+    return prob / max(total, 1e-12)
+
+
+def sample_from_probability(prob: np.ndarray, num_points: int,
+                            rng: np.random.RandomState) -> np.ndarray:
+    if num_points <= 0:
+        return np.zeros(prob.shape, dtype=np.uint8)
+    flat = prob.reshape(-1)
+    replace = num_points > np.count_nonzero(flat)
+    indices = rng.choice(flat.size, size=num_points, replace=replace, p=flat)
+    ys, xs = np.unravel_index(indices, prob.shape)
+    out = np.zeros(prob.shape, dtype=np.uint8)
+    out[ys, xs] = 1
+    return out
+
+
+def build_probability_map(mask: np.ndarray, wafer_mask: np.ndarray, args) -> np.ndarray:
+    """
+    将放大后的 WBM defect mask 转换为 WDM 缺陷点采样概率场。
+
+    core 保留原 pattern 拓扑；blurred neighborhood 允许真实 WDM 式空间扩散；
+    background prior 只提供极低概率背景散点，避免全 wafer 均匀采样破坏 pattern。
+    """
+    core = mask.astype(np.float32)
+    sigma = max(1.0, args.out_size * args.blur_sigma_ratio)
+    blurred = gaussian_blur_mask(core, sigma=sigma)
+    if blurred.max() > 0:
+        blurred = blurred / blurred.max()
+
+    background = wafer_mask.astype(np.float32)
+    prob = (args.core_weight * core +
+            args.blur_weight * blurred +
+            args.background_weight * background)
+    return normalize_probability(prob, wafer_mask)
+
+
 def random_dropout(mask: np.ndarray, dropout: float, rng: np.random.RandomState) -> np.ndarray:
     if dropout <= 0:
         return mask.astype(np.uint8)
@@ -237,12 +304,25 @@ def stylize_component(sample: dict, out_size: int, keep_ratio: float, args,
                       rng: np.random.RandomState) -> np.ndarray:
     mask = resize_mask(sample['mask'], out_size)
     mask = random_affine(mask, rng)
-    mask = sparse_sample(mask, keep_ratio, rng)
-    mask = coordinate_jitter(mask, args.jitter, rng)
-    if rng.rand() < args.dilation_prob:
-        mask = local_diffusion(mask, rng)
-    mask = random_dropout(mask, args.dropout, rng)
-    return mask.astype(np.uint8)
+    if args.generation_mode == 'sparse_mask':
+        mask = sparse_sample(mask, keep_ratio, rng)
+        mask = coordinate_jitter(mask, args.jitter, rng)
+        if rng.rand() < args.dilation_prob:
+            mask = local_diffusion(mask, rng)
+        mask = random_dropout(mask, args.dropout, rng)
+        return mask.astype(np.uint8)
+
+    wafer_mask = circular_wafer_mask(out_size)
+    prob = build_probability_map(mask, wafer_mask, args)
+    target_density = rng.uniform(args.min_density, args.max_density) * keep_ratio
+    num_points = max(1, int(target_density * wafer_mask.sum()))
+    sampled = sample_from_probability(prob, num_points, rng)
+    sampled = coordinate_jitter(sampled, args.jitter, rng)
+    if rng.rand() < args.cluster_prob:
+        sampled = local_diffusion(sampled, rng)
+    sampled = random_dropout(sampled, args.dropout, rng)
+    sampled = np.logical_and(sampled > 0, wafer_mask > 0).astype(np.uint8)
+    return sampled.astype(np.uint8)
 
 
 def build_label_index(samples):
@@ -301,25 +381,31 @@ def synthesize_mixed_wdm(samples, label_index, args, rng: np.random.RandomState)
             'source_labels': list(sample['labels']),
             'source_id': sample['source_id'],
             'keep_ratio': float(keep_ratio),
+            'generation_mode': args.generation_mode,
         })
-
-    final_mask = add_background_noise(final_mask, args.noise_density, rng)
-    final_mask = limit_density(final_mask, args.max_density, rng)
-    wafer_mask = circular_wafer_mask(args.out_size)
-    final_mask = np.logical_and(final_mask > 0, wafer_mask > 0).astype(np.uint8)
-    wdm = wafer_mask.astype(np.uint8)
-    wdm[final_mask > 0] = 2
 
     labels = []
     for comp in metadata_components:
         if comp['label'] not in labels:
             labels.append(comp['label'])
 
+    noise_density = args.noise_density
+    if 'random' in labels:
+        noise_density = max(noise_density, args.background_noise_for_random)
+    final_mask = add_background_noise(final_mask, noise_density, rng)
+    final_mask = limit_density(final_mask, args.max_density, rng)
+    wafer_mask = circular_wafer_mask(args.out_size)
+    final_mask = np.logical_and(final_mask > 0, wafer_mask > 0).astype(np.uint8)
+    wdm = wafer_mask.astype(np.uint8)
+    wdm[final_mask > 0] = 2
+
     metadata = {
         'patterns': labels,
         'primary_pattern': metadata_components[0]['label'],
         'component_count': len(metadata_components),
         'density': float(final_mask.mean()),
+        'noise_density': float(noise_density),
+        'generation_mode': args.generation_mode,
         'components': metadata_components,
     }
     return wdm, metadata

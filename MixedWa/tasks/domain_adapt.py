@@ -30,15 +30,20 @@ from datasets.transforms import WaferTransform
 # 伪 WBM 生成
 # ---------------------------------------------------------------------------
 
-def generate_pseudo_wbm(wdm: np.ndarray, out_size: int = 96) -> np.ndarray:
+def generate_pseudo_wbm(wdm: np.ndarray, out_size: int = 96, grid_size: int = 11) -> np.ndarray:
     """
     将 WDM 转换为伪 WBM：
-      形态学闭运算 → 高斯模糊 → 下采样到 11×11 → 二值化 → 上采样回 out_size
+      形态学闭运算 → 高斯模糊 → 下采样到 grid_size×grid_size → 二值化 → 上采样回 out_size
     物理假设：缺陷密集区域对应芯片失效区域，pattern 形状在低分辨率下保持拓扑一致。
 
     输入/输出均使用与 run_train 一致的 WBM-like 值域：
       0=背景，1=晶圆有效区域正常，2=缺陷。
     """
+    if grid_size <= 0:
+        raise ValueError(f"grid_size must be positive, got {grid_size}")
+    if out_size <= 0:
+        raise ValueError(f"out_size must be positive, got {out_size}")
+
     arr = wdm.astype(np.uint8)
     defect = arr == 2
     valid = arr > 0
@@ -47,8 +52,8 @@ def generate_pseudo_wbm(wdm: np.ndarray, out_size: int = 96) -> np.ndarray:
     closed = closing(defect, disk(3)).astype(np.float32)
     # 高斯模糊（模拟芯片级空间平均效应）
     blurred = gaussian_filter(closed, sigma=2)
-    # 下采样到 11×11
-    small = sk_resize(blurred, (11, 11), order=0, anti_aliasing=False)
+    # 下采样到产品对应的 die-level 网格尺寸。
+    small = sk_resize(blurred, (grid_size, grid_size), order=0, anti_aliasing=False)
     # 二值化
     try:
         thresh = threshold_otsu(small)
@@ -74,23 +79,26 @@ class ProductionWDMDataset(Dataset):
     支持从 npz 文件或图像目录加载 WDM。
     """
     def __init__(self, wdm_arrays: np.ndarray, transform=None,
-                 decouple_input: bool = True, img_size: int = 96):
+                 decouple_input: bool = True, img_size: int = 96,
+                 pseudo_grid_size: int = 11):
         """
         Args:
             wdm_arrays: (N, H, W) numpy 数组，WDM 原始数据
             transform: 应用于 WDM 的变换（test 模式即可）
             decouple_input: 是否解耦为双通道
             img_size: 输出图像尺寸
+            pseudo_grid_size: 伪 WBM 中间 die-level 网格尺寸
         """
         self.wdm_arrays = wdm_arrays
         self.transform = transform or WaferTransform(size=(img_size, img_size), mode='test')
         self.decouple_input = decouple_input
         self.img_size = img_size
+        self.pseudo_grid_size = pseudo_grid_size
 
         # 预生成伪 WBM（避免训练时重复计算）
         print("Generating pseudo WBMs...")
         self.pseudo_wbms = np.stack([
-            generate_pseudo_wbm(wdm, out_size=img_size)
+            generate_pseudo_wbm(wdm, out_size=img_size, grid_size=pseudo_grid_size)
             for wdm in tqdm.tqdm(wdm_arrays, dynamic_ncols=True)
         ])
 
