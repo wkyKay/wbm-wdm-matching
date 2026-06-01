@@ -58,7 +58,7 @@ def parse_args():
                     help='stage1 classifier 输入尺寸')
     p.add_argument('--pseudo_out_size', type=int, default=96,
                    help='pseudo-WBM 最终输出尺寸')
-    p.add_argument('--pseudo_grid_size', type=int, default= 11,
+    p.add_argument('--pseudo_grid_size', type=int, required=True,
                    help='pseudo-WBM 中间 die-level 网格尺寸，需按产品实际 WBM 尺寸设置')
 
     p.add_argument('--min_density', type=float, default=0.00005)
@@ -492,10 +492,10 @@ def assign_group(metrics: dict, stage1: dict, reasons: list, args):
     return 'rejected'
 
 
-def save_npz(path: str, arrays: list):
+def save_npz(path: str, arrays: list, shape: tuple):
     """保存 npz。空分组也写出空数组，便于下游脚本固定读取文件名。"""
     if len(arrays) == 0:
-        np.savez_compressed(path, arr_0=np.empty((0,), dtype=np.uint8))
+        np.savez_compressed(path, arr_0=np.empty((0, *shape), dtype=np.uint8))
     else:
         np.savez_compressed(path, arr_0=np.stack(arrays).astype(np.uint8))
 
@@ -564,10 +564,11 @@ def main():
     rejected_arrays = [arr for _, arr in buckets['rejected']]
     cleaned_arrays = high_arrays + [arr for _, arr in sampled_medium]
 
-    save_npz(os.path.join(args.output_dir, 'high_confidence_wdm.npz'), high_arrays)
-    save_npz(os.path.join(args.output_dir, 'medium_confidence_wdm.npz'), medium_arrays)
-    save_npz(os.path.join(args.output_dir, 'rejected_wdm.npz'), rejected_arrays)
-    save_npz(os.path.join(args.output_dir, 'cleaned_wdm.npz'), cleaned_arrays)
+    output_shape = tuple(arrays.shape[1:])
+    save_npz(os.path.join(args.output_dir, 'high_confidence_wdm.npz'), high_arrays, output_shape)
+    save_npz(os.path.join(args.output_dir, 'medium_confidence_wdm.npz'), medium_arrays, output_shape)
+    save_npz(os.path.join(args.output_dir, 'rejected_wdm.npz'), rejected_arrays, output_shape)
+    save_npz(os.path.join(args.output_dir, 'cleaned_wdm.npz'), cleaned_arrays, output_shape)
 
     result = {
         'config': vars(args),

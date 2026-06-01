@@ -29,9 +29,17 @@ def parse_args():
     p = argparse.ArgumentParser('Domain adaptation: production data self-supervised adaptation')
     # 数据
     p.add_argument('--wdm_npz',  type=str, default=None,
-                   help='生产 WDM 数据 npz 文件（arr_0 为 (N,H,W) 数组）')
+                   help='兼容旧用法：单一 WDM 数据 npz 文件（arr_0 为 (N,H,W) 数组）')
     p.add_argument('--wdm_dir',  type=str, default=None,
-                   help='生产 WDM 图像目录（与 --wdm_npz 二选一）')
+                   help='兼容旧用法：单一 WDM 图像目录（与 --wdm_npz 二选一）')
+    p.add_argument('--real_wdm_npz', type=str, default=None,
+                   help='清洗后的真实生产 WDM npz；与 --synthetic_wdm_npz 混合时真实数据全量使用')
+    p.add_argument('--synthetic_wdm_npz', type=str, default=None,
+                   help='伪造 / synthetic WDM npz；按 --synthetic_to_real_ratio 采样后加入训练')
+    p.add_argument('--synthetic_to_real_ratio', type=float, default=0.25,
+                   help='合成数据相对真实数据的采样比例；0.25 表示 synthetic 数量为 real 的 25%%')
+    p.add_argument('--synthetic_seed', type=int, default=0,
+                   help='合成数据采样随机种子')
     p.add_argument('--wdm_format', type=str, default='auto',
                    choices=['auto', 'binary', 'wm811k_png', 'wbm_values'],
                    help='WDM 输入值域格式：auto 自动判断；binary=非零即缺陷；'
@@ -65,7 +73,7 @@ def parse_args():
                     help='输入图像尺寸（正方形，默认 96）')
     p.add_argument('--pseudo_out_size', type=int, default=None,
                    help='pseudo-WBM 最终输出尺寸；默认跟随 --img_size')
-    p.add_argument('--pseudo_grid_size', type=int, default=11,
+    p.add_argument('--pseudo_grid_size', type=int, required=True,
                    help='pseudo-WBM 中间 die-level 网格尺寸，需按产品实际 WBM 尺寸设置')
     p.add_argument('--proj_dim',       type=int, default=128)
     p.add_argument('--checkpoint_dir', type=str, default='./checkpoints/domain_adapt')
@@ -140,12 +148,69 @@ def normalize_wdm_array(arr: np.ndarray,
     return wbm_like
 
 
+def read_npz_arrays(path: str) -> np.ndarray:
+    """读取 npz 中的第一个数组，优先使用 arr_0。"""
+    data = np.load(path)
+    key = 'arr_0' if 'arr_0' in data else list(data.keys())[0]
+    arrays = np.asarray(data[key])
+    if arrays.ndim < 3 or len(arrays) == 0:
+        raise ValueError(f"Expected non-empty (N,H,W) array in npz: {path}, got shape {arrays.shape}")
+    return arrays
+
+
+def normalize_wdm_arrays(arrays: np.ndarray, args) -> np.ndarray:
+    """统一一组 WDM 数组到 {0,1,2} WBM-like 图。"""
+    return np.stack([
+        normalize_wdm_array(arr, args.wdm_format, args.wafer_mask_mode)
+        for arr in np.asarray(arrays)
+    ]).astype(np.uint8)
+
+
+def sample_synthetic_arrays(synthetic: np.ndarray, real_count: int, args) -> np.ndarray:
+    """真实 WDM 全量使用；synthetic 按相对真实数据比例采样。"""
+    if args.synthetic_to_real_ratio < 0:
+        raise ValueError(f"--synthetic_to_real_ratio must be >= 0, got {args.synthetic_to_real_ratio}")
+    target_count = int(round(real_count * args.synthetic_to_real_ratio))
+    if target_count <= 0:
+        return synthetic[:0]
+    if len(synthetic) == 0:
+        raise ValueError("--synthetic_wdm_npz is empty")
+
+    rng = np.random.RandomState(args.synthetic_seed)
+    replace = target_count > len(synthetic)
+    indices = rng.choice(len(synthetic), size=target_count, replace=replace)
+    return synthetic[indices]
+
+
+def ensure_same_sample_shape(real: np.ndarray, synthetic: np.ndarray):
+    """混合 npz 前要求 raw WDM 尺寸一致；不同尺寸应先在清洗阶段统一。"""
+    if len(synthetic) == 0:
+        return
+    if real.shape[1:] != synthetic.shape[1:]:
+        raise ValueError(
+            "real and synthetic WDM shapes must match before mixing: "
+            f"real={real.shape[1:]} synthetic={synthetic.shape[1:]}. "
+            "Use process_wdm_512_cleaning.py --expected_size to standardize them first."
+        )
+
+
 def load_wdm_arrays(args) -> np.ndarray:
-    """从 npz 或图像目录加载 WDM 数组，并统一为 {0,1,2} WBM-like 图。"""
+    """加载 domain adaptation 数据，并统一为 {0,1,2} WBM-like 图。"""
+    if args.real_wdm_npz or args.synthetic_wdm_npz:
+        if not args.real_wdm_npz or not args.synthetic_wdm_npz:
+            raise ValueError("混合训练必须同时指定 --real_wdm_npz 和 --synthetic_wdm_npz")
+
+        real = normalize_wdm_arrays(read_npz_arrays(args.real_wdm_npz), args)
+        synthetic_pool = normalize_wdm_arrays(read_npz_arrays(args.synthetic_wdm_npz), args)
+        synthetic = sample_synthetic_arrays(synthetic_pool, len(real), args)
+        ensure_same_sample_shape(real, synthetic)
+        arrays = np.concatenate([real, synthetic], axis=0)
+        print(f"Loaded mixed WDM data: real={len(real)} synthetic={len(synthetic)} "
+              f"ratio={args.synthetic_to_real_ratio} total={len(arrays)}")
+        return arrays
+
     if args.wdm_npz:
-        data = np.load(args.wdm_npz)
-        key = 'arr_0' if 'arr_0' in data else list(data.keys())[0]
-        arrays = data[key]
+        arrays = read_npz_arrays(args.wdm_npz)
     elif args.wdm_dir:
         import glob
         import cv2
@@ -158,20 +223,17 @@ def load_wdm_arrays(args) -> np.ndarray:
             raise ValueError(f"Failed to read PNG files under --wdm_dir: {args.wdm_dir}")
         arrays = np.stack(arrays)
     else:
-        raise ValueError("必须指定 --wdm_npz 或 --wdm_dir")
+        raise ValueError("必须指定 --wdm_npz / --wdm_dir，或同时指定 --real_wdm_npz 和 --synthetic_wdm_npz")
 
-    arrays = np.asarray(arrays)
-    normalized = np.stack([
-        normalize_wdm_array(arr, args.wdm_format, args.wafer_mask_mode)
-        for arr in arrays
-    ])
-    return normalized
+    return normalize_wdm_arrays(arrays, args)
 
 
 def main():
     args = parse_args()
     if args.pseudo_out_size is None:
         args.pseudo_out_size = args.img_size
+    if args.pseudo_grid_size <= 0:
+        raise ValueError(f"--pseudo_grid_size must be positive, got {args.pseudo_grid_size}")
 
     wdm_arrays = load_wdm_arrays(args)
     print(f"Loaded {len(wdm_arrays)} WDM samples, shape: {wdm_arrays[0].shape}")

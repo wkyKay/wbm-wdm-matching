@@ -4,7 +4,7 @@
 
 用法（从 MixedWa/ 目录运行）：
   python process_mixed_synthetic_wdm.py \
-    --source_npz ../../data/wm38k/Wafer_Map_Datasets.npz \
+    --wm811k_pkl ../../data/wm811k/LSWMD.pkl \
     --output_dir ../../data/synthetic_wdm_mixed \
     --num_samples 5000 \
     --save_preview
@@ -17,14 +17,13 @@
 """
 
 import os
-import glob
 import json
 import argparse
-import pathlib
 
 import cv2
 import tqdm
 import numpy as np
+import pandas as pd
 
 from datasets.datasets import DEFECT_CLASSES
 
@@ -48,13 +47,9 @@ DEFAULT_RECIPES = [
 
 def parse_args():
     p = argparse.ArgumentParser('Process mixed-pattern synthetic WDM data')
-    p.add_argument('--source_npz', type=str, default=None,
-                   help='WM38K npz 文件，arr_0 为 wafer maps，arr_1 为多热标签')
-    p.add_argument('--source_dir', type=str, default=None,
-                   help='WM811K PNG 目录，目录名作为 pattern label')
-    p.add_argument('--source_format', type=str, default='auto',
-                   choices=['auto', 'wm38k_npz', 'wm811k_png'],
-                   help='输入源格式')
+    p.add_argument('--wm811k_pkl', type=str,
+                   default='/Users/kayw/Documents/trae_projects/match-test/data/wm811k/LSWMD.pkl',
+                   help='WM811K LSWMD.pkl 文件路径')
     p.add_argument('--output_dir', type=str, required=True,
                    help='输出目录')
     p.add_argument('--num_samples', type=int, default=5000)
@@ -96,70 +91,42 @@ def parse_args():
     return p.parse_args()
 
 
-def load_wm38k_npz(npz_file: str):
-    data = np.load(npz_file)
-    wafer_maps = data['arr_0']
-    labels = data['arr_1']
+def get_wm811k_label_string(value) -> str:
+    """解析 WM811K failureType 字段，逻辑与 WaPIRL/process_wm811k.py 保持一致。"""
+    if len(value) != 1:
+        return '-'
+    return value[0][0].strip().lower()
 
+
+def load_wm811k_pkl(pkl_file: str):
+    data = pd.read_pickle(pkl_file)
     samples = []
-    for idx, (wmap, y) in enumerate(zip(wafer_maps, labels)):
-        active = [DEFECT_CLASSES[i] for i, v in enumerate(y) if v > 0]
-        defect = wmap == 2
-        if len(active) == 0 or defect.sum() == 0:
+
+    for idx, row in data.iterrows():
+        label = get_wm811k_label_string(row['failureType'])
+        if label not in DEFECT_CLASSES:
             continue
+
+        wafer_map = np.asarray(row['waferMap'])
+        if wafer_map.ndim != 2:
+            continue
+        defect = wafer_map == 2
+        if defect.sum() == 0:
+            continue
+
         samples.append({
             'mask': defect.astype(np.uint8),
-            'labels': active,
+            'labels': [label],
             'source_id': int(idx),
         })
     return samples
 
 
-def load_wm811k_png_dir(root: str):
-    paths = sorted(glob.glob(os.path.join(root, '**/*.png'), recursive=True))
-    samples = []
-    for path in paths:
-        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-        if img is None:
-            continue
-        label = pathlib.Path(path).parent.name
-        defect = img >= 200
-        if defect.sum() == 0:
-            continue
-        samples.append({
-            'mask': defect.astype(np.uint8),
-            'labels': [label],
-            'source_id': path,
-        })
-    return samples
-
-
-def infer_source_format(args):
-    if args.source_format != 'auto':
-        return args.source_format
-    if args.source_npz:
-        return 'wm38k_npz'
-    if args.source_dir:
-        return 'wm811k_png'
-    raise ValueError('必须指定 --source_npz 或 --source_dir')
-
-
 def load_source_samples(args):
-    source_format = infer_source_format(args)
-    if source_format == 'wm38k_npz':
-        if not args.source_npz:
-            raise ValueError('source_format=wm38k_npz 时必须指定 --source_npz')
-        samples = load_wm38k_npz(args.source_npz)
-    elif source_format == 'wm811k_png':
-        if not args.source_dir:
-            raise ValueError('source_format=wm811k_png 时必须指定 --source_dir')
-        samples = load_wm811k_png_dir(args.source_dir)
-    else:
-        raise ValueError(f'Unknown source_format: {source_format}')
-
+    samples = load_wm811k_pkl(args.wm811k_pkl)
     if len(samples) == 0:
         raise ValueError('未加载到有效 pattern source samples')
-    return samples, source_format
+    return samples, 'wm811k_pkl'
 
 
 def resize_mask(mask: np.ndarray, out_size: int) -> np.ndarray:

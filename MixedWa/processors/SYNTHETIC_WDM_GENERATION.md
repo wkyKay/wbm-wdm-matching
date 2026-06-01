@@ -166,15 +166,15 @@ resize source mask
 
 ## 推荐命令
 
-从 WM811K PNG 目录生成 `512x512` synthetic WDM：
+从 WM811K `LSWMD.pkl` 生成 `512x512` synthetic WDM：
 
 ```bash
 python processors/process_mixed_synthetic_wdm.py \
-  --source_dir ../../data/wm811k/labeled/train \
-  --source_format wm811k_png \
+  --wm811k_pkl ../../data/wm811k/LSWMD.pkl \
   --output_dir ../../data/synthetic_wdm_mixed_wm811k_512 \
   --num_samples 5000 \
   --out_size 512 \
+  --generation_mode probability_map \
   --save_preview
 ```
 

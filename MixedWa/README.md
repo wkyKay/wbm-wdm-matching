@@ -401,7 +401,7 @@ early stopping 和 checkpoint 保存均以 `valid_mAP` 为准（越高越好）�
 生成逻辑：
 
 ```
-WM38K npz / WM811K PNG
+WM811K LSWMD.pkl
   → 提取 defect mask
   → 选择 primary pattern + secondary pattern(s)
   → 稀疏采样
@@ -436,27 +436,17 @@ DEFAULT_RECIPES = [
 
 推荐比例是约 `70%~80%` 系统性 mixed pattern，`20%~30%` 带 random 的噪声鲁棒性样本。`random` 在这里主要表示背景散点或次级点状缺陷，不作为主 pattern。
 
-从 WM38K npz 生成：
+从 WM811K pkl 生成：
 
 ```bash
 python process_mixed_synthetic_wdm.py \
-  --source_npz ../../data/wm38k/Wafer_Map_Datasets.npz \
-  --output_dir ../../data/synthetic_wdm_mixed \
-  --num_samples 5000 \
-  --out_size 96 \
-  --min_components 2 \
-  --max_components 3 \
-  --save_preview
-```
-
-从 `process_wm811k.py` 导出的 WM811K PNG 目录生成：
-
-```bash
-python process_mixed_synthetic_wdm.py \
-  --source_dir ../../data/wm811k/labeled/train \
-  --source_format wm811k_png \
+  --wm811k_pkl ../../data/wm811k/LSWMD.pkl \
   --output_dir ../../data/synthetic_wdm_mixed_wm811k \
   --num_samples 5000 \
+  --out_size 512 \
+  --min_components 2 \
+  --max_components 3 \
+  --generation_mode probability_map \
   --save_preview
 ```
 
@@ -469,12 +459,24 @@ data/synthetic_wdm_mixed/
 └── preview/               # 可选 PNG 预览
 ```
 
-随后接入 domain adaptation：
+随后先清洗 synthetic WDM：
+
+```bash
+python processors/process_wdm_512_cleaning.py \
+  --wdm_npz ../../data/synthetic_wdm_mixed_wm811k/synthetic_wdm.npz \
+  --wdm_format wbm_values \
+  --output_dir ../../data/synthetic_wdm_mixed_wm811k_cleaned \
+  --pseudo_grid_size 26 \
+  --save_preview
+```
+
+清洗后接入 domain adaptation：
 
 ```bash
 python run_domain_adapt.py \
-  --wdm_npz ../../data/synthetic_wdm_mixed/synthetic_wdm.npz \
+  --wdm_npz ../../data/synthetic_wdm_mixed_wm811k_cleaned/cleaned_wdm.npz \
   --wdm_format wbm_values \
+  --pseudo_grid_size 26 \
   --supervised_ckpt ./checkpoints/train/best_model.pt \
   --epochs 30 \
   --batch_size 64 \
@@ -488,6 +490,7 @@ python run_domain_adapt.py \
 python run_domain_adapt.py \
   --wdm_npz ../../data/production/wdm.npz \
   --wdm_format auto \
+  --pseudo_grid_size 26 \
   --supervised_ckpt ./checkpoints/train/best_model.pt \
   --epochs 30 \
   --batch_size 64 \
@@ -501,6 +504,7 @@ python run_domain_adapt.py \
 python run_domain_adapt.py \
   --wdm_dir ../../data/wm811k/unlabeled/train \
   --wdm_format wm811k_png \
+  --pseudo_grid_size 26 \
   --supervised_ckpt ./checkpoints/train/best_model.pt \
   --checkpoint_dir ./checkpoints/domain_adapt_wm811k
 ```
@@ -553,6 +557,10 @@ WDM（96×96）
 |------|--------|------|
 | `--wdm_npz` | — | 生产 WDM npz（arr_0 为 (N,H,W) 数组） |
 | `--wdm_dir` | — | 生产 WDM / WM811K PNG 图像目录（与 `--wdm_npz` 二选一） |
+| `--real_wdm_npz` | — | 清洗后的真实生产 WDM npz；混合训练时真实数据全量使用 |
+| `--synthetic_wdm_npz` | — | synthetic WDM npz；按比例采样后加入训练 |
+| `--synthetic_to_real_ratio` | 0.25 | synthetic 数量相对真实数量的比例，例如 0.25 表示 synthetic=real 的 25% |
+| `--synthetic_seed` | 0 | synthetic 采样随机种子 |
 | `--wdm_format` | `auto` | 输入值域格式：`auto` / `binary` / `wm811k_png` / `wbm_values` |
 | `--wafer_mask_mode` | `auto` | 存在掩码生成方式：`auto` / `circular` / `nonzero` / `full` |
 | `--supervised_ckpt` | — | 监督训练 checkpoint（run_train.py 产出） |
@@ -563,7 +571,7 @@ WDM（96×96）
 | `--temperature` | 0.07 | NCE Loss 温度 |
 | `--img_size` | 96 | 输入图像尺寸 |
 | `--pseudo_out_size` | `--img_size` | pseudo-WBM 最终输出尺寸 |
-| `--pseudo_grid_size` | 11 | pseudo-WBM 中间 die-level 网格尺寸，按产品实际 WBM 尺寸设置 |
+| `--pseudo_grid_size` | 必填 | pseudo-WBM 中间 die-level 网格尺寸，按产品实际 WBM 尺寸设置 |
 | `--checkpoint_dir` | `./checkpoints/domain_adapt` | |
 
 ---
@@ -673,4 +681,40 @@ tqdm
 
 # ViT-Timm backbone 额外依赖（可选）
 timm >= 0.9.0
+
 ```
+
+运行stage2
+1. 生成 synthetic WDM：
+python processors/process_mixed_synthetic_wdm.py \
+  --wm811k_pkl /Users/kayw/Documents/trae_projects/match-test/data/wm811k/LSWMD.pkl \
+  --output_dir ../../data/synthetic_wdm_mixed_wm811k_512 \
+  --num_samples 5000 \
+  --out_size 512 \
+  --generation_mode probability_map \
+  --save_preview
+2. 清洗 synthetic WDM：
+python processors/process_wdm_512_cleaning.py \
+  --wdm_npz ../../data/synthetic_wdm_mixed_wm811k_512/synthetic_wdm.npz \
+  --wdm_format wbm_values \
+  --output_dir ../../data/synthetic_wdm_mixed_wm811k_512_cleaned \
+  --pseudo_grid_size 26 \
+  --save_preview
+3. domain adaptation 使用清洗后的 synthetic：
+python run_domain_adapt.py \
+  --wdm_npz ../../data/synthetic_wdm_mixed_wm811k_512_cleaned/cleaned_wdm.npz \
+  --wdm_format wbm_values \
+  --pseudo_grid_size 26 \
+  --supervised_ckpt ./checkpoints/train/best_model.pt
+4. 混合真实清洗数据 + synthetic 清洗数据：
+python run_domain_adapt.py \
+  --real_wdm_npz ../../data/production/wdm_512_cleaned/cleaned_wdm.npz \
+  --synthetic_wdm_npz ../../data/synthetic_wdm_mixed_wm811k_512_cleaned/cleaned_wdm.npz \
+  --synthetic_to_real_ratio 0.25 \
+  --wdm_format wbm_values \
+  --pseudo_grid_size 26 \
+  --supervised_ckpt ./checkpoints/train/best_model.pt
+已通过语法检查：
+python3 -m py_compile processors/process_mixed_synthetic_wdm.py
+python3 -m py_compile processors/process_wdm_512_cleaning.py
+python3 -m py_compile run_domain_adapt.py

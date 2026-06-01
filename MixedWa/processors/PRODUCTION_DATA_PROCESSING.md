@@ -203,6 +203,30 @@ stage1 模型是在 WM38K WBM 上做多标签监督训练得到的，学到的�
 合成 WDM：20%~40%
 ```
 
+`run_domain_adapt.py` 支持直接传入两路 npz：清洗后的真实 WDM 和 synthetic WDM。真实 WDM 会全量使用，synthetic WDM 按 `--synthetic_to_real_ratio` 从 synthetic pool 中随机采样后拼接进入 domain adaptation。该比例定义为：
+
+```text
+synthetic_count = round(real_count * synthetic_to_real_ratio)
+```
+
+例如 `--synthetic_to_real_ratio 0.25` 表示每 100 张真实清洗 WDM 搭配约 25 张 synthetic WDM。若 synthetic pool 不足，会有放回采样；若比例为 `0`，则只使用真实 WDM。
+
+混合输入前，真实清洗 WDM 和 synthetic 清洗 WDM 的 npz 必须都是 `arr_0: (N,H,W)`，值域 `{0,1,2}`。两路数据的单样本尺寸 `H,W` 必须一致；若不一致，应先用 `process_wdm_512_cleaning.py --expected_size` 统一清洗输出尺寸。
+
+示例：
+
+```bash
+python run_domain_adapt.py \
+  --real_wdm_npz ../../data/production/wdm_512_cleaned/cleaned_wdm.npz \
+  --synthetic_wdm_npz ../../data/synthetic_wdm_mixed_wm811k_512_cleaned/cleaned_wdm.npz \
+  --synthetic_to_real_ratio 0.25 \
+  --synthetic_seed 0 \
+  --wdm_format wbm_values \
+  --pseudo_grid_size 26 \
+  --supervised_ckpt ./checkpoints/train/best_model.pt \
+  --checkpoint_dir ./checkpoints/domain_adapt_real_synth
+```
+
 不要让合成数据长期占主导。最终目标是真实生产 WDM，合成数据主要用于补足 mixed-pattern、多 pattern 组合、稀有 pattern 和噪声鲁棒性。
 
 当真实数据质量较差时，可以先使用：
