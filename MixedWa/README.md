@@ -231,6 +231,67 @@ tensorboard --logdir ./checkpoints/train/tensorboard
 
 ## 训练流程
 
+### 三个脚本的分工
+
+`run_train.py`、`run_domain_adapt.py` 和 `run_matching.py` 分别对应监督训练、无标签域适应和最终匹配推理。
+
+| 脚本 | 数据 | 监督信号 | 主要目标 | encoder 学到的能力 |
+|------|------|----------|----------|--------------------|
+| `run_train.py` | WM38K WBM | 多标签类别 | 多标签分类 BCE | 识别 wafer map 中有哪些 pattern；学习 center / donut / edge-loc / edge-ring / loc / random / scratch / near-full 的类别语义 |
+| `run_domain_adapt.py` | 生产或合成 WDM | 无人工标签；WDM 与 pseudo-WBM 正样本对 | WaPIRL/NCE 域适应 | 缓解 WBM 与 WDM 的 domain gap，使相同空间结构的 WDM 与 pseudo-WBM 在 embedding 空间更接近 |
+| `run_matching.py` | WBM query + WDM candidates，或 WM38K eval | 无训练，仅推理/评估 | top-k 匹配排序 | 使用已训练的 encoder、分类头和显式几何分数完成 WBM-WDM 匹配 |
+
+推荐理解为：
+
+```text
+run_train.py
+  → 让 encoder 知道“图里有什么 pattern”
+
+run_domain_adapt.py
+  → 让 encoder 知道“WDM 和 WBM 虽然形态不同，但同一空间结构应该靠近”
+
+run_matching.py
+  → 使用 encoder 的类别语义、跨域特征和显式几何相似度进行匹配
+```
+
+### 推荐实验顺序
+
+第一步先完成监督训练，然后立刻用 WM38K 做 matching sanity check。这个检查不需要先跑 `run_domain_adapt.py`，因为它的目的只是确认第一阶段训练出的 encoder/classifier 和匹配代码闭环可用。
+
+```bash
+# 1. 训练 supervised encoder + classifier
+python run_train.py \
+  --npz_file ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --checkpoint_dir ./checkpoints/train
+
+# 2. 用 WM38K 测试集做 matching sanity check
+python run_matching.py \
+  --eval_npz ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --supervised_ckpt ./checkpoints/train/best_model.pt
+```
+
+该 sanity check 本质上是同域检索：
+
+```text
+WM38K/WBM query vs WM38K/WBM candidates
+```
+
+它可以验证：
+
+- `run_train.py` 训练出的 encoder/classifier 是否可用于 matching；
+- `run_matching.py` 的 top-k 检索逻辑是否能正常跑通；
+- 在 WM38K 同分布内，query 和候选图是否有基本区分能力。
+
+但它不是最终的 WBM-WDM 跨域测试。完整流程建议为：
+
+```text
+1. run_train.py                         # WM38K 多标签监督训练
+2. run_matching.py --eval_npz           # WM38K 同域 sanity check
+3. process_mixed_synthetic_wdm.py       # 生成 synthetic WDM，或准备真实生产 WDM
+4. run_domain_adapt.py                  # 用 synthetic/真实 WDM 做无标签域适应
+5. run_matching.py                      # WBM query vs WDM candidates 的最终匹配推理
+```
+
 ### 阶段一：WM38K 多标签分类（主训练）
 
 从 ImageNet 预训练权重出发，在 WM38K 上训练多标签分类器。默认使用纯 BCE，不再把位置敏感性作为 encoder 训练标准；位置、形状、大小在匹配阶段通过 CAM mask / weak mask 显式计算。
