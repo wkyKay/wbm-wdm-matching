@@ -19,6 +19,7 @@
         -> 连通域统计
         -> 空间结构指标计算
         -> pseudo-WBM 生成
+        -> 保存 pseudo_grid_size x pseudo_grid_size die-level wafer 供人工查看
         -> pseudo-WBM 退化检查
         -> 结合 stage1 分数进行 high / medium / low 分组
 ```
@@ -151,6 +152,15 @@ WDM -> pseudo-WBM
 
 清洗脚本中 `--pseudo_grid_size` 是必传参数，应按产品实际 WBM die map 尺寸设置；不同产品 die 数不同，不应固定为 `11x11`。`pseudo_out_size` 只控制伪 WBM 输出像素尺寸，可与后续模型输入尺寸一致，也可在 transform 阶段再 resize。
 
+脚本会额外保存 die-level 中间结果：
+
+```text
+pseudo_grid_wdm.npz                 # arr_0: (N, pseudo_grid_size, pseudo_grid_size)
+preview/pseudo_grid/<group>/*.png   # 放大后的 die-level wafer 预览
+```
+
+当 `--pseudo_grid_size 11` 时，该输出就是 `11x11` resize 后的 wafer，可用于检查 `WDM -> pseudo-WBM` 退化是否符合预期。
+
 需要检查的指标：
 
 | 指标 | 风险 |
@@ -241,9 +251,20 @@ cleaned_wdm.npz             # high + sampled medium，用于 domain adaptation
 high_confidence_wdm.npz     # 仅 high-confidence
 medium_confidence_wdm.npz   # medium-confidence 候选
 rejected_wdm.npz            # 被过滤样本，供抽样检查
+pseudo_grid_wdm.npz         # 每张 WDM 对应的 die-level pseudo wafer，中间尺寸为 pseudo_grid_size
 cleaning_metadata.json      # 每张图的指标、分组、过滤原因
-preview/                    # 每组样本预览图
+preview/                    # 每组样本预览图，包含原始 WDM 与 *_pseudo_grid.png
+preview/pseudo_grid/        # die-level pseudo wafer 预览图汇总
 ```
+
+预览图命名格式：
+
+```text
+000123_stage1-edge-ring-82_scratch-51.png
+000123_stage1-edge-ring-82_scratch-51_pseudo_grid.png
+```
+
+其中 `edge-ring-82` 表示 stage1 classifier 预测 `edge-ring` 的概率约为 `0.82`。若未提供 `--supervised_ckpt`，文件名会标记为 `stage1-none`。
 
 `cleaning_metadata.json` 至少应包含：
 

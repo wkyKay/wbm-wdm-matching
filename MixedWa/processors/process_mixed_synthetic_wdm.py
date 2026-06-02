@@ -17,13 +17,20 @@
 """
 
 import os
+import sys
 import json
 import argparse
+import importlib
 
 import cv2
 import tqdm
 import numpy as np
 import pandas as pd
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT not in sys.path:
+    # 允许从 MixedWa/ 目录直接运行 processors 内脚本，并导入项目模块。
+    sys.path.insert(0, ROOT)
 
 from datasets.datasets import DEFECT_CLASSES
 
@@ -98,7 +105,33 @@ def get_wm811k_label_string(value) -> str:
     return value[0][0].strip().lower()
 
 
+def install_legacy_pandas_pickle_aliases():
+    """
+    WM811K 的 LSWMD.pkl 常由旧 pandas 版本生成，pickle 中可能引用
+    pandas.indexes.*。新版 pandas 已将这些模块移动到 pandas.core.indexes.*，
+    直接 pd.read_pickle 会触发 ModuleNotFoundError: pandas.indexes。
+    """
+    aliases = {
+        'pandas.indexes': 'pandas.core.indexes',
+        'pandas.indexes.base': 'pandas.core.indexes.base',
+        'pandas.indexes.numeric': 'pandas.core.indexes.numeric',
+        'pandas.indexes.range': 'pandas.core.indexes.range',
+        'pandas.indexes.multi': 'pandas.core.indexes.multi',
+        'pandas.indexes.datetimes': 'pandas.core.indexes.datetimes',
+        'pandas.indexes.timedeltas': 'pandas.core.indexes.timedeltas',
+        'pandas.indexes.period': 'pandas.core.indexes.period',
+    }
+    for old_name, new_name in aliases.items():
+        if old_name in sys.modules:
+            continue
+        try:
+            sys.modules[old_name] = importlib.import_module(new_name)
+        except ModuleNotFoundError:
+            pass
+
+
 def load_wm811k_pkl(pkl_file: str):
+    install_legacy_pandas_pickle_aliases()
     data = pd.read_pickle(pkl_file)
     samples = []
 

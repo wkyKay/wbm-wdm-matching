@@ -317,14 +317,11 @@ def pseudo_metrics(wdm: np.ndarray, args):
     domain adaptation 的正样本对依赖 WDM -> pseudo-WBM。如果 pseudo-WBM 变成全 0、
     全 1 或 fail die 数异常，则该正样本对不可靠，应过滤或降权。
     """
+    pseudo_grid = generate_pseudo_grid_wbm(wdm, args.pseudo_grid_size)
     pseudo = generate_pseudo_wbm(wdm, out_size=args.pseudo_out_size, grid_size=args.pseudo_grid_size)
-    fail = pseudo == 2
-    valid = pseudo > 0
-    fail_die_count = int(cv2.resize(
-        fail.astype(np.uint8),
-        (args.pseudo_grid_size, args.pseudo_grid_size),
-        interpolation=cv2.INTER_NEAREST,
-    ).sum())
+    fail = pseudo_grid == 2
+    valid = pseudo_grid > 0
+    fail_die_count = int(fail.sum())
     pseudo_density = safe_div(float(fail.sum()), float(valid.sum()))
     return pseudo, {
         'pseudo_fail_die_count': fail_die_count,
@@ -333,7 +330,37 @@ def pseudo_metrics(wdm: np.ndarray, args):
         'pseudo_density': pseudo_density,
         'pseudo_all_zero': bool(fail.sum() == 0),
         'pseudo_all_one': bool(valid.sum() > 0 and fail.sum() >= valid.sum()),
-    }
+    }, pseudo_grid
+
+
+def generate_pseudo_grid_wbm(wdm: np.ndarray, grid_size: int) -> np.ndarray:
+    """生成可查看的 die-level pseudo-WBM 网格，值域 {0,1,2}。"""
+    if grid_size <= 0:
+        raise ValueError(f'grid_size must be positive, got {grid_size}')
+
+    defect = (wdm == 2).astype(np.uint8)
+    valid = (wdm > 0).astype(np.uint8)
+
+    kernel = np.ones((3, 3), np.uint8)
+    closed = cv2.morphologyEx(defect, cv2.MORPH_CLOSE, kernel)
+    blurred = cv2.GaussianBlur(closed.astype(np.float32), (0, 0), sigmaX=2, sigmaY=2)
+    small = cv2.resize(blurred, (grid_size, grid_size), interpolation=cv2.INTER_NEAREST)
+    valid_grid = cv2.resize(valid, (grid_size, grid_size), interpolation=cv2.INTER_NEAREST) > 0
+
+    if small.max() <= 0:
+        binary = np.zeros_like(small, dtype=bool)
+    else:
+        _, binary_u8 = cv2.threshold(
+            (small / max(small.max(), 1e-8) * 255).astype(np.uint8),
+            0,
+            255,
+            cv2.THRESH_BINARY + cv2.THRESH_OTSU,
+        )
+        binary = binary_u8 > 0
+
+    grid = valid_grid.astype(np.uint8)
+    grid[np.logical_and(binary, valid_grid)] = 2
+    return grid.astype(np.uint8)
 
 
 def structure_score(metrics: dict) -> float:
@@ -404,10 +431,10 @@ def analyze_sample(wdm: np.ndarray, args):
     }
     metrics.update(compute_connected_components(defect, args))
     metrics.update(compute_spatial_features(defect, valid))
-    _, pmetrics = pseudo_metrics(wdm, args)
+    _, pmetrics, pseudo_grid = pseudo_metrics(wdm, args)
     metrics.update(pmetrics)
     metrics['structure_score'] = structure_score(metrics)
-    return metrics
+    return metrics, pseudo_grid
 
 
 def run_stage1_classifier(arrays: np.ndarray, args):
@@ -500,10 +527,40 @@ def save_npz(path: str, arrays: list, shape: tuple):
         np.savez_compressed(path, arr_0=np.stack(arrays).astype(np.uint8))
 
 
-def save_preview(arr: np.ndarray, path: str):
+def save_preview(arr: np.ndarray, path: str, scale: int = 1):
     """保存预览图，将 {0,1,2} 映射到 0/127/255 灰度。"""
     img = ((arr.astype(np.float32) / 2.0) * 255).astype(np.uint8)
+    if scale > 1:
+        img = cv2.resize(img, (img.shape[1] * scale, img.shape[0] * scale), interpolation=cv2.INTER_NEAREST)
     cv2.imwrite(path, img)
+
+
+def safe_filename_part(text: str) -> str:
+    allowed = []
+    for ch in str(text):
+        if ch.isalnum() or ch in ('-', '_'):
+            allowed.append(ch)
+        else:
+            allowed.append('-')
+    return ''.join(allowed).strip('-') or 'none'
+
+
+def stage1_pattern_slug(metrics: dict, args) -> str:
+    labels = metrics.get('stage1_top_labels')
+    probs = metrics.get('stage1_top_probs')
+    if not labels or not probs:
+        return 'stage1-none'
+
+    selected = [
+        (label, prob)
+        for label, prob in zip(labels, probs)
+        if prob >= args.stage1_medium_prob
+    ]
+    if not selected:
+        selected = [(labels[0], probs[0])]
+
+    parts = [f'{safe_filename_part(label)}-{int(round(prob * 100)):02d}' for label, prob in selected]
+    return 'stage1-' + '_'.join(parts)
 
 
 def main():
@@ -524,9 +581,11 @@ def main():
 
     buckets = {'high': [], 'medium': [], 'rejected': []}
     metadata = []
+    pseudo_grids = []
     for idx, wdm in enumerate(tqdm.tqdm(arrays, desc='Cleaning WDM', dynamic_ncols=True)):
         # 先做无监督几何/pseudo-WBM 分析，再合并可选的 stage1 分类器分数。
-        metrics = analyze_sample(wdm, args)
+        metrics, pseudo_grid = analyze_sample(wdm, args)
+        pseudo_grids.append(pseudo_grid)
         reasons = base_reject_reasons(metrics, args)
         stage1 = stage1_scores[idx]
         if stage1 is not None:
@@ -563,12 +622,14 @@ def main():
     medium_arrays = [arr for _, arr in buckets['medium']]
     rejected_arrays = [arr for _, arr in buckets['rejected']]
     cleaned_arrays = high_arrays + [arr for _, arr in sampled_medium]
+    pseudo_grids = np.stack(pseudo_grids).astype(np.uint8)
 
     output_shape = tuple(arrays.shape[1:])
     save_npz(os.path.join(args.output_dir, 'high_confidence_wdm.npz'), high_arrays, output_shape)
     save_npz(os.path.join(args.output_dir, 'medium_confidence_wdm.npz'), medium_arrays, output_shape)
     save_npz(os.path.join(args.output_dir, 'rejected_wdm.npz'), rejected_arrays, output_shape)
     save_npz(os.path.join(args.output_dir, 'cleaned_wdm.npz'), cleaned_arrays, output_shape)
+    np.savez_compressed(os.path.join(args.output_dir, 'pseudo_grid_wdm.npz'), arr_0=pseudo_grids)
 
     result = {
         'config': vars(args),
@@ -586,11 +647,20 @@ def main():
         json.dump(result, f, indent=2, ensure_ascii=False)
 
     if args.save_preview:
+        metadata_by_idx = {item['index']: item for item in metadata}
+        grid_scale = max(1, int(round(args.expected_size / max(1, args.pseudo_grid_size))))
         for group, items in buckets.items():
             group_dir = os.path.join(args.output_dir, 'preview', group)
+            grid_dir = os.path.join(args.output_dir, 'preview', 'pseudo_grid', group)
             os.makedirs(group_dir, exist_ok=True)
+            os.makedirs(grid_dir, exist_ok=True)
             for idx, arr in items[:args.preview_limit]:
-                save_preview(arr, os.path.join(group_dir, f'{idx:06}.png'))
+                pattern_slug = stage1_pattern_slug(metadata_by_idx[idx], args)
+                filename = f'{idx:06}_{pattern_slug}.png'
+                grid_filename = f'{idx:06}_{pattern_slug}_pseudo_grid.png'
+                save_preview(arr, os.path.join(group_dir, filename))
+                save_preview(pseudo_grids[idx], os.path.join(group_dir, grid_filename), scale=grid_scale)
+                save_preview(pseudo_grids[idx], os.path.join(grid_dir, filename), scale=grid_scale)
 
     print('Cleaning finished.')
     print(json.dumps(result['summary'], indent=2, ensure_ascii=False))
