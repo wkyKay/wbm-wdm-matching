@@ -151,6 +151,116 @@ stage1 模型是在 WM38K WBM 上做多标签监督训练得到的，学到的�
   -> 用于 domain adaptation
 ```
 
+## 散点型 WDM 的 Pattern 面提取
+
+生产 WDM 往往是离散缺陷点云，缺陷点之间并不连通。即使肉眼能看出中心聚集、边缘环、局部带状或 scratch-like 趋势，直接做 connected components 仍会把它们判成大量小碎片。因此，不建议直接在原始散点图上判断 pattern 强弱。
+
+更合理的做法是先把散点 WDM 转成连续的弱 pattern 面，再基于该 pattern mask 做结构指标、pseudo-WBM 和预览检查。
+
+推荐流程：
+
+```text
+WDM defect points
+  -> Gaussian blur / KDE density map
+  -> percentile threshold 或 Otsu threshold
+  -> morphology closing
+  -> remove small components
+  -> pattern mask
+  -> 结构指标 / pseudo-WBM / preview
+```
+
+### 为什么不用单纯 connected components
+
+原始 WDM 中每个缺陷点可能相隔较远，导致：
+
+- `num_components` 虚高
+- `small_component_ratio` 虚高
+- `max_component_area` 偏低
+- 明显弱 pattern 被误判为随机散点
+- pseudo-grid 最近邻下采样时容易 aliasing，漏掉真实趋势或采到局部噪声
+
+### 首选方法：Gaussian Density / KDE
+
+把每个缺陷点看作一个小高斯核，对整张 wafer 生成连续密度场：
+
+```text
+defect_map
+  -> gaussian_filter(sigma)
+  -> density_map
+```
+
+然后从密度场中提取 pattern mask：
+
+```text
+threshold = percentile(density_map[wafer_mask], 90~95)
+pattern_mask = density_map >= threshold
+pattern_mask = morphology_closing(pattern_mask)
+pattern_mask = remove_small_components(pattern_mask)
+```
+
+推荐初始参数：
+
+| 参数 | 建议值 | 说明 |
+|------|--------|------|
+| `density_sigma` | 6 / 10 / 16 | 512x512 WDM 上的高斯平滑尺度，建议多尺度对比 |
+| `threshold_method` | percentile | 稀疏 WDM 优先用 percentile，Otsu 可作为备选 |
+| `threshold_percentile` | 90~95 | 越高越保守，保留更核心的 pattern 区域 |
+| `closing_kernel` | 3 或 5 | 连接相邻高密度区域，避免过度扩张 |
+| `min_component_area` | 20~100 | 删除小噪声区域，按 512x512 分辨率调参 |
+
+对于非常稀疏的 WDM，可以尝试：
+
+```text
+density_sigma = 12~24
+threshold_percentile = 85~95
+```
+
+### 多尺度策略
+
+单一平滑尺度可能不稳定。建议同时计算多个尺度的 pattern mask：
+
+```text
+sigma = [6, 10, 16]
+```
+
+如果某个空间趋势在多个尺度下都稳定出现，例如质心位置、径向分布或主方向一致，则说明该 pattern 更可信。多尺度结果可以用于：
+
+- 提高 high-confidence 的可靠性
+- 区分真实弱 pattern 和随机噪声
+- 为 pseudo-WBM 选择更稳定的输入 mask
+
+### Dilation / Closing 的定位
+
+可以使用膨胀，但不建议只依赖单次 dilation：
+
+- `dilation` 会无差别扩大所有点，容易把 random 散点也连成假 pattern
+- `closing = dilation + erosion` 更适合填补近邻点之间的小空隙，同时不会无限扩张
+- dilation/closing 应该作为 density mask 后处理，而不是唯一的 pattern 生成方法
+
+推荐使用：
+
+```text
+density_map -> threshold -> closing -> pattern_mask
+```
+
+而不是：
+
+```text
+raw_points -> large dilation -> pattern_mask
+```
+
+### Preview 建议
+
+清洗脚本应至少保存三类可视化，方便人工判断规则是否合理：
+
+```text
+原始 WDM 散点图
+density / pattern mask 图
+pseudo_grid_size x pseudo_grid_size die-level wafer 图
+```
+
+如果 high-confidence 中大量样本在 density/pattern mask 图上没有稳定结构，说明阈值或 high 分组规则过宽；如果原始散点肉眼可见 pattern，但 density mask 没有提取出来，则需要增大 `density_sigma` 或降低 percentile 阈值。
+
 ## 模型输入尺寸建议
 
 第一版建议保持模型输入为 `96x96`，但清洗不要只在 `96x96` 上完成。
