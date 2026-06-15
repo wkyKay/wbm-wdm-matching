@@ -10,7 +10,7 @@ Modules:
 """
 
 from .models import DefectTable, GridMaps, BACKGROUND, VALID_NO_DEFECT, VALID_HAS_DEFECT, UNINSPECTED
-from .io import read_wbm_shape, load_defect_tables, load_die_pitch, save_grid_maps
+from .io import read_wbm_shape, read_wbm_png, load_defect_tables, load_die_pitch, save_grid_maps
 from .mappers import (
     GridMapper,
     DieIndexGridMapper,

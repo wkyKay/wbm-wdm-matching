@@ -1,8 +1,10 @@
 # Coordinate mapping strategies: die-index, relative-coordinate, physical-coordinate.
 from __future__ import annotations
 from typing import Dict, Sequence, Tuple
+
 import numpy as np
-from .models import DefectTable, VALID_NO_DEFECT, VALID_HAS_DEFECT
+
+from .models import DefectTable, BACKGROUND, VALID_NO_DEFECT, VALID_HAS_DEFECT, UNINSPECTED
 
 
 class GridMapper:
@@ -17,6 +19,7 @@ class GridMapper:
         col_indices: np.ndarray,
         shape: Tuple[int, int],
         metadata: Dict[str, object],
+        status_map: np.ndarray | None = None,
     ) -> Dict[str, object]:
         """共享的低层逻辑：把缺陷点累加到目标网格单元中。"""
         height, width = shape
@@ -30,7 +33,8 @@ class GridMapper:
         count_map = np.zeros((height, width), dtype=np.int32)
         np.add.at(count_map, (row_indices[valid], col_indices[valid]), 1)
 
-        status_map = np.full((height, width), VALID_NO_DEFECT, dtype=np.uint8)
+        if status_map is None:
+            status_map = np.full((height, width), VALID_NO_DEFECT, dtype=np.uint8)
         status_map[count_map > 0] = VALID_HAS_DEFECT
 
         metadata = dict(metadata)
@@ -115,16 +119,24 @@ class RelativeCoordinateGridMapper(GridMapper):
 
 
 class PhysicalCoordinateGridMapper(GridMapper):
+    """将 die 索引 + die 内相对坐标合并为归一化位置，直接映射到 WBM 网格。
+
+    参数:
+      die_pitch_x, die_pitch_y  — 从 KLARF DiePitch 自动读取
+      x_index_min, x_index_max  — die 网格 X 方向最小/最大索引 (如 -20, 20)
+      y_index_min, y_index_max  — die 网格 Y 方向最小/最大索引 (如 -20, 20)
+    """
+
     name = "physical-coordinate"
 
     def __init__(
         self,
-        die_pitch_x: float = 1.0,
-        die_pitch_y: float = 1.0,
-        x_index_min: float | None = None,
-        x_index_max: float | None = None,
-        y_index_min: float | None = None,
-        y_index_max: float | None = None,
+        die_pitch_x: float,
+        die_pitch_y: float,
+        x_index_min: float,
+        x_index_max: float,
+        y_index_min: float,
+        y_index_max: float,
     ):
         self.die_pitch_x = die_pitch_x
         self.die_pitch_y = die_pitch_y
@@ -134,48 +146,58 @@ class PhysicalCoordinateGridMapper(GridMapper):
         self.y_index_max = y_index_max
 
     def map(self, defects: DefectTable, shape: Tuple[int, int]) -> Dict[str, object]:
+        height, width = shape
+
+        wafer_die_cols = int(self.x_index_max - self.x_index_min + 1)
+        wafer_die_rows = int(self.y_index_max - self.y_index_min + 1)
+
+        if wafer_die_cols == 1 and wafer_die_rows == 1:
+            raise ValueError(
+                f"Single-die wafer (cols={wafer_die_cols}, rows={wafer_die_rows}) is not supported. "
+                "Skip this wafer."
+            )
+
         xindex = defects.column("XINDEX")
         yindex = defects.column("YINDEX")
         xrel = defects.column("XREL")
         yrel = defects.column("YREL")
-        physical_x = xindex * self.die_pitch_x + xrel
-        physical_y = yindex * self.die_pitch_y + yrel
 
-        # die 网格范围 → 物理边界；未指定则从缺陷数据自动推算
-        if self.x_index_min is not None and self.x_index_max is not None:
-            x_frame_min = self.x_index_min * self.die_pitch_x
-            x_frame_max = (self.x_index_max + 1.0) * self.die_pitch_x
-        else:
-            x_frame_min, x_frame_max = None, None
-        if self.y_index_min is not None and self.y_index_max is not None:
-            y_frame_min = self.y_index_min * self.die_pitch_y
-            y_frame_max = (self.y_index_max + 1.0) * self.die_pitch_y
-        else:
-            y_frame_min, y_frame_max = None, None
+        # 归一化到 [0, 1]：整数部分=die 偏移，小数部分=die 内位置
+        x_norm = (xindex - self.x_index_min + xrel / self.die_pitch_x) / wafer_die_cols
+        y_norm = (yindex - self.y_index_min + yrel / self.die_pitch_y) / wafer_die_rows
 
-        col_indices, _, _ = _scale_to_grid(physical_x, shape[1], value_min=x_frame_min, value_max=x_frame_max)
-        row_indices, _, _ = _scale_to_grid(physical_y, shape[0], invert=True, value_min=y_frame_min, value_max=y_frame_max)
+        col_indices = np.floor(x_norm * width).astype(np.int64)
+        row_indices = np.floor((1.0 - y_norm) * height).astype(np.int64)  # Y 翻转
+
+        # 圆形 wafer mask
+        center = ((height - 1) / 2.0, (width - 1) / 2.0)
+        radius = min(height, width) / 2.0
+        rows_grid, cols_grid = np.ogrid[:height, :width]
+        inside_wafer = (rows_grid - center[0]) ** 2 + (cols_grid - center[1]) ** 2 <= radius ** 2
+        status_map = np.where(inside_wafer, VALID_NO_DEFECT, UNINSPECTED).astype(np.uint8)
+
         return self._maps_from_indices(
             row_indices,
             col_indices,
             shape,
             {
-                "x_column": "physical_x (XINDEX*DiePitchX+XREL)",
-                "y_column": "physical_y (YINDEX*DiePitchY+YREL)",
                 "die_pitch_x": self.die_pitch_x,
                 "die_pitch_y": self.die_pitch_y,
-                "x_frame_min": x_frame_min,
-                "x_frame_max": x_frame_max,
-                "y_frame_min": y_frame_min,
-                "y_frame_max": y_frame_max,
+                "x_index_min": self.x_index_min,
+                "x_index_max": self.x_index_max,
+                "y_index_min": self.y_index_min,
+                "y_index_max": self.y_index_max,
+                "wafer_die_cols": wafer_die_cols,
+                "wafer_die_rows": wafer_die_rows,
             },
+            status_map=status_map,
         )
 
 
-MAPPERS: Dict[str, GridMapper] = {
-    DieIndexGridMapper.name: DieIndexGridMapper(),
-    RelativeCoordinateGridMapper.name: RelativeCoordinateGridMapper(),
-    PhysicalCoordinateGridMapper.name: PhysicalCoordinateGridMapper(),
+MAPPERS: Dict[str, type[GridMapper]] = {
+    DieIndexGridMapper.name: DieIndexGridMapper,
+    RelativeCoordinateGridMapper.name: RelativeCoordinateGridMapper,
+    PhysicalCoordinateGridMapper.name: PhysicalCoordinateGridMapper,
 }
 
 

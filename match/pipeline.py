@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Tuple
 
 from .io import load_defect_tables, load_die_pitch
-from .mappers import MAPPERS, DieIndexGridMapper, PhysicalCoordinateGridMapper
+from .mappers import MAPPERS, GridMapper, DieIndexGridMapper, PhysicalCoordinateGridMapper
 from .representations import REPRESENTATIONS, DensityMapBuilder
 from .models import GridMaps
 
@@ -25,30 +25,40 @@ def map_klarf_to_grid(
         raise IndexError(
             f"defect_table_index={defect_table_index} out of range; found {len(tables)} DefectList tables"
         )
-    try:
-        mapper = MAPPERS[mapper_name]
-    except KeyError as exc:
+
+    mapper_cls = MAPPERS.get(mapper_name)
+    if mapper_cls is None:
         choices = ", ".join(sorted(MAPPERS))
-        raise KeyError(f"Unknown mapper {mapper_name!r}. Available mappers: {choices}") from exc
+        raise KeyError(f"Unknown mapper {mapper_name!r}. Available mappers: {choices}")
 
     if representation_name not in REPRESENTATIONS:
         choices = ", ".join(sorted(REPRESENTATIONS))
         raise KeyError(f"Unknown representation {representation_name!r}. Available representations: {choices}")
 
-    # 如果提供了 die 网格范围，将其注入 mapper 构造函数
-    index_min_kwargs: dict = {}
-    if die_x_range is not None:
-        index_min_kwargs["x_index_min"] = float(die_x_range[0])
-        index_min_kwargs["x_index_max"] = float(die_x_range[1])
-    if die_y_range is not None:
-        index_min_kwargs["y_index_min"] = float(die_y_range[0])
-        index_min_kwargs["y_index_max"] = float(die_y_range[1])
-
-    if mapper_name == PhysicalCoordinateGridMapper.name:
+    # 构建 mapper 实例
+    if mapper_cls is PhysicalCoordinateGridMapper:
+        if die_x_range is None or die_y_range is None:
+            raise ValueError(
+                f"--mapper physical-coordinate requires --die-x-range and --die-y-range"
+            )
         die_pitch_x, die_pitch_y = load_die_pitch(klarf_path)
-        mapper = PhysicalCoordinateGridMapper(die_pitch_x, die_pitch_y, **index_min_kwargs)
-    elif index_min_kwargs:
-        mapper = DieIndexGridMapper(**index_min_kwargs)
+        mapper: GridMapper = PhysicalCoordinateGridMapper(
+            die_pitch_x=die_pitch_x,
+            die_pitch_y=die_pitch_y,
+            x_index_min=float(die_x_range[0]),
+            x_index_max=float(die_x_range[1]),
+            y_index_min=float(die_y_range[0]),
+            y_index_max=float(die_y_range[1]),
+        )
+    elif die_x_range is not None and mapper_cls is DieIndexGridMapper:
+        mapper = DieIndexGridMapper(
+            x_index_min=float(die_x_range[0]),
+            x_index_max=float(die_x_range[1]),
+            y_index_min=float(die_y_range[0]) if die_y_range else None,
+            y_index_max=float(die_y_range[1]) if die_y_range else None,
+        )
+    else:
+        mapper = mapper_cls()
 
     mapped = mapper.map(tables[defect_table_index], shape)
     count_map = mapped["count_map"]

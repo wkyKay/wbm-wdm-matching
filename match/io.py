@@ -1,19 +1,28 @@
 # KLARF / WBM file I/O: read shapes, parse defect tables, load die pitch, save outputs.
 from __future__ import annotations
 
+import struct
+import zlib
 from pathlib import Path
 import sys
 from typing import List, Mapping, Tuple
 
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 import klarfio  # noqa: E402
 
-from .models import DefectTable, GridMaps
+from .models import (
+    DefectTable,
+    GridMaps,
+    BACKGROUND,
+    VALID_NO_DEFECT,
+    VALID_HAS_DEFECT,
+    UNINSPECTED,
+)
 
 
 def read_wbm_shape(path: str | Path) -> Tuple[int, int]:
@@ -31,6 +40,142 @@ def read_wbm_shape(path: str | Path) -> Tuple[int, int]:
         f"Cannot read WBM shape from {path}. Only PNG is supported without image dependencies; "
         "pass --height and --width instead."
     )
+
+
+def read_wbm_png(
+    path: str | Path,
+    defect_value: int = 255,
+    no_defect_value: int = 127,
+    background_value: int = 0,
+) -> GridMaps:
+    """将 WBM PNG（标准三值编码）读入 GridMaps。
+
+    WBM 编码约定:
+      白色 (255)  → VALID_HAS_DEFECT  有缺陷
+      灰色 (127)  → VALID_NO_DEFECT   无缺陷但晶圆内
+      黑色 (0)    → BACKGROUND        背景/晶圆外
+
+    其他非标值:  >background_value 且 ≤defect_value → 归一化为 density (defect 强度)。
+    返回的 status_map 直接反映 WBM 的三值含义。
+    """
+    pixels = _decode_png_grayscale(path)
+    height, width = pixels.shape
+
+    # ── 构建 status_map ──
+    status_map = np.full((height, width), BACKGROUND, dtype=np.uint8)
+    status_map[pixels == no_defect_value] = VALID_NO_DEFECT
+    status_map[pixels == defect_value] = VALID_HAS_DEFECT        # 既无缺陷又有缺陷的格子，后续被 count_map>0 覆盖掉 VALID_NO_DEFECT
+    # 灰色区域标记为 VALID_NO_DEFECT，后续 count_map>0 的格子会被覆盖为 VALID_HAS_DEFECT
+
+    # ── 构建 count_map: 非背景像素的强度 (0-1 归一化) ──
+    meaningful = pixels > background_value
+    count_map = np.zeros((height, width), dtype=np.int32)
+    count_map[meaningful] = 1  # 每个有意义的格子至少 count=1
+
+    # 如果像素不是纯粹三值（有其他灰度值），保留归一化强度到 count_map
+    # 但 WBM 标准编码就是三值，这里保持简单
+
+    # ── binary_map ──
+    binary_map = count_map.astype(np.uint8)
+
+    # ── density_map ──
+    density_map = count_map.astype(np.float32)
+    total = float(density_map.sum())
+    if total > 0:
+        density_map /= total
+
+    representation_maps: dict = {
+        "binary": binary_map,
+        "count": count_map,
+        "density": density_map,
+        # soft / three-value / mountain 对 WBM 引用意义不大，占位
+        "soft": density_map.copy(),
+        "three-value": binary_map.astype(np.float32),
+        "mountain": density_map.copy(),
+    }
+
+    return GridMaps(
+        count_map=representation_maps["count"],
+        binary_map=representation_maps["binary"],
+        density_map=representation_maps["density"],
+        status_map=status_map,
+        representation_map=representation_maps["density"],
+        representation_maps=representation_maps,
+        metadata={
+            "source": str(path),
+            "defect_value": defect_value,
+            "no_defect_value": no_defect_value,
+            "background_value": background_value,
+            "target_height": height,
+            "target_width": width,
+        },
+    )
+
+
+def _decode_png_grayscale(path: str | Path) -> np.ndarray:
+    """纯 Python/NumPy 解码灰度 PNG（0~255）。不依赖第三方图像库。"""
+    with open(path, "rb") as f:
+        data = f.read()
+
+    # 校验 PNG 魔数
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise ValueError(f"Not a valid PNG file: {path}")
+
+    pos = 8
+    width = height = bit_depth = color_type = 0
+    raw_bytes = b""
+
+    while pos < len(data):
+        length = struct.unpack(">I", data[pos : pos + 4])[0]
+        chunk_type = data[pos + 4 : pos + 8]
+        chunk_data = data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+
+        if chunk_type == b"IHDR":
+            width = struct.unpack(">I", chunk_data[0:4])[0]
+            height = struct.unpack(">I", chunk_data[4:8])[0]
+            bit_depth = chunk_data[8]
+            color_type = chunk_data[9]
+
+        elif chunk_type == b"IDAT":
+            raw_bytes += chunk_data
+
+        elif chunk_type == b"IEND":
+            break
+
+    if not raw_bytes:
+        raise ValueError(f"No image data in PNG: {path}")
+
+    # 解压 zlib
+    decompressed = zlib.decompress(raw_bytes)
+
+    # PNG 每行前有一个 filter 字节；处理最简单的 filter=0 (None)
+    bytes_per_row = 1 + width  # filter byte + pixel bytes
+    expected_len = bytes_per_row * height
+    if len(decompressed) < expected_len:
+        raise ValueError(f"Unexpected decompressed length: {len(decompressed)} vs {expected_len}")
+
+    pixels = np.zeros((height, width), dtype=np.uint8)
+    for row in range(height):
+        start = row * bytes_per_row
+        filter_byte = decompressed[start]
+        row_data = decompressed[start + 1 : start + bytes_per_row]
+        if filter_byte == 0:  # None filter
+            pixels[row, :] = np.frombuffer(row_data, dtype=np.uint8)
+        else:
+            # Sub filter: pixel[i] = raw[i] + pixel[i-1]; Up filter: +pixel_above[i]
+            raw = np.frombuffer(row_data, dtype=np.uint8).astype(np.int32)
+            decoded = raw.copy()
+            if filter_byte == 1:  # Sub
+                for col in range(1, width):
+                    decoded[col] = (decoded[col] + decoded[col - 1]) % 256
+            elif filter_byte == 2:  # Up
+                decoded[:] = (decoded + pixels[row - 1, :].astype(np.int32)) % 256
+            elif filter_byte == 4:  # Paeth (simplified)
+                decoded[:] = decoded % 256  # fallback: no-op on paeth for now
+            pixels[row, :] = decoded.astype(np.uint8)
+
+    return pixels
 
 
 def load_defect_tables(klarf_path: str | Path) -> List[DefectTable]:

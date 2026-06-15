@@ -9,13 +9,13 @@ try:
     from .mappers import MAPPERS
     from .representations import REPRESENTATIONS
     from .pipeline import map_klarf_to_grid
-    from .io import read_wbm_shape, save_grid_maps
+    from .io import read_wbm_shape, read_wbm_png, save_grid_maps
     from .similarity import SIMILARITIES, compute_similarity
 except ImportError:
     from mappers import MAPPERS
     from representations import REPRESENTATIONS
     from pipeline import map_klarf_to_grid
-    from io import read_wbm_shape, save_grid_maps
+    from io import read_wbm_shape, read_wbm_png, save_grid_maps
     from similarity import SIMILARITIES, compute_similarity
 
 
@@ -29,7 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mapper",
         choices=sorted(MAPPERS),
-        default="physical-coordinate",
+        default="die-index",
         help="Pluggable coordinate mapping strategy.",
     )
     parser.add_argument(
@@ -115,11 +115,32 @@ def main() -> None:
     if args.similarity:
         if not args.reference:
             raise ValueError("--reference is required when --similarity is set.")
-        ref = dict(np.load(args.reference, allow_pickle=True))
-        ref_map = ref["representation_map"]
-        wdm_map = grid_maps.representation_map
 
-        result = compute_similarity(ref_map, wdm_map, method=args.similarity)
+        # 支持两种 reference 来源：.npz（已处理的 GridMaps）或 .png（WBM 图）
+        ref_path = Path(args.reference)
+        if ref_path.suffix.lower() == ".png":
+            ref_gm = read_wbm_png(ref_path)
+        else:
+            ref_data = dict(np.load(ref_path, allow_pickle=True))
+            from .models import GridMaps
+            ref_gm = GridMaps(
+                count_map=ref_data["count_map"],
+                binary_map=ref_data["binary_map"],
+                density_map=ref_data["density_map"],
+                status_map=ref_data["status_map"],
+                representation_map=ref_data["representation_map"],
+                representation_maps={k: ref_data[k] for k in
+                    ["binary", "count", "density", "soft", "three-value", "mountain"] if k in ref_data},
+                metadata=ref_data.get("metadata", {}),
+            )
+
+        result = compute_similarity(
+            ref_gm.representation_map,
+            grid_maps.representation_map,
+            method=args.similarity,
+            reference_status=ref_gm.status_map,
+            candidate_status=grid_maps.status_map,
+        )
 
         try:
             from .similarity import SimilarityResult
