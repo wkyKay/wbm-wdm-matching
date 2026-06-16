@@ -78,6 +78,23 @@ def _masked_float_maps(
 
 
 class DiceSimilarity(SimilarityMethod):
+    """Dice 系数（Dice Similarity Coefficient, DSC）。
+
+    公式：
+        Dice = 2 * |A ∩ B| / (|A| + |B|)
+
+    其中交集使用逐像素 min(A, B) 计算，支持连续值权重图（density map 等）。
+    当 reference 与 candidate 完全匹配时得分为 1.0；完全不重叠时得分为 0.0。
+    两个 map 同时为零时返回 1.0（完美匹配）。
+
+    特点：
+        - 对交集给予 2 倍权重，比 IoU 更"宽容"——小目标重叠也能获得中等分数。
+        - 对连续值 map：捕获权重分布的整体重叠程度，而非二值化的精确像素匹配。
+        - 无几何不变性：要求 wafer 严格对齐。
+
+    适用范围：需要平衡覆盖与漏检的通用场景，是最常用的二值/连续图相似度指标之一。
+    """
+
     name = "dice"
 
     def compute(self, reference_map, candidate_map, reference_status=None, candidate_status=None):
@@ -90,6 +107,22 @@ class DiceSimilarity(SimilarityMethod):
 
 
 class IoUSimilarity(SimilarityMethod):
+    """交并比（Intersection over Union, IoU / Jaccard Index）。
+
+    公式：
+        IoU = |A ∩ B| / |A ∪ B|
+
+    其中交集使用逐像素 min(A, B)、并集使用逐像素 max(A, B) 计算，支持连续值权重图。
+    得分为 1.0 表示完美匹配；0.0 表示完全不重叠。两个 map 同时为零时返回 1.0。
+
+    特点：
+        - 比 Dice 更"严格"：并集受双方共同影响，任意一方扩张都会拉低得分。
+        - 对缺陷数量/面积差异敏感：candidate 多出缺陷会导致并集变大、得分下降。
+        - 对连续值 map 同样适用，衡量的是权重分布的重叠占比。
+
+    适用范围：需要严格控制漏检（candidate 多报会立即惩罚）的场景。
+    """
+
     name = "iou"
 
     def compute(self, reference_map, candidate_map, reference_status=None, candidate_status=None):
@@ -102,6 +135,25 @@ class IoUSimilarity(SimilarityMethod):
 
 
 class NccSimilarity(SimilarityMethod):
+    """归一化互相关（Normalized Cross-Correlation, NCC）。
+
+    公式：
+        NCC = Σ[(A_i - μ_A)(B_i - μ_B)] / (σ_A * σ_B)
+
+    将两个 map 在"有意义区域"内的像素拉平为向量，减去各自均值后计算余弦相似度
+    （等价于 Pearson 相关系数）。
+
+    特点：
+        - 对整体亮度/偏移不敏感：减均值操作使得两个 map 的绝对数值大小不影响得分。
+          例如 reference = [1, 2, 3] 与 candidate = [10, 20, 30] 的 NCC = 1.0。
+        - 衡量的是"缺陷分布模式"的线性相关性，而非像素级重叠。
+        - 对稀疏或均匀分布的两个 map 区分力较弱（因为减均值后信号被削弱）。
+
+    得分范围 [-1, 1]，1.0 表示完全正相关。无有意义像素时返回 0.0。
+
+    适用范围：关注缺陷空间分布模式而非绝对数量的场景；容忍信号强度差异。
+    """
+
     name = "ncc"
 
     def compute(self, reference_map, candidate_map, reference_status=None, candidate_status=None):
@@ -125,6 +177,24 @@ class NccSimilarity(SimilarityMethod):
 
 
 class CosineSimilarity(SimilarityMethod):
+    """余弦相似度（Cosine Similarity）。
+
+    公式：
+        cos(θ) = (A · B) / (||A|| * ||B||)
+
+    将两个 map 在"有意义区域"内的像素拉平为向量，直接计算夹角余弦（不去均值）。
+
+    特点：
+        - 对向量长度（总权重大小）不敏感，只关心方向（分布比例）。
+          例如 reference = [1, 0, 1] 与 candidate = [2, 0, 2] 的 cosine = 1.0。
+        - 与 NCC 的区别：NCC 减均值后衡量"模式相关"，cosine 不减去均值，衡量"方向一致"。
+        - 当一个向量全零时，另一向量也全零返回 1.0，否则返回 0.0。
+
+    得分范围 [0, 1]（因为 map 值非负），1.0 表示分布比例完全一致。
+
+    适用范围：关注缺陷分布比例而非绝对数量的场景；可容忍整体强度缩放。
+    """
+
     name = "cosine"
 
     def compute(self, reference_map, candidate_map, reference_status=None, candidate_status=None):
@@ -147,6 +217,26 @@ class CosineSimilarity(SimilarityMethod):
 
 
 class ChamferSimilarity(SimilarityMethod):
+    """倒角距离相似度（Chamfer Distance Similarity）。
+
+    先将两个二值缺陷图转化为点集坐标（缺陷像素位置），再计算双向倒角距离：
+
+        CD(A, B) = mean_{a∈A}(min_{b∈B} ||a-b||) + mean_{b∈B}(min_{a∈A} ||b-a||)
+
+    最终归一化得分：
+        score = 1.0 - min(CD / max_dim, 1.0)
+
+    其中 max_dim 为网格对角线长度，作为归一化上限。
+
+    特点：
+        - 基于几何距离而非像素重叠，因此对小幅平移有一定的鲁棒性。
+        - 仅使用二值缺陷位置（有/无缺陷），忽略像素级权重（density）。
+        - 计算复杂度为 O(n*m)，缺陷点极多时较慢。
+        - 两边都没缺陷点 → 1.0；仅一边有 → 0.0。
+
+    适用范围：容忍小幅空间偏移、关注缺陷位置整体分布的场景。
+    """
+
     name = "chamfer"
 
     def compute(self, reference_map, candidate_map, reference_status=None, candidate_status=None):
@@ -174,6 +264,21 @@ class ChamferSimilarity(SimilarityMethod):
 
 
 class CoverageSimilarity(SimilarityMethod):
+    """覆盖率（Coverage Rate）。
+
+    公式：
+        Coverage = |A ∩ B| / |A|
+
+    即 reference 缺陷总权重中，被 candidate "覆盖"到的比例。交集使用逐像素 min(A, B)。
+
+    特点：
+        - 单向衡量：只看 reference 被覆盖了多少，不关心 candidate 多出来的部分。
+        - 得分总是 0~1，reference 全零时返回 1.0。
+        - 与 Leakage 配合使用：Coverage 看"找回率"，Leakage 看"多报率"。
+
+    适用范围：关注"是否漏掉了真实缺陷"的场景。
+    """
+
     name = "coverage"
 
     def compute(self, reference_map, candidate_map, reference_status=None, candidate_status=None):
@@ -186,9 +291,20 @@ class CoverageSimilarity(SimilarityMethod):
 
 
 class LeakagePenalty(SimilarityMethod):
-    """candidate 中未被 reference 支持的权重比例。
+    """泄漏率（Leakage Rate / False Positive Rate）。
 
-    有意义区域仍以 WBM status_map 为准；二值图下退化为原来的漏检惩罚。
+    公式：
+        Leakage = (|B| - |A ∩ B|) / |B|
+
+    即 candidate 缺陷总权重中，没有被 reference 支持的比例。交集使用逐像素 min(A, B)。
+
+    特点：
+        - 单向衡量：只看 candidate 多报了多少，不关心 reference 是否被覆盖。
+        - 得分越低越好（0 = 无额外缺陷），但作为"相似度"按原始值返回，调用方自己解读。
+        - candidate 全零时返回 0.0。
+        - 与 Coverage 配合使用：Coverage 看"找回率"（越高越好），Leakage 看"多报率"（越低越好）。
+
+    适用范围：关注"是否多报了不存在的缺陷"的场景。
     """
 
     name = "leakage"
@@ -203,7 +319,22 @@ class LeakagePenalty(SimilarityMethod):
 
 
 class CoverageLeakageScore(SimilarityMethod):
-    """Coverage - beta × Leakage，方案中推荐的第一版简化得分。"""
+    """Coverage-Leakage 综合得分。
+
+    公式：
+        score = Coverage - beta * Leakage
+        其中 Coverage = |A ∩ B| / |A|,  Leakage = |B - (A ∩ B)| / |B|
+
+    将"找回真实缺陷"与"惩罚多报缺陷"合成单一分数。
+
+    特点：
+        - beta 控制漏检与多报的权衡：beta < 1 偏向覆盖率（容忍多报），beta > 1 偏向漏检惩罚。
+        - 默认 beta = 0.5，即 Coverage 权重是 Leakage 的两倍。
+        - 返回 SimilarityResult（含 coverage 和 leakage 分量），便于分项分析。
+        - 得分无下界：若 Leakage 极高且 Coverage 很低，可跌至负值。
+
+    适用范围：需要单一可比较分数、且需同时关心覆盖与多报的排名场景。
+    """
 
     name = "coverage-leakage"
 

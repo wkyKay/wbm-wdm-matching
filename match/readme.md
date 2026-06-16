@@ -100,16 +100,18 @@ WBM PNG 使用三值编码（与 WM-811K 数据集一致）：
 
 ## 3. 代码架构
 
-```
+```text
 match/
-  __init__.py          # 统一 re-export 所有公共 API
-  models.py            # DefectTable、GridMaps、状态常量
+  __init__.py           # 统一 re-export 所有公共 API
+  models.py             # DefectTable、GridMaps、状态常量
   fileio.py             # KLARF 解析、WBM PNG 解码、npz 读写
-  mappers.py           # 3 种坐标映射器 + MAPPERS 注册表
-  representations.py   # 6 种网格表达 + REPRESENTATIONS 注册表
-  pipeline.py          # map_klarf_to_grid 端到端入口
-  similarity.py        # 8 种相似度 + SIMILARITIES 注册表
-  main.py              # CLI 入口
+  mappers.py            # 3 种坐标映射器 + MAPPERS 注册表
+  representations.py    # 6 种网格表达 + REPRESENTATIONS 注册表
+  pipeline.py           # map_klarf_to_grid 端到端入口
+  similarity.py         # 8 种相似度 + SIMILARITIES 注册表
+  visualization.py      # 绘图对比：并排/叠加/多视图
+  plot_ref_cnd.py       # CLI 快速看图脚本
+  main.py               # 批量处理 CLI 入口
 ```
 
 ---
@@ -139,7 +141,66 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.main \
 
 ---
 
-## 5. 待办事项
+## 5. 可视化对比（visualization.py）
+
+提供 4 个绘图函数，核心设计原则：**ref 与 cnd 共用一个 (cmap, vmin, vmax)**，并用 status_map 统一遮蔽 wafer 外区域，确保两张图可直接视觉比较。
+
+### 5.1 vmin / vmax 的作用
+
+| 无统一 range | 有统一 range |
+|-------------|-------------|
+| 各图用自己的 min/max 映射颜色 | 两图共用同一个 min/max |
+| 值 0.001 在 ref 是中等亮度，在 cnd 可能是最高亮度 | 0.001 在两图中是同一个颜色 |
+| **不可比** | **可直接对比** |
+
+### 5.2 可用函数
+
+| 函数 | 用途 |
+|------|------|
+| `plot_single(gm, ...)` | 绘单张 map |
+| `plot_comparison(ref, cnd, ...)` | 并排对比 ref vs cnd，统一 colormap |
+| `plot_overlay(ref, cnd, ...)` | 差值叠加：蓝=ref独有，红=cnd独有，白=匹配 |
+| `plot_representation_panel(gm, ...)` | 一行展示 binary / count / density 三视图 |
+
+### 5.3 代码示例
+
+```python
+from fileio import read_wbm_png
+from pipeline import map_klarf_to_grid
+from visualization import plot_comparison, plot_overlay
+
+ref_gm = read_wbm_png("reference.png")
+cnd_gm = map_klarf_to_grid("data.klarf", shape=ref_gm.count_map.shape)
+
+# 并排 density 热力图对比
+plot_comparison(ref_gm, cnd_gm, representation="density", cmap="hot",
+                save_path="cmp_density.png")
+
+# binary 灰度对比
+plot_comparison(ref_gm, cnd_gm, representation="binary", cmap="gray",
+                save_path="cmp_binary.png")
+
+# 差值叠加：一眼看出漏检（蓝）与多报（红）
+plot_overlay(ref_gm, cnd_gm, representation="binary",
+             save_path="cmp_overlay.png")
+```
+
+### 5.4 CLI 快速看图
+
+```bash
+python plot_ref_cnd.py \
+    --ref ../data/wm811k/000604.png \
+    --klarf ../data/klarf/some_file \
+    --mapper die-index \
+    --representation density \
+    --output comparison.png
+```
+
+Shape 始终从 `--ref` 的 WBM PNG 自动读取，无需手动指定。
+
+---
+
+## 6. 待办事项
 
 - [x] `--similarity` 模式下一次输出所有相似度指标 — 已实现
 - [ ] 移除或重命名 MountainMap（与 SoftMap 数学等价，功能冗余）
@@ -149,7 +210,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.main \
 
 ---
 
-## 6. 参考论文方向
+## 7. 参考论文方向
 
 | 方向 | 可借鉴方法 |
 |------|-----------|

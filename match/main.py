@@ -12,13 +12,13 @@ try:
     from .mappers import MAPPERS
     from .representations import REPRESENTATIONS
     from .pipeline import map_klarf_to_grid
-    from .fileio import read_wbm_shape, read_wbm_png, save_grid_maps
+    from .fileio import load_defect_tables, read_wbm_shape, read_wbm_png, save_grid_maps
     from .similarity import SIMILARITIES, compute_similarity, SimilarityResult
 except ImportError:
     from mappers import MAPPERS
     from representations import REPRESENTATIONS
     from pipeline import map_klarf_to_grid
-    from fileio import read_wbm_shape, read_wbm_png, save_grid_maps
+    from fileio import load_defect_tables, read_wbm_shape, read_wbm_png, save_grid_maps
     from similarity import SIMILARITIES, compute_similarity, SimilarityResult
 
 
@@ -36,7 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--klarf-dir",
         required=True,
-        help="Directory containing .klarf files to process.",
+        help="Directory containing KLARF files to process.",
+    )
+    parser.add_argument(
+        "--klarf-glob",
+        default="*.klarf",
+        help="Glob pattern to match KLARF files (default: *.klarf).",
     )
     parser.add_argument(
         "--reference",
@@ -89,6 +94,19 @@ def parse_args() -> argparse.Namespace:
         default="match/output/batch_results.tsv",
         help="Path to the output TSV log file.",
     )
+    parser.add_argument(
+        "--min-defects", type=int, default=0,
+        help="Skip KLARF files with fewer than this many defects.",
+    )
+    parser.add_argument(
+        "--topk", type=int, default=10,
+        help="Number of top-K files to show per metric in the ranking log (0 = all).",
+    )
+    parser.add_argument(
+        "--topk-log",
+        default="match/output/batch_topk.tsv",
+        help="Path to the top-K ranking log file.",
+    )
     return parser.parse_args()
 
 
@@ -135,6 +153,20 @@ def process_one(
 ) -> dict:
     """处理单个 KLARF 文件，返回 {method: score_or_result} 或 {"error": msg}。"""
     result: dict = {}
+
+    # Threshold check: skip if too few defects
+    if args.min_defects > 0:
+        try:
+            tables = load_defect_tables(klarf_path)
+            idx = args.defect_table_index
+            if idx >= len(tables) or len(tables[idx].rows) < args.min_defects:
+                actual = len(tables[idx].rows) if idx < len(tables) else 0
+                return {
+                    "_status": "SKIPPED",
+                    "_reason": f"defect count {actual} < {args.min_defects}",
+                }
+        except Exception as e:
+            return {"_status": "ERROR", "_reason": f"count check failed: {e}"}
 
     try:
         grid_maps = map_klarf_to_grid(
@@ -201,7 +233,7 @@ def main() -> None:
         print(f"ERROR: --klarf-dir is not a directory: {klarf_dir}", file=sys.stderr)
         sys.exit(1)
 
-    klarf_files = sorted(klarf_dir.glob("*.klarf"))
+    klarf_files = sorted(klarf_dir.glob(args.klarf_glob))
     if not klarf_files:
         print(f"ERROR: No .klarf files found in {klarf_dir}", file=sys.stderr)
         sys.exit(1)
@@ -258,6 +290,30 @@ def main() -> None:
             f.write(f"{fname}\t" + "\t".join(scores) + "\n")
 
     print(f"Log saved: {log_path}")
+
+    # ── Top-K ranking per metric ──
+    topk = args.topk
+    topk_log_path = Path(args.topk_log)
+    topk_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with open(topk_log_path, "w") as f:
+        f.write("metric\trank\tfile\tscore\n")
+        for col in SIMILARITY_COLUMNS:
+            # (filename, score) pairs, only valid numeric scores
+            scored: list[tuple[str, float]] = []
+            for fname, res in rows:
+                val = res.get(col)
+                if isinstance(val, SimilarityResult):
+                    scored.append((fname, val.score))
+                elif isinstance(val, (float, int)):
+                    scored.append((fname, float(val)))
+
+            scored.sort(key=lambda x: x[1], reverse=True)
+            limit = topk if topk > 0 else len(scored)
+            for rank, (fname, score) in enumerate(scored[:limit], 1):
+                f.write(f"{col}\t{rank}\t{fname}\t{score:.6f}\n")
+
+    print(f"Top-K log saved: {topk_log_path}")
 
     # ── 打印摘要表格到 stdout ──
     col_widths = [max(len(h), 10) for h in header]
