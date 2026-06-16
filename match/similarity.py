@@ -291,18 +291,19 @@ class CoverageSimilarity(SimilarityMethod):
 
 
 class LeakagePenalty(SimilarityMethod):
-    """泄漏率（Leakage Rate / False Positive Rate）。
+    """泄漏控制得分（1 - Leakage Rate）。
 
     公式：
-        Leakage = (|B| - |A ∩ B|) / |B|
+        score = 1.0 - (|B| - |A ∩ B|) / |B|
+              = |A ∩ B| / |B|
 
-    即 candidate 缺陷总权重中，没有被 reference 支持的比例。交集使用逐像素 min(A, B)。
+    即 candidate 缺陷总权重中，被 reference 支持的比例。得分越高越好（1.0 = 无泄漏）。
 
     特点：
-        - 单向衡量：只看 candidate 多报了多少，不关心 reference 是否被覆盖。
-        - 得分越低越好（0 = 无额外缺陷），但作为"相似度"按原始值返回，调用方自己解读。
-        - candidate 全零时返回 0.0。
-        - 与 Coverage 配合使用：Coverage 看"找回率"（越高越好），Leakage 看"多报率"（越低越好）。
+        - 1.0 = candidate 所有缺陷都在 reference 缺陷区内（零泄漏）。
+        - 0.0 = candidate 缺陷全在 reference 无缺陷区（完全泄漏）。
+        - 与 Coverage 配合：Coverage 看"找回率"，Leakage 看"精确率"。
+        - candidate 全零时返回 1.0（无泄漏）。
 
     适用范围：关注"是否多报了不存在的缺陷"的场景。
     """
@@ -314,8 +315,8 @@ class LeakagePenalty(SimilarityMethod):
         matched = np.minimum(a, b).sum()
         total_b = b.sum()
         if total_b == 0:
-            return 0.0
-        return float((total_b - matched) / total_b)
+            return 1.0
+        return float(matched / total_b)
 
 
 class CoverageLeakageScore(SimilarityMethod):

@@ -67,18 +67,13 @@ def read_wbm_png(
     status_map[pixels == defect_value] = VALID_HAS_DEFECT        # 既无缺陷又有缺陷的格子，后续被 count_map>0 覆盖掉 VALID_NO_DEFECT
     # 灰色区域标记为 VALID_NO_DEFECT，后续 count_map>0 的格子会被覆盖为 VALID_HAS_DEFECT
 
-    # ── 构建 count_map: 非背景像素的强度 (0-1 归一化) ──
-    meaningful = pixels > background_value
-    count_map = np.zeros((height, width), dtype=np.int32)
-    count_map[meaningful] = 1  # 每个有意义的格子至少 count=1
+    # ── 构建 count_map: 只有白色(缺陷)像素计入 ──
+    count_map = (pixels == defect_value).astype(np.int32)
 
-    # 如果像素不是纯粹三值（有其他灰度值），保留归一化强度到 count_map
-    # 但 WBM 标准编码就是三值，这里保持简单
-
-    # ── binary_map ──
+    # ── binary_map: WBM 本身是二值信号 ──
     binary_map = count_map.astype(np.uint8)
 
-    # ── density_map ──
+    # ── density_map: 仅缺陷区域归一化 ──
     density_map = count_map.astype(np.float32)
     total = float(density_map.sum())
     if total > 0:
@@ -88,7 +83,6 @@ def read_wbm_png(
         "binary": binary_map,
         "count": count_map,
         "density": density_map,
-        # soft / three-value / mountain 对 WBM 引用意义不大，占位
         "soft": density_map.copy(),
         "three-value": binary_map.astype(np.float32),
         "mountain": density_map.copy(),
@@ -99,7 +93,7 @@ def read_wbm_png(
         binary_map=representation_maps["binary"],
         density_map=representation_maps["density"],
         status_map=status_map,
-        representation_map=representation_maps["density"],
+        representation_map=representation_maps["binary"],  # WBM 用 binary，保持二值语义
         representation_maps=representation_maps,
         metadata={
             "source": str(path),
