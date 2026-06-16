@@ -8,19 +8,29 @@
 
 ---
 
-## 2. 核心流水线
+## 2. 核心流水线（批量模式）
 
 ```
-┌──────────┐     ┌──────────────┐     ┌──────────────┐     ┌────────────────┐
-│ KLARF    │ →   │ Coordinate   │ →   │ Represent-   │ →   │ Similarity     │
-│ WDM      │     │ Mapping      │     │ ation Build  │     │ Computation    │
-└──────────┘     └──────────────┘     └──────────────┘     └────────────────┘
-                                                                    ↑
-                                                              ┌─────┴─────┐
-                                                              │ WBM PNG   │
-                                                              │ (参考图)   │
-                                                              └───────────┘
+┌─────────────────┐     ┌──────────────────┐
+│ KLARF 目录      │ →   │ 逐文件            │
+│ (n 个 .klarf)   │     │ 1. 坐标映射       │
+└─────────────────┘     │ 2. 网格表达       │
+                        │ 3. 8 种相似度     │
+                        │    (vs. WBM 参考) │
+                        └────────┬─────────┘
+                                 ↓
+                        ┌──────────────────┐
+                        │ TSV Log 文件      │
+                        │ (n × 9 表格)      │
+                        └──────────────────┘
+                                 ↑
+                        ┌────────┴────────┐
+                        │ WBM PNG (参考图) │
+                        └─────────────────┘
 ```
+
+- 输入：一个包含 `*.klarf` 文件的目录 + 一张参考 WBM PNG
+- 输出：一个 TSV 文件，每行一个 KLARF 文件，每列一种相似度指标
 
 ### 2.1 坐标映射（Mappers）
 
@@ -94,7 +104,7 @@ WBM PNG 使用三值编码（与 WM-811K 数据集一致）：
 match/
   __init__.py          # 统一 re-export 所有公共 API
   models.py            # DefectTable、GridMaps、状态常量
-  io.py                # KLARF 解析、WBM PNG 解码、npz 读写
+  fileio.py             # KLARF 解析、WBM PNG 解码、npz 读写
   mappers.py           # 3 种坐标映射器 + MAPPERS 注册表
   representations.py   # 6 种网格表达 + REPRESENTATIONS 注册表
   pipeline.py          # map_klarf_to_grid 端到端入口
@@ -107,32 +117,32 @@ match/
 ## 4. CLI 使用方式
 
 ```bash
-# 基础：KLARF → GridMaps
-python3 -m match.main \
-  --klarf data.klarf \
-  --wbm target.png \
+# 批量处理：目录中所有 KLARF vs. 一张 WBM 参考图
+PYTHONPATH=wbm-wdm-matching python3 -m match.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
-  --output wdm.npz
-
-# 带相似度计算（直接比较 WBM PNG）
-python3 -m match.main \
-  --klarf data.klarf \
-  --wbm target.png \
-  --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
-  --similarity coverage-leakage \
-  --reference reference.png
+  --log results.tsv
 ```
+
+所有 8 种相似度指标自动计算，结果写入 TSV：
+
+| 列 | 内容 |
+|----|------|
+| `file` | KLARF 文件名 |
+| `dice`, `iou`, `ncc`, `cosine` | 基础相似度 |
+| `coverage`, `leakage`, `coverage-leakage` | Coverage-Leakage 族 |
+| `chamfer` | 点集倒角距离 |
+| `mapped_defects` | 映射成功数/总缺陷数 |
 
 ---
 
 ## 5. 待办事项
 
+- [x] `--similarity` 模式下一次输出所有相似度指标 — 已实现
 - [ ] 移除或重命名 MountainMap（与 SoftMap 数学等价，功能冗余）
-- [ ] `--similarity` 模式下一次输出所有 6 种 representation 的得分
-- [ ] PhysicalCoordinateGridMapper 计算方法存疑（todo 文件标记）
 - [ ] SoftMap σ 配置化（`--soft-sigma` 参数）
 - [ ] 实现组合搜索（Beam Search + Coverage-Leakage）— 第二期
 - [ ] 旋转容错搜索 — 第三期

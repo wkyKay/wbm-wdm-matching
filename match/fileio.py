@@ -196,14 +196,33 @@ def _collect_defect_tables(node: object, tables: List[DefectTable], source: str)
     if "Columns" in node and "Data" in node:
         columns = [item["Column"] for item in node["Columns"]]
         if {"DEFECTID", "XINDEX", "YINDEX"}.issubset(columns):
-            rows = np.asarray(node["Data"], dtype=float)
-            if rows.ndim == 1:
-                rows = rows.reshape(1, -1)
+            # 生产数据中某些字段为 "N" (unknown)，转为 np.nan 再 parse
+            rows = _safe_float_array(node["Data"])
             tables.append(DefectTable(columns=columns, rows=rows, source=source))
 
     for key, value in node.items():
         if isinstance(value, Mapping):
             _collect_defect_tables(value, tables, source=f"{source}/{key}")
+
+
+def _safe_float_array(data: list) -> np.ndarray:
+    """将 KLARF Data 列表转为 float 数组，'N' 视为 NaN。"""
+    # 判断结构：list of rows（二维）或 flat list（一维）
+    is_nested = data and isinstance(data[0], (list, tuple))
+
+    flat = []
+    for item in data:
+        if isinstance(item, (list, tuple)):
+            flat.extend(item)
+        else:
+            flat.append(item)
+    converted = [np.nan if isinstance(v, str) and v.strip().upper() == "N" else float(v) for v in flat]
+    arr = np.array(converted, dtype=float)
+
+    if is_nested:
+        return arr.reshape(len(data), -1)
+    else:
+        return arr.reshape(1, -1)
 
 
 def load_die_pitch(klarf_path: str | Path) -> tuple[float, float]:

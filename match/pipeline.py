@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Tuple
 
-from .io import load_defect_tables, load_die_pitch
+from .fileio import load_defect_tables, load_die_pitch
 from .mappers import MAPPERS, GridMapper, DieIndexGridMapper, PhysicalCoordinateGridMapper
 from .representations import REPRESENTATIONS, DensityMapBuilder
 from .models import GridMaps
