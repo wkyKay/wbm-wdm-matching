@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--klarf-glob",
-        default="*.klarf",
+        default="*.*",
         help="Glob pattern to match KLARF files (default: *.klarf).",
     )
     parser.add_argument(

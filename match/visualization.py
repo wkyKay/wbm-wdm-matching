@@ -128,7 +128,8 @@ def plot_comparison(
     ax_r.axis("off")
 
     # colorbar（基于 candidate 的图，因为范围统一所以两图可用同一个 bar）
-    plt.colorbar(im, ax=[ax_l, ax_r], fraction=0.046, pad=0.04, label=representation)
+    # 只锚定到右子图，防止 colorbar 挤入两图之间
+    plt.colorbar(im, ax=ax_r, fraction=0.046, pad=0.04, label=representation)
 
     plt.tight_layout()
 
