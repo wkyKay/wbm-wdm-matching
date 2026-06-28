@@ -18,9 +18,7 @@ def main():
     config = DenseRetrievalConfig.parse_arguments()
     _normalize_backbone_config(config)
     config.save()
-    device = torch.device('cuda' if config.device == 'auto' and torch.cuda.is_available() else 'cpu')
-    if config.device != 'auto':
-        device = torch.device(config.device)
+    device = _get_device(config.device)
     data_file = _resolve_path(config.data_file)
 
     dataset = WM38K(
@@ -61,6 +59,21 @@ def _build_backbone(config, in_channels):
             img_size=config.input_size,
         )
     raise ValueError(f'Unknown backbone_type: {config.backbone_type}')
+
+
+def _get_device(name):
+    if name == 'auto':
+        name = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device(name)
+    if device.type == 'cuda':
+        if not torch.cuda.is_available():
+            raise RuntimeError('CUDA requested but not available.')
+        torch.cuda.set_device(device)
+        print(f'[Device] GPU: {torch.cuda.get_device_name(device)} (CUDA {torch.version.cuda})')
+        torch.backends.cudnn.benchmark = True
+    else:
+        print('[Device] GPU not available, falling back to CPU')
+    return device
 
 
 def _normalize_backbone_config(config):

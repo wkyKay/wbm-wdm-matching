@@ -27,16 +27,42 @@ This version does not implement comparison methods. Labels are used only for ret
 
 ## Run
 
+WaPIRL-style pretraining on MixedWM38K:
+
+```bash
+cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching/Wafer-DenseIR
+python3 run_wapirl_pretrain.py \
+  --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --device cuda \
+  --split train \
+  --input_size 96 \
+  --batch_size 64 \
+  --num_workers 4 \
+  --epochs 100 \
+  --augmentation crop_noise_rotate \
+  --num_negatives 1024
+```
+
+This script saves checkpoints under:
+
+```text
+checkpoints/wm38k/wapirl_pretrain/<backbone>/<timestamp>/
+```
+
+Use the resulting `best_model.pt` for DenseIR retrieval with `--pretrained_model_key backbone`.
+
 Smoke test without a pretrained checkpoint:
 
 ```bash
 cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching/Wafer-DenseIR
 python3 run_dense_retrieval.py \
   --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --device cuda \
   --split test \
   --max_samples 32 \
   --input_size 96 \
   --batch_size 16 \
+  --num_workers 4 \
   --token_mode defect_band \
   --token_dilation 1 \
   --topk_tokens 5 \
@@ -50,8 +76,10 @@ python3 run_dense_retrieval.py \
   --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
   --pretrained_model_file /path/to/wapirl_checkpoint.pt \
   --pretrained_model_key backbone \
+  --device cuda \
   --split test \
   --input_size 96 \
+  --num_workers 4 \
   --token_mode defect_band \
   --token_dilation 1 \
   --topk_tokens 5 \
@@ -65,8 +93,10 @@ python3 run_dense_retrieval.py \
   --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
   --backbone_type vit \
   --backbone_config tiny \
+  --device cuda \
   --split test \
   --input_size 96 \
+  --num_workers 4 \
   --token_mode defect_band \
   --token_dilation 1 \
   --topk_tokens 5 \
