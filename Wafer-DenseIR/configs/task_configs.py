@@ -93,8 +93,8 @@ class ConfigBase(object):
 
     @staticmethod
     def model_parser():
-        parser = argparse.ArgumentParser("CNN Backbone", add_help=False)
-        parser.add_argument('--backbone_type', type=str, default='resnet', choices=('resnet',))
+        parser = argparse.ArgumentParser("Backbone", add_help=False)
+        parser.add_argument('--backbone_type', type=str, default='resnet', choices=('resnet', 'vit'))
         parser.add_argument('--backbone_config', type=str, default='18')
         parser.add_argument('--decouple_input', dest='decouple_input', action='store_true')
         parser.add_argument('--no_decouple_input', dest='decouple_input', action='store_false')

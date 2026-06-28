@@ -6,15 +6,17 @@ import sys
 import numpy as np
 import torch
 
-from configs.network_configs import RESNET_BACKBONE_CONFIGS
+from configs.network_configs import RESNET_BACKBONE_CONFIGS, VIT_BACKBONE_CONFIGS
 from configs.task_configs import DenseRetrievalConfig
 from datasets.wm38k import WM38K
 from models.resnet import ResNetBackbone
+from models.vit import ViTTinyBackbone
 from tasks.dense_retrieval import DenseRetrieval
 
 
 def main():
     config = DenseRetrievalConfig.parse_arguments()
+    _normalize_backbone_config(config)
     config.save()
     device = torch.device('cuda' if config.device == 'auto' and torch.cuda.is_available() else 'cpu')
     if config.device != 'auto':
@@ -31,7 +33,8 @@ def main():
         max_samples=config.max_samples,
         decouple_input=config.decouple_input,
     )
-    backbone = ResNetBackbone(RESNET_BACKBONE_CONFIGS[config.backbone_config], in_channels=2)
+    in_channels = 2 if config.decouple_input else 1
+    backbone = _build_backbone(config, in_channels)
     if config.pretrained_model_file is not None:
         backbone.load_weights_from_checkpoint(config.pretrained_model_file, key=config.pretrained_model_key)
 
@@ -46,6 +49,23 @@ def main():
     )
     task.save_features(records)
     print(f'Feature file: {os.path.join(config.output_dir, "dense_features.npz")}')
+
+
+def _build_backbone(config, in_channels):
+    if config.backbone_type == 'resnet':
+        return ResNetBackbone(RESNET_BACKBONE_CONFIGS[config.backbone_config], in_channels=in_channels)
+    if config.backbone_type == 'vit':
+        return ViTTinyBackbone(
+            VIT_BACKBONE_CONFIGS[config.backbone_config],
+            in_channels=in_channels,
+            img_size=config.input_size,
+        )
+    raise ValueError(f'Unknown backbone_type: {config.backbone_type}')
+
+
+def _normalize_backbone_config(config):
+    if config.backbone_type == 'vit' and config.backbone_config == '18':
+        config.backbone_config = 'tiny'
 
 
 def _resolve_path(path):

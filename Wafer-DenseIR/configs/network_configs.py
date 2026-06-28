@@ -15,3 +15,30 @@ RESNET_BACKBONE_CONFIGS = RESNET_ENCODER_CONFIGS = {
     },
 }
 
+
+VIT_BACKBONE_CONFIGS = VIT_ENCODER_CONFIGS = {
+    'tiny': {
+        'patch_size': 16,
+        'embed_dim': 192,
+        'num_heads': 3,
+        'depth': 12,
+        'mlp_ratio': 4.0,
+        'dropout': 0.1,
+    },
+    'small': {
+        'patch_size': 12,
+        'embed_dim': 96,
+        'num_heads': 4,
+        'depth': 8,
+        'mlp_ratio': 4.0,
+        'dropout': 0.1,
+    },
+    'micro': {
+        'patch_size': 16,
+        'embed_dim': 96,
+        'num_heads': 3,
+        'depth': 6,
+        'mlp_ratio': 4.0,
+        'dropout': 0.1,
+    },
+}

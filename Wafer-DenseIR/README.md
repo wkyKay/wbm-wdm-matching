@@ -58,6 +58,31 @@ python3 run_dense_retrieval.py \
   --sigma_pos 0.35
 ```
 
+Run with Tiny-ViT patch tokens:
+
+```bash
+python3 run_dense_retrieval.py \
+  --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --backbone_type vit \
+  --backbone_config tiny \
+  --split test \
+  --input_size 96 \
+  --token_mode defect_band \
+  --token_dilation 1 \
+  --topk_tokens 5 \
+  --sigma_pos 0.35
+```
+
+`--backbone_type vit` defaults to `--backbone_config tiny` when no explicit ViT config is supplied.
+
+ViT options:
+
+- `--backbone_config tiny`: patch=16, embed=192, depth=12, 6x6 patch tokens for 96x96 input.
+- `--backbone_config small`: patch=12, embed=96, depth=8, 8x8 patch tokens.
+- `--backbone_config micro`: patch=16, embed=96, depth=6, faster smoke tests.
+
+For this retrieval task the ViT path uses patch tokens, not only the CLS token, so explanations remain local and heatmap-based.
+
 ## Outputs
 
 Outputs are saved under:
