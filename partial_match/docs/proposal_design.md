@@ -567,14 +567,19 @@ clusters = cluster(
 )
 ```
 
-### 9.2 Week1 token extraction
+### 9.2 Historical token extraction
+
+早期 `week1_*` token extraction 脚本已废弃并删除。当前 retrieval baseline 使用：
 
 ```bash
-python3 partial_match/scripts/week1_extract_clusters_small.py \
-  --maps /Users/kayw/Documents/trae_projects/match-test/artifacts/week1/wm38k_maps.npz \
-  --proposal-types topk \
-  --proposal-top-k 5 \
-  --topk-base-method geometry_merge
+python3 partial_match/run_proposal_retrieval_pipeline.py \
+  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
+  --max-samples 512 \
+  --sample-strategy stratified \
+  --out-dir ../artifacts/proposal_based/system_test_512_stratified \
+  --review-max-queries 64 \
+  --review-top-k 3 \
+  --metric-k 1 3 5 10
 ```
 
 ### 9.3 Visualization
@@ -642,14 +647,14 @@ clusters = cluster(
 )
 ```
 
-逐步可视化：
+逐步可视化由 root pipeline 可选生成：
 
 ```bash
-python3 partial_match/scripts/week1_visualize_geometry_merge_steps.py \
-  --samples 16 \
-  --min-label-cardinality 2 \
-  --min-area 5 \
-  --out-dir /Users/kayw/Documents/trae_projects/match-test/artifacts/week1/geometry_merge_step_figures
+python3 partial_match/run_proposal_retrieval_pipeline.py \
+  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
+  --out-dir ../artifacts/proposal_based/system_test_512_stratified \
+  --save-step-figures \
+  --step-samples 24
 ```
 
 ## 12. Ablation：Group Then Adhesion
@@ -734,35 +739,15 @@ clusters = cluster(
 )
 ```
 
-### 11.4 Week1 命令
+### 11.4 Historical commands
+
+早期 `week1_*` 命令已废弃并删除。当前 proposal-based local retrieval 的运行、评估和 Top3 可视化统一使用 root pipeline：
 
 ```bash
-python3 partial_match/scripts/week1_extract_clusters_small.py \
-  --proposal-types group_then_adhesion topk \
-  --topk-base-method group_then_adhesion \
-  --proposal-top-k 5 \
-  --dilation-radius 1
+python3 partial_match/run_proposal_retrieval_pipeline.py
 ```
 
-逐步可视化：
-
-```bash
-python3 partial_match/scripts/week1_visualize_topk_steps.py \
-  --base-method group_then_adhesion \
-  --top-k 5 \
-  --dilation-radius 1 \
-  --out-dir /Users/kayw/Documents/trae_projects/match-test/artifacts/week1/topk5_group_then_adhesion_steps
-```
-
-组合 label wafer 的逐步可视化：
-
-```bash
-python3 partial_match/scripts/week1_visualize_group_adhesion_steps.py \
-  --samples 16 \
-  --min-label-cardinality 2 \
-  --dilation-radius 1 \
-  --out-dir /Users/kayw/Documents/trae_projects/match-test/artifacts/week1/group_adhesion_step_figures
-```
+`partial_match/scripts/` 下的 retrieval、evaluation 和 visualization 文件是 pipeline 调用的 helper，仍保留为可复用方法。
 
 ### 11.5 与已有方法的关系
 

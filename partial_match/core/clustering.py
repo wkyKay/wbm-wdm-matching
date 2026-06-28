@@ -16,6 +16,7 @@
   'group_then_adhesion' filtered -> dilated grouping -> selective adhesion split
   'geometry_merge' filtered -> adhesion -> component-level geometry merge
   'topk'           基于候选 proposal 选择面积最大的 K 个区域
+  'retrieval_compact' ring-aware compact proposal for retrieval tokens
   'closing'        形态学闭运算后连通域
   'simi_paper'     SIMI Paper: Closing + Spatial Filter → 强缺陷聚类
   'dbscan'         DBSCAN（Koo & Hwang 2021）
@@ -135,6 +136,10 @@ def cluster(
     if method in ('topk_geometry_merge', 'topk_geom_merge'):
         kwargs.setdefault('base_method', 'geometry_merge')
         return _cluster_topk(defect_mask, valid_mask, **kwargs)
+
+    if method in ('retrieval_compact', 'compact_retrieval', 'ring_compact'):
+        from partial_match.core.retrieval_compact import retrieval_compact_proposal
+        return retrieval_compact_proposal(defect_mask, valid_mask, **kwargs)
 
     if method == 'dbscan':
         return _cluster_dbscan(defect_mask, valid_mask, **kwargs)

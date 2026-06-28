@@ -38,13 +38,14 @@ partial_match/
 │   ├── spectral_clustering.py # Spectral Clustering（独立实现）
 │   ├── compare_all_methods.py # ★ 多 proposal 方法 × 6 样本对比脚本
 │
-└── scripts/                 # 端到端 pipeline 脚本（数据准备、提取、检索、评估）
+├── run_proposal_retrieval_pipeline.py # 一键运行 proposal retrieval baseline
+│
+└── scripts/                 # pipeline 调用的可复用 helper
     ├── __init__.py
-    ├── week1_prepare_wm38k.py
-    ├── week1_extract_clusters.py / week1_extract_clusters_small.py
-    ├── week1_run_smoke_retrieval.py / week1_run_smoke_retrieval_small.py
-    ├── week1_evaluate_rankings.py / week1_evaluate_rankings_fast.py
-    └── week1_full_pipeline.py
+    ├── run_proposal_local_retrieval.py
+    ├── evaluate_proposal_retrieval.py
+    ├── visualize_retrieval_compact_steps.py
+    └── visualize_topk_retrieval.py
 ```
 
 ---
@@ -210,64 +211,51 @@ python3 partial_match/cluster_test/compare_all_methods.py
 
 ---
 
-## Proposal 系统评测集
+## Proposal-based Local Retrieval 系统测试
 
-为了让 week1 proposal 的结论更有说服力，可以从完整 WM38K 中按类别抽样，再进行人工目检与自动指标统计。推荐每类先抽 10-20 张：
-
-```bash
-cd wbm-wdm-matching
-python3 partial_match/scripts/week1_build_proposal_review_set.py \
-  --samples-per-class 15 \
-  --top-k 5 \
-  --dilation-radius 1 \
-  --skip-slow-large-maps
-```
-
-`adhesion` / `dilated_adhesion` 在 near-full 等大面积样本上会调用较重的 Tensor Voting 拆分，正式全方法评测建议先使用 `--skip-slow-large-maps` 生成覆盖 8 类的人工评审集；随后再对少量 hard cases 单独关闭该选项做精查。
-
-输出目录：
-
-```text
-artifacts/week1/proposal_review/
-├── selected_samples.csv          # 每类抽到的样本清单
-├── proposal_metrics.csv          # token 数、coverage、small token 等自动指标
-├── manual_review_template.csv    # 人工评审表
-├── proposal_review_summary.md    # 自动汇总
-└── figures/                      # 每类 proposal 对比图
-```
-
-人工评审时重点填写：
-
-| 字段 | 判断目标 |
-|------|----------|
-| `visual_score_1_to_5` | 整体 proposal 质量 |
-| `major_pattern_kept_y_n` | 主要 pattern 是否被保留 |
-| `over_fragmented_y_n` | ring / scratch 是否被切得过碎 |
-| `over_merged_y_n` | 圆形、线段、环等不同 pattern 是否被错误合并 |
-| `noise_kept_y_n` | 明显噪声是否被保留为 token |
-| `retrieval_usable_y_n` | 是否适合作为 compact retrieval token |
-
-默认比较方法包括 `raw`、`filtered`、`adhesion`、`dilated_group`、`dilated_adhesion`、`group_then_adhesion`、`geometry_merge`、`topk` 和 `topk_dilated`。最终结论应同时报告自动指标和人工判断结果，尤其关注 `geometry_merge` / `topk` 在固定 `top_k=5` token 预算下的可用性。
-
-几何合并逐步可视化：
+当前 proposal retrieval baseline 使用 `retrieval_compact` proposal、手工描述子和局部 token matching。推荐使用一键入口完成检索、评估和 TopK review 图生成：
 
 ```bash
 cd wbm-wdm-matching
-python3 partial_match/scripts/week1_visualize_geometry_merge_steps.py \
-  --samples 16 \
-  --min-label-cardinality 2 \
-  --min-area 5 \
-  --out-dir /Users/kayw/Documents/trae_projects/match-test/artifacts/week1/geometry_merge_step_figures
+python3 partial_match/run_proposal_retrieval_pipeline.py \
+  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
+  --max-samples 512 \
+  --sample-strategy stratified \
+  --seed 42 \
+  --out-dir ../artifacts/proposal_based/system_test_512_stratified \
+  --review-max-queries 64 \
+  --review-top-k 3 \
+  --metric-k 1 3 5 10
 ```
 
-输出：
+如果需要同时生成 proposal 分步图，增加：
+
+```bash
+--save-step-figures --step-samples 24
+```
+
+上述 pipeline 会依次调用 `scripts/` 下的 helper：
 
 ```text
-artifacts/week1/geometry_merge_step_figures/
-├── geometry_merge_step_samples.csv
-├── geometry_merge_step_metrics.csv
-└── figures/
+run_proposal_local_retrieval.py
+evaluate_proposal_retrieval.py
+visualize_topk_retrieval.py
+visualize_retrieval_compact_steps.py
 ```
+
+输出目录示例：
+
+```text
+artifacts/proposal_based/system_test_512_stratified/
+├── rankings.csv
+├── tokens.csv
+├── descriptors.npz
+├── metrics_summary.json
+├── metrics_summary_flat.csv
+└── top3_review/
+```
+
+早期 `week1_*` 探索脚本已废弃并删除，旧的 `artifacts/week1/` 仅作为历史结果保留。
 
 ---
 
