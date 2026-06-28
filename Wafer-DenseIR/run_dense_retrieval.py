@@ -61,9 +61,16 @@ def main():
 
 
 def _get_device(name):
-    if name == 'auto':
-        return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    return torch.device(name)
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+        print(f'[Device] GPU: {torch.cuda.get_device_name(0)} (CUDA {torch.version.cuda})')
+        torch.backends.cudnn.benchmark = True
+    elif name == 'cuda':
+        raise RuntimeError('CUDA requested but not available.')
+    else:
+        device = torch.device('cpu')
+        print('[Device] GPU not available, falling back to CPU')
+    return device
 
 
 def _build_backbone(config, in_channels):

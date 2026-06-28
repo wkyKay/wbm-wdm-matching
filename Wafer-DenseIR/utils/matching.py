@@ -70,6 +70,24 @@ def dense_match(query, candidate, topk_tokens=5, sigma_pos=0.35):
     return score, q_scores.astype(np.float32), c_scores, matches
 
 
+def _pair_score_gpu(q_tokens, c_tokens, q_pos, c_pos, q_weights, topk_tokens, sigma_pos):
+    """GPU-accelerated pair score computation. All inputs are torch tensors on GPU."""
+    if len(q_tokens) == 0 or len(c_tokens) == 0:
+        return 0.0
+    
+    sim = q_tokens @ c_tokens.T  # (Mq, Mc)
+    dist2 = ((q_pos[:, None, :] - c_pos[None, :, :]) ** 2).sum(dim=2)
+    sim = sim * torch.exp(-dist2 / max(sigma_pos ** 2, 1e-6))
+    
+    k = min(topk_tokens, sim.shape[1])
+    top_scores, _ = torch.topk(sim, k, dim=1)  # (Mq, k)
+    q_scores = top_scores.mean(dim=1)  # (Mq,)
+    
+    weights = q_weights if q_weights is not None else torch.ones(len(q_tokens), device=q_tokens.device)
+    score = float((q_scores * weights).sum() / max(weights.sum(), 1e-6))
+    return score
+
+
 def make_heatmap(token_scores, positions, grid_size):
     h, w = int(grid_size[0]), int(grid_size[1])
     heatmap = np.zeros((h, w), dtype=np.float32)

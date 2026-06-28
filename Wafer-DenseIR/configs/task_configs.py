@@ -101,7 +101,7 @@ class ConfigBase(object):
         parser.set_defaults(decouple_input=True)
         parser.add_argument('--pretrained_model_file', type=str, default=None)
         parser.add_argument('--pretrained_model_key', type=str, default=None)
-        parser.add_argument('--device', type=str, default='auto')
+        parser.add_argument('--device', type=str, default='cuda')
         parser.add_argument('--batch_size', type=int, default=128)
         parser.add_argument('--num_workers', type=int, default=0)
         return parser
