@@ -37,6 +37,7 @@ WaPIRL/test/checkpoints/
 WaPIRL/test/encoder_model/
 WaPIRL/xs/
 WaPIRL/test/__pycache__/
+WaPIRL/*.pdf
 
 MixedWa/checkpoints/
 # =====================

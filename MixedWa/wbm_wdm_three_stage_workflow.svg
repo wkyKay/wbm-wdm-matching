@@ -1,0 +1,136 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="820" viewBox="0 0 1500 820" role="img" aria-labelledby="title desc">
+  <title id="title">Three-stage WBM-WDM matching workflow</title>
+  <desc id="desc">A publication-style workflow diagram for supervised training, optional domain adaptation, and WBM-WDM matching inference.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#222" />
+    </marker>
+    <marker id="arrowLight" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto" markerUnits="strokeWidth">
+      <path d="M2,2 L10,6 L2,10 Z" fill="#666" />
+    </marker>
+    <style>
+      .bg { fill: #ffffff; }
+      .panel { fill: #f7f7f7; stroke: #222; stroke-width: 1.8; rx: 18; }
+      .panel-optional { fill: #fbfbfb; stroke: #555; stroke-width: 1.8; stroke-dasharray: 8 6; rx: 18; }
+      .box { fill: #ffffff; stroke: #222; stroke-width: 1.5; rx: 10; }
+      .box-gray { fill: #eeeeee; stroke: #222; stroke-width: 1.5; rx: 10; }
+      .box-dark { fill: #2f2f2f; stroke: #111; stroke-width: 1.5; rx: 10; }
+      .label { font-family: Arial, Helvetica, sans-serif; font-size: 22px; font-weight: 700; fill: #111; }
+      .text { font-family: Arial, Helvetica, sans-serif; font-size: 18px; fill: #111; }
+      .small { font-family: Arial, Helvetica, sans-serif; font-size: 15px; fill: #222; }
+      .tiny { font-family: Arial, Helvetica, sans-serif; font-size: 13px; fill: #333; }
+      .white { fill: #fff; }
+      .muted { fill: #555; }
+      .arrow { stroke: #222; stroke-width: 2.3; fill: none; marker-end: url(#arrow); }
+      .arrow-light { stroke: #666; stroke-width: 2; fill: none; marker-end: url(#arrowLight); }
+      .arrow-dash { stroke: #666; stroke-width: 2; stroke-dasharray: 7 5; fill: none; marker-end: url(#arrowLight); }
+      .divider { stroke: #cfcfcf; stroke-width: 1.2; }
+      .tag { fill: #e6e6e6; stroke: #333; stroke-width: 1; rx: 16; }
+      .formula { font-family: 'Times New Roman', Times, serif; font-size: 18px; fill: #111; font-style: italic; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1500" height="820" />
+
+  <text class="label" x="750" y="48" text-anchor="middle">Three-stage Workflow for Weak Pattern Token Matching in WBM-WDM Retrieval</text>
+  <text class="small muted" x="750" y="76" text-anchor="middle">solid arrows: mandatory path; dashed arrows/panel: optional domain adaptation; gray boxes: learned representations or checkpoints</text>
+
+  <!-- Stage panels -->
+  <rect class="panel" x="55" y="115" width="400" height="575" />
+  <rect class="panel-optional" x="550" y="115" width="400" height="575" />
+  <rect class="panel" x="1045" y="115" width="400" height="575" />
+
+  <!-- Stage headers -->
+  <rect class="box-dark" x="85" y="138" width="340" height="52" />
+  <text class="label white" x="255" y="172" text-anchor="middle">Stage 1: Supervised Training</text>
+
+  <rect class="box-dark" x="580" y="138" width="340" height="52" />
+  <text class="label white" x="750" y="172" text-anchor="middle">Stage 2: Domain Adaptation</text>
+
+  <rect class="box-dark" x="1075" y="138" width="340" height="52" />
+  <text class="label white" x="1245" y="172" text-anchor="middle">Stage 3: Matching Inference</text>
+
+  <!-- Stage 1 content -->
+  <rect class="tag" x="92" y="215" width="126" height="32" />
+  <text class="small" x="155" y="237" text-anchor="middle">Input data</text>
+  <rect class="box" x="92" y="260" width="326" height="70" />
+  <text class="text" x="255" y="286" text-anchor="middle">WM38K WBM maps</text>
+  <text class="small muted" x="255" y="311" text-anchor="middle">multi-hot wafer-level labels</text>
+
+  <path class="arrow-light" d="M255 330 L255 365" />
+  <rect class="box-gray" x="92" y="365" width="326" height="92" />
+  <text class="text" x="255" y="393" text-anchor="middle">Shared encoder + heads</text>
+  <text class="small muted" x="255" y="419" text-anchor="middle">global embedding, class logits</text>
+  <text class="small muted" x="255" y="441" text-anchor="middle">optional local tokens / MIL head</text>
+
+  <path class="arrow-light" d="M255 457 L255 492" />
+  <rect class="box" x="92" y="492" width="326" height="80" />
+  <text class="text" x="255" y="520" text-anchor="middle">Training objectives</text>
+  <text class="formula" x="255" y="548" text-anchor="middle">L = L<tspan baseline-shift="sub" font-size="13">cls</tspan> + λ<tspan baseline-shift="sub" font-size="13">mil</tspan>L<tspan baseline-shift="sub" font-size="13">MIL</tspan></text>
+
+  <path class="arrow-light" d="M255 572 L255 606" />
+  <rect class="box-gray" x="92" y="606" width="326" height="50" />
+  <text class="text" x="255" y="637" text-anchor="middle">supervised checkpoint</text>
+
+  <!-- sanity branch -->
+  <path class="arrow-dash" d="M418 631 C470 631 487 610 530 590" />
+  <text class="tiny muted" x="456" y="614" text-anchor="middle">WM38K sanity check</text>
+
+  <!-- Stage 2 content -->
+  <rect class="tag" x="587" y="215" width="126" height="32" />
+  <text class="small" x="650" y="237" text-anchor="middle">Input data</text>
+  <rect class="box" x="587" y="260" width="326" height="78" />
+  <text class="text" x="750" y="287" text-anchor="middle">Production / synthetic WDM</text>
+  <text class="small muted" x="750" y="312" text-anchor="middle">unlabeled maps with clear patterns</text>
+
+  <path class="arrow-light" d="M750 338 L750 373" />
+  <rect class="box" x="587" y="373" width="326" height="86" />
+  <text class="text" x="750" y="401" text-anchor="middle">Pseudo-WBM generation</text>
+  <text class="small muted" x="750" y="427" text-anchor="middle">morphology, blur, downsample</text>
+  <text class="small muted" x="750" y="449" text-anchor="middle">binarize and resize</text>
+
+  <path class="arrow-light" d="M750 459 L750 493" />
+  <rect class="box-gray" x="587" y="493" width="326" height="80" />
+  <text class="text" x="750" y="520" text-anchor="middle">Self-supervised adaptation</text>
+  <text class="small muted" x="750" y="546" text-anchor="middle">WDM and pseudo-WBM positive pair</text>
+  <text class="formula" x="750" y="566" text-anchor="middle">L<tspan baseline-shift="sub" font-size="13">NCE</tspan> / WaPIRL</text>
+
+  <path class="arrow-light" d="M750 573 L750 606" />
+  <rect class="box-gray" x="587" y="606" width="326" height="50" />
+  <text class="text" x="750" y="637" text-anchor="middle">domain-adapted encoder</text>
+
+  <!-- Stage 3 content -->
+  <rect class="tag" x="1082" y="215" width="126" height="32" />
+  <text class="small" x="1145" y="237" text-anchor="middle">Input pair</text>
+  <rect class="box" x="1082" y="260" width="326" height="78" />
+  <text class="text" x="1245" y="287" text-anchor="middle">WBM query + WDM candidates</text>
+  <text class="small muted" x="1245" y="312" text-anchor="middle">cross-domain retrieval setting</text>
+
+  <path class="arrow-light" d="M1245 338 L1245 373" />
+  <rect class="box-gray" x="1082" y="373" width="326" height="92" />
+  <text class="text" x="1245" y="401" text-anchor="middle">Feature extraction</text>
+  <text class="small muted" x="1245" y="427" text-anchor="middle">label set, global embedding</text>
+  <text class="small muted" x="1245" y="449" text-anchor="middle">local tokens / CAM weak masks</text>
+
+  <path class="arrow-light" d="M1245 465 L1245 500" />
+  <rect class="box" x="1082" y="500" width="326" height="88" />
+  <text class="text" x="1245" y="528" text-anchor="middle">Subset matching and ranking</text>
+  <text class="formula" x="1245" y="555" text-anchor="middle">score = αO + βT + γG + δP</text>
+  <text class="small muted" x="1245" y="578" text-anchor="middle">WDM pattern evidence matched to WBM tokens</text>
+
+  <path class="arrow-light" d="M1245 588 L1245 622" />
+  <rect class="box-gray" x="1082" y="622" width="326" height="50" />
+  <text class="text" x="1245" y="653" text-anchor="middle">top-k matched WDM results</text>
+
+  <!-- Inter-stage arrows -->
+  <path class="arrow" d="M455 631 C492 631 512 631 550 631" />
+  <path class="arrow" d="M950 631 C988 631 1008 631 1045 631" />
+  <path class="arrow-dash" d="M418 631 C610 735 1030 735 1120 672" />
+  <text class="tiny muted" x="750" y="752" text-anchor="middle">If domain gap is small, skip Stage 2 and directly use the supervised checkpoint for matching.</text>
+
+  <!-- Bottom legend -->
+  <line class="divider" x1="55" y1="720" x2="1445" y2="720" />
+  <text class="small" x="80" y="784">Notation:</text>
+  <text class="tiny muted" x="155" y="784">O = label overlap, T = token subset score, G = global similarity, P = explicit position consistency</text>
+  <text class="tiny muted" x="1075" y="784">Recommended figure style: vector, grayscale, minimal text, numbered stages.</text>
+</svg>
