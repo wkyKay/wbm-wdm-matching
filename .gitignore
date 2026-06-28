@@ -40,6 +40,8 @@ WaPIRL/test/__pycache__/
 WaPIRL/*.pdf
 
 MixedWa/checkpoints/
+Wafer-DenseIR/checkpoints/
+Wafer-DenseIR/artifacts/
 # =====================
 # 其他
 # =====================

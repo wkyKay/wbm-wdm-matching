@@ -148,7 +148,7 @@ def _configure_cuda(device):
     if device.type != 'cuda':
         return
     torch.backends.cudnn.benchmark = True
-    torch.cuda.set_device(device)
+    torch.cuda.set_device(device.index if device.index is not None else 0)
 
 
 def _build_backbone(config, in_channels):

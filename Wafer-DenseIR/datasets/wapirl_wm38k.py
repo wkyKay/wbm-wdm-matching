@@ -59,7 +59,7 @@ class WM38KForWaPIRL(WM38K):
 
     def __getitem__(self, idx):
         sample = super(WM38KForWaPIRL, self).__getitem__(idx)
-        raw_t = self._augment_raw(torch.from_numpy(sample['raw']).float())
+        raw_t = self._augment_raw(sample['raw'].float())
         x_t = self.decouple_mask(raw_t) if self.decouple_input else raw_t.unsqueeze(0)
         sample['x_t'] = x_t
         sample['idx'] = idx
