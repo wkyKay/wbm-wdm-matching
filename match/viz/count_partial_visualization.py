@@ -17,7 +17,7 @@ STATUS_CMAP = ListedColormap(["black", "#b8b8b8", "#d62728", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
     "count_partial_counts",
-    ["#111111", "#1d4ed8", "#60a5fa", "#bfdbfe", "#f8fbff"],
+    ["#111111", "#7f1d1d", "#dc2626", "#fca5a5", "#fff1f2"],
 )
 TOKEN_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#17becf",

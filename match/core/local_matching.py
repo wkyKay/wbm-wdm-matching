@@ -10,6 +10,9 @@ from .models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 
 GEOMETRY_TYPES = ["blob", "line", "edge_ring", "central", "irregular"]
+MIN_SHAPE_SIM_FOR_MATCH = 0.45
+MIN_TYPE_AFFINITY_FOR_MATCH = 0.6
+SHAPE_SCORE_POWER = 2.0
 
 
 @dataclass(frozen=True)
@@ -22,6 +25,14 @@ class LocalMatchResult:
     matched_tokens: int
     wbm_tokens: int
     wdm_tokens: int
+
+
+@dataclass(frozen=True)
+class ProposalConfig:
+    min_area: int
+    top_k: int
+    connectivity: int
+    descriptor_mode: str
 
 
 def compute_count_partial_match(
@@ -61,8 +72,9 @@ def explain_count_partial_match(
     wbm_mask = reference.status_map == VALID_HAS_DEFECT
     wdm_count = np.where(valid_mask, candidate.count_map, 0).astype(np.float32)
 
-    wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, min_area=min_area, top_k=top_k)
-    wdm_tokens = _tokens_from_count(wdm_count, valid_mask, min_area=min_area, top_k=top_k)
+    proposal_config = _proposal_config(reference.status_map.shape, int(valid_mask.sum()), min_area, top_k)
+    wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
+    wdm_tokens = _tokens_from_count(wdm_count, valid_mask, proposal_config=proposal_config)
 
     if not wbm_tokens or not wdm_tokens:
         return {
@@ -128,36 +140,41 @@ def explain_count_partial_match(
     }
 
 
-def _tokens_from_mask(mask: np.ndarray, valid_mask: np.ndarray, min_area: int, top_k: int) -> List[Dict]:
+def _tokens_from_mask(mask: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
     weight_map = mask.astype(np.float32)
-    return _tokens_from_components(mask, valid_mask, weight_map, min_area=min_area, top_k=top_k, source="wbm")
+    return _tokens_from_components(mask, valid_mask, weight_map, proposal_config=proposal_config, source="wbm")
 
 
-def _tokens_from_count(count_map: np.ndarray, valid_mask: np.ndarray, min_area: int, top_k: int) -> List[Dict]:
+def _tokens_from_count(count_map: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
     mask = (count_map > 0) & valid_mask
-    return _tokens_from_components(mask, valid_mask, count_map.astype(np.float32), min_area=min_area, top_k=top_k, source="wdm")
+    return _tokens_from_components(mask, valid_mask, count_map.astype(np.float32), proposal_config=proposal_config, source="wdm")
 
 
 def _tokens_from_components(
     mask: np.ndarray,
     valid_mask: np.ndarray,
     weight_map: np.ndarray,
-    min_area: int,
-    top_k: int,
+    proposal_config: ProposalConfig,
     source: str,
 ) -> List[Dict]:
     h, w = mask.shape
     tokens = []
     total_mass = float(weight_map[mask].sum())
-    for comp in _connected_components(mask):
-        if len(comp) < min_area:
+    for comp in _connected_components(mask, connectivity=proposal_config.connectivity):
+        if len(comp) < proposal_config.min_area:
             continue
         token = _token_stats(comp, weight_map, valid_mask, total_mass=total_mass, source=source)
-        token["descriptor"] = _shape_descriptor(token, (h, w))
+        token["descriptor"] = _shape_descriptor(token, (h, w), mode=proposal_config.descriptor_mode)
+        token["proposal_config"] = {
+            "min_area": proposal_config.min_area,
+            "top_k": proposal_config.top_k,
+            "connectivity": proposal_config.connectivity,
+            "descriptor_mode": proposal_config.descriptor_mode,
+        }
         tokens.append(token)
 
     tokens.sort(key=_token_importance, reverse=True)
-    return tokens[:top_k]
+    return tokens[:proposal_config.top_k]
 
 
 def _token_stats(
@@ -242,7 +259,36 @@ def _token_stats(
     return token
 
 
-def _shape_descriptor(token: Dict, map_shape) -> np.ndarray:
+def _proposal_config(shape: tuple[int, int], valid_area: int, min_area: int, top_k: int) -> ProposalConfig:
+    """Adapt proposal extraction to WBM resolution while honoring stricter caller limits."""
+    short_side = min(int(shape[0]), int(shape[1]))
+    valid_area = max(int(valid_area), 1)
+
+    if short_side <= 12:
+        adaptive_min_area = 2
+        adaptive_top_k = 4
+        connectivity = 4
+        descriptor_mode = "coarse"
+    elif short_side <= 25:
+        adaptive_min_area = max(3, int(round(valid_area * 0.01)))
+        adaptive_top_k = 6
+        connectivity = 8
+        descriptor_mode = "normal"
+    else:
+        adaptive_min_area = max(5, int(round(valid_area * 0.005)))
+        adaptive_top_k = 8
+        connectivity = 8
+        descriptor_mode = "normal"
+
+    return ProposalConfig(
+        min_area=max(1, min(int(min_area), adaptive_min_area)),
+        top_k=max(1, min(int(top_k), adaptive_top_k)),
+        connectivity=connectivity,
+        descriptor_mode=descriptor_mode,
+    )
+
+
+def _shape_descriptor(token: Dict, map_shape, mode: str = "normal") -> np.ndarray:
     bbox_h = float(token.get("bbox_height", 1))
     bbox_w = float(token.get("bbox_width", 1))
     area = float(token.get("area", 0))
@@ -253,7 +299,19 @@ def _shape_descriptor(token: Dict, map_shape) -> np.ndarray:
     compactness = float(token.get("compactness", 0.0))
     orientation = float(token.get("orientation", 0.0))
 
-    features = np.array([
+    if mode == "coarse":
+        features = np.array([
+            fill_ratio,
+            np.log1p(aspect) / np.log(16.0),
+            np.log1p(elongation) / np.log(64.0),
+            min(compactness / 4.0, 1.0),
+            float(token.get("radial_distance_norm", 0.0)),
+            float(token.get("angular_coverage", 0.0)),
+            float(token.get("radial_std", 0.0)),
+        ], dtype=np.float32)
+        desc = np.concatenate([features, _shape_profiles(token, map_shape, bins=4)]).astype(np.float32)
+    else:
+        features = np.array([
         fill_ratio,
         np.log1p(aspect) / np.log(16.0),
         np.log1p(elongation) / np.log(64.0),
@@ -262,8 +320,8 @@ def _shape_descriptor(token: Dict, map_shape) -> np.ndarray:
         np.sin(np.deg2rad(orientation)),
         float(token.get("angular_coverage", 0.0)),
         float(token.get("radial_std", 0.0)),
-    ], dtype=np.float32)
-    desc = np.concatenate([features, _shape_profiles(token, map_shape, bins=8)]).astype(np.float32)
+        ], dtype=np.float32)
+        desc = np.concatenate([features, _shape_profiles(token, map_shape, bins=8)]).astype(np.float32)
     norm = float(np.linalg.norm(desc))
     if norm > 1e-8:
         desc /= norm
@@ -278,7 +336,12 @@ def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigm
     c_scale = max(float(candidate.get("support_area_ratio", 0.0)), 1e-12)
     scale_affinity = float(np.exp(-abs(np.log(q_scale / c_scale)) / max(sigma_scale, 1e-6)))
     type_affinity = _type_affinity(query["geometry_type"], candidate["geometry_type"])
-    score = shape_sim * position_affinity * scale_affinity * type_affinity
+    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH or type_affinity < MIN_TYPE_AFFINITY_FOR_MATCH:
+        score = 0.0
+    else:
+        # Small WBM grids make position easy to over-reward, so shape is used as a gate
+        # and then sharpened in the final product.
+        score = (shape_sim**SHAPE_SCORE_POWER) * position_affinity * scale_affinity * type_affinity
     return {
         "score": float(score),
         "shape_sim": shape_sim,
@@ -366,11 +429,16 @@ def _perimeter(rows: np.ndarray, cols: np.ndarray) -> int:
     return perimeter
 
 
-def _connected_components(mask: np.ndarray) -> List[np.ndarray]:
+def _connected_components(mask: np.ndarray, connectivity: int = 8) -> List[np.ndarray]:
     h, w = mask.shape
     visited = np.zeros_like(mask, dtype=bool)
     components = []
-    neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    if connectivity == 4:
+        neighbors = [(-1, 0), (0, -1), (0, 1), (1, 0)]
+    elif connectivity == 8:
+        neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
+    else:
+        raise ValueError(f"Unsupported connectivity: {connectivity}")
 
     for row in range(h):
         for col in range(w):
