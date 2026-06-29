@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.colors import LinearSegmentedColormap
 
 from ..core.local_matching import explain_count_partial_match
 from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
@@ -14,6 +15,10 @@ from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 STATUS_CMAP = ListedColormap(["black", "#b8b8b8", "#d62728", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
+COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
+    "count_partial_counts",
+    ["#111111", "#1d4ed8", "#60a5fa", "#bfdbfe", "#f8fbff"],
+)
 TOKEN_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#17becf",
     "#e377c2", "#bcbd22", "#7f7f7f", "#d62728",
@@ -39,11 +44,11 @@ def plot_count_partial_steps(
     vmax = _heatmap_vmax([log_count])
 
     fig, axes = plt.subplots(1, 5, figsize=(18, 4.2))
-    _plot_wbm_status(axes[0], reference, "WBM status")
+    _plot_wbm_defects(axes[0], reference, "WBM defects")
     _plot_wbm_status(axes[1], reference, "WBM tokens")
     _draw_tokens(axes[1], wbm_tokens)
 
-    im = _plot_wdm_heatmap(axes[2], log_count, "WDM log-count", vmax=vmax)
+    im = _plot_wdm_heatmap(axes[2], log_count, "WDM count", vmax=vmax)
     _plot_wdm_heatmap(axes[3], log_count, "WDM tokens", vmax=vmax)
     _draw_tokens(axes[3], wdm_tokens)
 
@@ -99,7 +104,7 @@ def plot_count_partial_topk(
         matches = explanation["matches"]
 
         ax_ref, ax_cnd = axes_arr[row]
-        _plot_wbm_status(ax_ref, reference, "Reference WBM tokens")
+        _plot_wbm_defects(ax_ref, reference, "Reference WBM tokens")
         _draw_tokens(ax_ref, wbm_tokens)
 
         log_count = _masked_log_count(gm.count_map, reference.status_map)
@@ -139,8 +144,15 @@ def _plot_wbm_status(ax: plt.Axes, grid_maps: GridMaps, title: str) -> None:
     ax.axis("off")
 
 
+def _plot_wbm_defects(ax: plt.Axes, grid_maps: GridMaps, title: str) -> None:
+    defect_mask = (grid_maps.status_map == VALID_HAS_DEFECT).astype(np.float32)
+    ax.imshow(defect_mask, cmap=COUNT_PARTIAL_CMAP, vmin=0.0, vmax=1.0, interpolation="nearest")
+    ax.set_title(title, fontsize=10)
+    ax.axis("off")
+
+
 def _plot_wdm_heatmap(ax: plt.Axes, log_count: np.ndarray, title: str, vmax: float):
-    im = ax.imshow(log_count, cmap="magma", vmin=0.0, vmax=vmax, interpolation="nearest")
+    im = ax.imshow(log_count, cmap=COUNT_PARTIAL_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
     return im
@@ -149,7 +161,7 @@ def _plot_wdm_heatmap(ax: plt.Axes, log_count: np.ndarray, title: str, vmax: flo
 def _masked_log_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
     valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
     log_count = np.log1p(count_map.astype(np.float32))
-    log_count[~valid] = np.nan
+    log_count[~valid] = 0.0
     return log_count
 
 

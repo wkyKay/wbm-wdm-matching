@@ -29,4 +29,4 @@ from .similarity import (
     top_k_retrieval,
 )
 from .local_matching import LocalMatchResult, compute_count_partial_match, explain_count_partial_match
-from .classnumber_matching import ClassNumberMatchResult, ClassSplitMatch, compute_classnumber_matches
+from .classnumber_matching import BinaryClassScore, ClassNumberMatchResult, ClassSplitMatch, compute_classnumber_matches

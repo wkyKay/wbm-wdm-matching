@@ -116,6 +116,8 @@ match/
     visualization.py          # 通用绘图对比：并排/叠加/多视图
     count_partial_visualization.py  # partial matching step/topK 图片
   scripts/
+    batch_io.py               # 批处理结果写入/TopK 排序辅助
+    batch_viz.py              # 批处理可视化辅助
     main.py                   # 批量处理 CLI 入口
     plot_ref_cnd.py           # CLI 快速看图脚本
     plot_count_partial.py     # count-partial 图片生成脚本
@@ -136,6 +138,29 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --log results.tsv
 ```
 
+### 4.1 生成 count-partial 图片
+
+如果你要看 `count-map partial` 的 top3 和 proposal step 图，直接加这组参数：
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation density \
+  --log results.tsv \
+  --topk-log topk.tsv \
+  --save-count-partial-figures \
+  --count-partial-fig-dir results/count_partial_review \
+  --count-partial-review-top-k 3 \
+  --count-partial-step-max 3
+```
+
+会生成：
+- `results/count_partial_review/top3_count_partial.png`
+- `results/count_partial_review/proposal_steps/rankXX_*.png`
+
 所有 8 种相似度指标自动计算，结果写入 TSV：
 
 | 列 | 内容 |
@@ -148,7 +173,9 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 | `classnumber-count`, `best-classnumber*` | 仅 `--use-classnumber` 时输出，表示按 classnumber 拆分后的最佳分图 |
 | `mapped_defects` | 映射成功数/总缺陷数 |
 
-可选 classnumber 拆分匹配：
+### 4.2 classnumber 分图匹配
+
+classnumber 功能是在整图匹配之外，额外把每个 WDM 按 `classnumber` 拆成多个分图，再做分图匹配和可视化。
 
 ```bash
 PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
@@ -157,14 +184,84 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
+  --defect-threshold 5 \
   --use-classnumber \
   --save-classnumber-figures \
   --classnumber-fig-dir results/classnumber_review
 ```
 
-开启后，主流程仍会保留整图 WDM 匹配；额外按 KLARF `classnumber`
-将同一个 WDM 拆成多个分图并计算 `count-partial`。若保存图片，会输出
-`WBM + WDM all + WDM classnumber split` 面板，并用绿色边框标记最佳分图。
+默认是 `count` 模式，也就是沿用 `count-partial` 的 token 匹配结果。若要用
+binary 形态判断，切到：
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation density \
+  --defect-threshold 5 \
+  --use-classnumber \
+  --classnumber-match-mode binary \
+  --save-classnumber-figures \
+  --classnumber-fig-dir results/classnumber_review
+```
+
+也可以同时算 `count` 和 `binary`，并指定最终排序依据：
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation density \
+  --defect-threshold 5 \
+  --use-classnumber \
+  --classnumber-match-mode both \
+  --classnumber-rank-by binary \
+  --save-classnumber-figures \
+  --classnumber-fig-dir results/classnumber_review
+```
+
+这组命令会生成：
+- `results/classnumber_review/<file>_classnumber_splits.png`
+- `results/classnumber_review/classnumber_topk.tsv`
+- `results/classnumber_review/classnumber_topK.png`
+- `results/classnumber_review/topk_steps/rankXX_*.png`
+
+其中：
+- `classnumber_topk.tsv` 记录所有分图的排序结果
+- `classnumber_topK.png` 是全局 topK 分图总览
+- `topk_steps/` 是 topK 分图的 cluster / step 参考图
+
+新增参数：
+
+| 参数 | 默认值 | 含义 |
+|------|--------|------|
+| `--classnumber-match-mode {count,binary,both}` | `count` | classnumber 分图计算 count、binary 或两者 |
+| `--classnumber-rank-by {count,binary}` | `count` | `both` 模式下 topK 和最佳分图的排序依据 |
+| `--classnumber-binary-dilation` | `1` | binary 匹配时 WDM 缺陷允许的像素偏移半径 |
+| `--classnumber-binary-beta` | `0.5` | binary 分数中的 leakage 惩罚权重 |
+
+binary classnumber 分数为 `coverage - beta * leakage`：
+- `coverage`：WBM 缺陷区域被 WDM binary 分图覆盖的比例
+- `leakage`：WDM binary 缺陷落在 WBM 正常区域的比例
+
+保存图片时，无论选择 `count`、`binary` 还是 `both`，都会生成上面的三类图。
+`binary` 排序时，step 图仍展示 count-token 的局部结构，方便对照解释路径。
+
+### 4.3 `density` 和 `count` 的区别
+
+这两个选项都不会改变 `count-partial` 的 token 提取逻辑，因为该部分固定使用
+`count_map`。它们的区别主要在整图相似度和保存的候选图底图：
+
+| 选项 | 影响 |
+|------|------|
+| `count` | 用原始缺陷计数做整图比较，强度保留最直接，但不同样本间数值尺度更敏感 |
+| `density` | 把 count 归一化为概率分布，整图相似度更关注空间分布而不是绝对缺陷数 |
+
+如果你的目标是做“候选分布形态”的比较，`density` 更稳；如果你更关心“绝对缺陷强度”，`count` 更直接。对 classnumber 分图和 count-partial 的结构输出来说，主要差异仍体现在整图相似度层，不会改变 WDM 被拆分后的 token 生成方式。
 
 ---
 
