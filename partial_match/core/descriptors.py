@@ -10,43 +10,33 @@ GEOMETRY_TYPES = ['blob', 'line', 'edge_ring', 'central', 'irregular']
 
 
 def cluster_descriptor(cluster: Dict, map_shape) -> np.ndarray:
-    H, W = map_shape
-    area = float(cluster.get('area', 0))
+    """Build a shape-only descriptor for a token.
+
+    Position, scale, and semantic type are kept as token metadata and handled
+    explicitly in matching so they are not double-counted inside the descriptor.
+    """
     bbox_h = float(cluster.get('bbox_height', 1))
     bbox_w = float(cluster.get('bbox_width', 1))
     bbox_area = max(bbox_h * bbox_w, 1.0)
+    area = float(cluster.get('area', 0))
     fill_ratio = area / bbox_area
     aspect = max(bbox_h / max(bbox_w, 1.0), bbox_w / max(bbox_h, 1.0))
     elongation = cluster.get('pca_lambda1', 0.0) / max(cluster.get('pca_lambda2', 0.0), 1e-6)
     compactness = float(cluster.get('compactness', 0.0))
     orientation = float(cluster.get('orientation', 0.0))
-    radial = float(cluster.get('radial_distance_norm', 0.0))
-    centroid_r = float(cluster.get('centroid_row', 0.0)) / max(H, 1)
-    centroid_c = float(cluster.get('centroid_col', 0.0)) / max(W, 1)
-
-    type_onehot = np.zeros(len(GEOMETRY_TYPES), dtype=np.float32)
-    geometry_type = cluster.get('geometry_type', 'irregular')
-    if geometry_type in GEOMETRY_TYPES:
-        type_onehot[GEOMETRY_TYPES.index(geometry_type)] = 1.0
 
     profile = _shape_profiles(cluster, map_shape, bins=8)
     features = np.array([
-        np.log1p(area) / np.log1p(max(H * W, 1)),
-        bbox_h / max(H, 1),
-        bbox_w / max(W, 1),
         fill_ratio,
         np.log1p(aspect) / np.log(16.0),
         np.log1p(elongation) / np.log(64.0),
         min(compactness / 4.0, 1.0),
         np.cos(np.deg2rad(orientation)),
         np.sin(np.deg2rad(orientation)),
-        radial,
-        centroid_r,
-        centroid_c,
         float(cluster.get('angular_coverage', 0.0)),
         float(cluster.get('radial_std', 0.0)),
     ], dtype=np.float32)
-    desc = np.concatenate([features, type_onehot, profile]).astype(np.float32)
+    desc = np.concatenate([features, profile]).astype(np.float32)
     norm = np.linalg.norm(desc)
     if norm > 1e-8:
         desc = desc / norm
@@ -57,14 +47,17 @@ def clusters_to_records(clusters: List[Dict], map_shape) -> List[Dict]:
     records = []
     for idx, cluster in enumerate(clusters):
         desc = cluster_descriptor(cluster, map_shape)
+        area = float(cluster.get('area', 0))
+        h, w = map_shape
         records.append({
             'token_id': idx,
             'descriptor': desc,
-            'area': float(cluster.get('area', 0)),
-            'area_ratio': float(cluster.get('area', 0)) / max(map_shape[0] * map_shape[1], 1),
+            'shape_descriptor': desc,
+            'area': area,
+            'area_ratio': area / max(h * w, 1),
             'pos': np.array([
-                float(cluster.get('centroid_row', 0.0)) / max(map_shape[0], 1),
-                float(cluster.get('centroid_col', 0.0)) / max(map_shape[1], 1),
+                float(cluster.get('centroid_row', 0.0)) / max(h, 1),
+                float(cluster.get('centroid_col', 0.0)) / max(w, 1),
             ], dtype=np.float32),
             'geometry_type': cluster.get('geometry_type', 'irregular'),
             'cluster': cluster,
@@ -73,20 +66,22 @@ def clusters_to_records(clusters: List[Dict], map_shape) -> List[Dict]:
 
 
 def token_match_components(query: Dict, candidate: Dict, sigma_pos: float = 0.35, sigma_area: float = 1.0) -> Dict:
-    desc_sim = float(np.dot(query['descriptor'], candidate['descriptor']))
+    q_desc = query.get('shape_descriptor', query.get('descriptor'))
+    c_desc = candidate.get('shape_descriptor', candidate.get('descriptor'))
+    desc_sim = float(np.dot(q_desc, c_desc))
     desc_sim = max(desc_sim, 0.0)
     pos_dist2 = float(((query['pos'] - candidate['pos']) ** 2).sum())
     pos_affinity = float(np.exp(-pos_dist2 / max(sigma_pos ** 2, 1e-6)))
-    area_q = max(query['area'], 1.0)
-    area_c = max(candidate['area'], 1.0)
-    area_affinity = float(np.exp(-abs(np.log(area_q / area_c)) / max(sigma_area, 1e-6)))
+    scale_q = max(query.get('area_ratio', query.get('area', 1.0)), 1e-12)
+    scale_c = max(candidate.get('area_ratio', candidate.get('area', 1.0)), 1e-12)
+    scale_affinity = float(np.exp(-abs(np.log(scale_q / scale_c)) / max(sigma_area, 1e-6)))
     type_affinity = _type_affinity(query['geometry_type'], candidate['geometry_type'])
-    score = desc_sim * pos_affinity * area_affinity * type_affinity
+    score = desc_sim * pos_affinity * scale_affinity * type_affinity
     return {
         'score': float(score),
         'shape_sim': float(desc_sim),
         'position_affinity': float(pos_affinity),
-        'area_affinity': float(area_affinity),
+        'scale_affinity': float(scale_affinity),
         'type_affinity': float(type_affinity),
     }
 

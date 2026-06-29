@@ -221,7 +221,7 @@ def _save_match_details(out_dir, records, rankings, scores, sigma_pos, sigma_are
         'score',
         'shape_sim',
         'position_affinity',
-        'area_affinity',
+        'scale_affinity',
         'type_affinity',
     ]
     with open(path, 'w', newline='') as f:
