@@ -1,24 +1,22 @@
 """WBM-WDM matching utilities.
 
 Modules:
-  models          – DefectTable, GridMaps, status constants
-  io              – KLARF/WBM file I/O
-  mappers         – coordinate mapping strategies (MAPPERS)
-  representations – grid map representation builders (REPRESENTATIONS)
-  pipeline        – map_klarf_to_grid end-to-end entry point
-  main            – CLI entry point
+  core     – models, mappers, representations, matching algorithms
+  data     – KLARF/WBM file I/O
+  viz      – comparison and count-partial visualizations
+  scripts  – CLI entry points
 """
 
-from .models import DefectTable, GridMaps, BACKGROUND, VALID_NO_DEFECT, VALID_HAS_DEFECT, UNINSPECTED
-from .fileio import read_wbm_shape, read_wbm_png, load_defect_tables, load_die_pitch, save_grid_maps
-from .mappers import (
+from .core.models import DefectTable, GridMaps, BACKGROUND, VALID_NO_DEFECT, VALID_HAS_DEFECT, UNINSPECTED
+from .data.fileio import read_wbm_shape, read_wbm_png, load_defect_tables, load_die_pitch, save_grid_maps
+from .core.mappers import (
     GridMapper,
     DieIndexGridMapper,
     RelativeCoordinateGridMapper,
     PhysicalCoordinateGridMapper,
     MAPPERS,
 )
-from .representations import (
+from .core.representations import (
     RepresentationBuilder,
     BinaryMapBuilder,
     CountMapBuilder,
@@ -28,8 +26,8 @@ from .representations import (
     MountainMapBuilder,
     REPRESENTATIONS,
 )
-from .pipeline import map_klarf_to_grid
-from .similarity import (
+from .core.pipeline import map_klarf_to_grid
+from .core.similarity import (
     SimilarityMethod,
     SimilarityResult,
     DiceSimilarity,
@@ -44,3 +42,4 @@ from .similarity import (
     compute_similarity,
     top_k_retrieval,
 )
+from .core.local_matching import LocalMatchResult, compute_count_partial_match, explain_count_partial_match

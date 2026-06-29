@@ -102,16 +102,23 @@ WBM PNG 使用三值编码（与 WM-811K 数据集一致）：
 
 ```text
 match/
-  __init__.py           # 统一 re-export 所有公共 API
-  models.py             # DefectTable、GridMaps、状态常量
-  fileio.py             # KLARF 解析、WBM PNG 解码、npz 读写
-  mappers.py            # 3 种坐标映射器 + MAPPERS 注册表
-  representations.py    # 6 种网格表达 + REPRESENTATIONS 注册表
-  pipeline.py           # map_klarf_to_grid 端到端入口
-  similarity.py         # 8 种相似度 + SIMILARITIES 注册表
-  visualization.py      # 绘图对比：并排/叠加/多视图
-  plot_ref_cnd.py       # CLI 快速看图脚本
-  main.py               # 批量处理 CLI 入口
+  __init__.py                 # 统一 re-export 公共 API
+  core/
+    models.py                 # DefectTable、GridMaps、状态常量
+    mappers.py                # 3 种坐标映射器 + MAPPERS 注册表
+    representations.py        # 6 种网格表达 + REPRESENTATIONS 注册表
+    pipeline.py               # map_klarf_to_grid 端到端入口
+    similarity.py             # 8 种全图相似度
+    local_matching.py         # count-map partial matching
+  data/
+    fileio.py                 # KLARF 解析、WBM PNG 解码、npz 读写
+  viz/
+    visualization.py          # 通用绘图对比：并排/叠加/多视图
+    count_partial_visualization.py  # partial matching step/topK 图片
+  scripts/
+    main.py                   # 批量处理 CLI 入口
+    plot_ref_cnd.py           # CLI 快速看图脚本
+    plot_count_partial.py     # count-partial 图片生成脚本
 ```
 
 ---
@@ -120,7 +127,7 @@ match/
 
 ```bash
 # 批量处理：目录中所有 KLARF vs. 一张 WBM 参考图
-PYTHONPATH=wbm-wdm-matching python3 -m match.main \
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
@@ -137,7 +144,27 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.main \
 | `dice`, `iou`, `ncc`, `cosine` | 基础相似度 |
 | `coverage`, `leakage`, `coverage-leakage` | Coverage-Leakage 族 |
 | `chamfer` | 点集倒角距离 |
+| `count-partial*` | 基于 WDM count_map 的局部 token 匹配分数与分量 |
+| `classnumber-count`, `best-classnumber*` | 仅 `--use-classnumber` 时输出，表示按 classnumber 拆分后的最佳分图 |
 | `mapped_defects` | 映射成功数/总缺陷数 |
+
+可选 classnumber 拆分匹配：
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation density \
+  --use-classnumber \
+  --save-classnumber-figures \
+  --classnumber-fig-dir results/classnumber_review
+```
+
+开启后，主流程仍会保留整图 WDM 匹配；额外按 KLARF `classnumber`
+将同一个 WDM 拆成多个分图并计算 `count-partial`。若保存图片，会输出
+`WBM + WDM all + WDM classnumber split` 面板，并用绿色边框标记最佳分图。
 
 ---
 
@@ -165,9 +192,9 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.main \
 ### 5.3 代码示例
 
 ```python
-from fileio import read_wbm_png
-from pipeline import map_klarf_to_grid
-from visualization import plot_comparison, plot_overlay
+from match.data.fileio import read_wbm_png
+from match.core.pipeline import map_klarf_to_grid
+from match.viz.visualization import plot_comparison, plot_overlay
 
 ref_gm = read_wbm_png("reference.png")
 cnd_gm = map_klarf_to_grid("data.klarf", shape=ref_gm.count_map.shape)
@@ -188,7 +215,7 @@ plot_overlay(ref_gm, cnd_gm, representation="binary",
 ### 5.4 CLI 快速看图
 
 ```bash
-python plot_ref_cnd.py \
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.plot_ref_cnd \
     --ref ../data/wm811k/000604.png \
     --klarf ../data/klarf/some_file \
     --mapper die-index \

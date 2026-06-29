@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python -m match.plot_ref_cnd --ref reference.png --cnd candidate.npz
-    python -m match.plot_ref_cnd --ref reference.png --klarf some_file
+    python -m match.scripts.plot_ref_cnd --ref reference.png --cnd candidate.npz
+    python -m match.scripts.plot_ref_cnd --ref reference.png --klarf some_file
 
 Shape always comes from --ref. No manual --height/--width needed.
 """
@@ -16,14 +16,9 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless
 
-try:
-    from .fileio import read_wbm_png
-    from .pipeline import map_klarf_to_grid
-    from .visualization import plot_comparison
-except ImportError:
-    from fileio import read_wbm_png
-    from pipeline import map_klarf_to_grid
-    from visualization import plot_comparison
+from ..data.fileio import read_wbm_png
+from ..core.pipeline import map_klarf_to_grid
+from ..viz.visualization import plot_comparison
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,10 +49,7 @@ def main() -> None:
     if args.cnd:
         import numpy as np
         cnd_data = dict(np.load(args.cnd, allow_pickle=True))
-        try:
-            from .models import GridMaps
-        except ImportError:
-            from models import GridMaps
+        from ..core.models import GridMaps
         cnd_gm = GridMaps(
             count_map=cnd_data["count_map"],
             binary_map=cnd_data["binary_map"],

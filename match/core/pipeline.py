@@ -4,10 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Tuple
 
-from .fileio import load_defect_tables, load_die_pitch
+from ..data.fileio import load_defect_tables, load_die_pitch
 from .mappers import MAPPERS, GridMapper, DieIndexGridMapper, PhysicalCoordinateGridMapper
 from .representations import REPRESENTATIONS, DensityMapBuilder
-from .models import GridMaps
+from .models import DefectTable, GridMaps
 
 
 def map_klarf_to_grid(
@@ -25,15 +25,42 @@ def map_klarf_to_grid(
         raise IndexError(
             f"defect_table_index={defect_table_index} out of range; found {len(tables)} DefectList tables"
         )
+    defect_table = tables[defect_table_index]
+
+    mapper = build_mapper(
+        klarf_path=klarf_path,
+        mapper_name=mapper_name,
+        die_x_range=die_x_range,
+        die_y_range=die_y_range,
+    )
+    metadata = {
+        "klarf_path": str(klarf_path),
+        "defect_table_index": defect_table_index,
+        "defect_table_source": defect_table.source,
+        "defect_table_count": len(tables),
+        "representation": representation_name,
+    }
+    return map_defect_table_to_grid(
+        defect_table,
+        shape=shape,
+        mapper=mapper,
+        representation_name=representation_name,
+        metadata=metadata,
+    )
+
+
+def build_mapper(
+    klarf_path: str | Path,
+    mapper_name: str = DieIndexGridMapper.name,
+    die_x_range: Tuple[int, int] | None = None,
+    die_y_range: Tuple[int, int] | None = None,
+) -> GridMapper:
+    """Build a mapper instance for a KLARF file and mapper configuration."""
 
     mapper_cls = MAPPERS.get(mapper_name)
     if mapper_cls is None:
         choices = ", ".join(sorted(MAPPERS))
         raise KeyError(f"Unknown mapper {mapper_name!r}. Available mappers: {choices}")
-
-    if representation_name not in REPRESENTATIONS:
-        choices = ", ".join(sorted(REPRESENTATIONS))
-        raise KeyError(f"Unknown representation {representation_name!r}. Available representations: {choices}")
 
     # 构建 mapper 实例
     if mapper_cls is PhysicalCoordinateGridMapper:
@@ -59,8 +86,22 @@ def map_klarf_to_grid(
         )
     else:
         mapper = mapper_cls()
+    return mapper
 
-    mapped = mapper.map(tables[defect_table_index], shape)
+
+def map_defect_table_to_grid(
+    defect_table: DefectTable,
+    shape: Tuple[int, int],
+    mapper: GridMapper,
+    representation_name: str = DensityMapBuilder.name,
+    metadata: dict | None = None,
+) -> GridMaps:
+    """Map an already-loaded DefectTable to GridMaps."""
+    if representation_name not in REPRESENTATIONS:
+        choices = ", ".join(sorted(REPRESENTATIONS))
+        raise KeyError(f"Unknown representation {representation_name!r}. Available representations: {choices}")
+
+    mapped = mapper.map(defect_table, shape)
     count_map = mapped["count_map"]
     status_map = mapped["status_map"]
     row_indices = mapped["row_indices"]
@@ -70,16 +111,10 @@ def map_klarf_to_grid(
         for name, builder in REPRESENTATIONS.items()
     }
 
-    metadata = mapped["metadata"]
-    metadata.update(
-        {
-            "klarf_path": str(klarf_path),
-            "defect_table_index": defect_table_index,
-            "defect_table_source": tables[defect_table_index].source,
-            "defect_table_count": len(tables),
-            "representation": representation_name,
-        }
-    )
+    merged_metadata = mapped["metadata"]
+    if metadata:
+        merged_metadata.update(metadata)
+    merged_metadata.update({"representation": representation_name})
     return GridMaps(
         count_map=representation_maps["count"],
         binary_map=representation_maps["binary"],
@@ -87,5 +122,5 @@ def map_klarf_to_grid(
         status_map=status_map,
         representation_map=representation_maps[representation_name],
         representation_maps=representation_maps,
-        metadata=metadata,
+        metadata=merged_metadata,
     )

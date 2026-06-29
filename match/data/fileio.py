@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import klarfio  # noqa: E402
 
-from .models import (
+from ..core.models import (
     DefectTable,
     GridMaps,
     BACKGROUND,
@@ -182,6 +182,34 @@ def load_defect_tables(klarf_path: str | Path) -> List[DefectTable]:
     return tables
 
 
+def split_defect_table_by_classnumber(defect_table: DefectTable) -> dict[int, DefectTable]:
+    """按 KLARF 中的 classnumber/class number 字段拆分 defect table。
+
+    返回值按 classnumber 升序排序；若找不到 classnumber 列则返回空字典。
+    """
+    class_col = _find_column_name(defect_table.columns, ("CLASSNUMBER", "ClassNumber", "classnumber"))
+    if class_col is None:
+        return {}
+
+    values = defect_table.column(class_col)
+    valid = np.isfinite(values)
+    if not valid.any():
+        return {}
+
+    groups: dict[int, list[int]] = {}
+    for idx, value in enumerate(values):
+        if not np.isfinite(value):
+            continue
+        class_id = int(value)
+        groups.setdefault(class_id, []).append(idx)
+
+    split_tables: dict[int, DefectTable] = {}
+    for class_id in sorted(groups):
+        rows = defect_table.rows[np.asarray(groups[class_id], dtype=np.int64)]
+        split_tables[class_id] = DefectTable(columns=list(defect_table.columns), rows=rows, source=f"{defect_table.source}/classnumber={class_id}")
+    return split_tables
+
+
 def _collect_defect_tables(node: object, tables: List[DefectTable], source: str) -> None:
     """递归遍历解析后的 KLARF 树，寻找包含缺陷列的表。"""
     if not isinstance(node, Mapping):
@@ -217,6 +245,15 @@ def _safe_float_array(data: list) -> np.ndarray:
         return arr.reshape(len(data), -1)
     else:
         return arr.reshape(1, -1)
+
+
+def _find_column_name(columns: List[str], candidates: Tuple[str, ...]) -> str | None:
+    lower_map = {column.lower(): column for column in columns}
+    for candidate in candidates:
+        found = lower_map.get(candidate.lower())
+        if found is not None:
+            return found
+    return None
 
 
 def load_die_pitch(klarf_path: str | Path) -> tuple[float, float]:

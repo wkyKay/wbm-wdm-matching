@@ -8,24 +8,35 @@ from typing import List, Tuple
 
 import numpy as np
 
-try:
-    from .mappers import MAPPERS
-    from .representations import REPRESENTATIONS
-    from .pipeline import map_klarf_to_grid
-    from .fileio import load_defect_tables, read_wbm_shape, read_wbm_png, save_grid_maps
-    from .similarity import SIMILARITIES, compute_similarity, SimilarityResult
-except ImportError:
-    from mappers import MAPPERS
-    from representations import REPRESENTATIONS
-    from pipeline import map_klarf_to_grid
-    from fileio import load_defect_tables, read_wbm_shape, read_wbm_png, save_grid_maps
-    from similarity import SIMILARITIES, compute_similarity, SimilarityResult
+from ..core.mappers import MAPPERS
+from ..core.representations import REPRESENTATIONS
+from ..core.pipeline import map_klarf_to_grid
+from ..data.fileio import load_defect_tables, read_wbm_shape, read_wbm_png, save_grid_maps
+from ..core.similarity import SIMILARITIES, compute_similarity, SimilarityResult
+from ..core.local_matching import LocalMatchResult, compute_count_partial_match
+from ..core.classnumber_matching import classnumber_scores_dict, compute_classnumber_matches
 
 
 # ── 表头中 similarity 方法的顺序 ──────────────────────────────────
 SIMILARITY_COLUMNS: List[str] = [
     "dice", "iou", "ncc", "cosine",
     "coverage", "leakage", "coverage-leakage", "chamfer",
+]
+
+PARTIAL_MATCH_COLUMNS: List[str] = [
+    "count-partial",
+    "count-partial-shape",
+    "count-partial-position",
+    "count-partial-scale",
+    "count-partial-type",
+    "count-partial-tokens",
+]
+
+CLASSNUMBER_COLUMNS: List[str] = [
+    "classnumber-count",
+    "best-classnumber",
+    "best-classnumber-partial",
+    "best-classnumber-tokens",
 ]
 
 
@@ -107,6 +118,55 @@ def parse_args() -> argparse.Namespace:
         default="match/output/batch_topk.tsv",
         help="Path to the top-K ranking log file.",
     )
+    parser.add_argument(
+        "--save-count-partial-figures",
+        action="store_true",
+        help="Save count-map partial matching TopK and proposal-step review figures.",
+    )
+    parser.add_argument(
+        "--count-partial-fig-dir",
+        default="match/output/count_partial_review",
+        help="Directory for count-partial review figures when --save-count-partial-figures is set.",
+    )
+    parser.add_argument(
+        "--count-partial-review-top-k",
+        type=int,
+        default=3,
+        help="Number of candidates shown in the count-partial TopK figure.",
+    )
+    parser.add_argument(
+        "--count-partial-step-max",
+        type=int,
+        default=3,
+        help="Number of top count-partial candidates rendered as proposal-step figures.",
+    )
+    parser.add_argument(
+        "--count-partial-min-area",
+        type=int,
+        default=5,
+        help="Minimum support area for count-partial WBM/WDM tokens.",
+    )
+    parser.add_argument(
+        "--count-partial-top-k-proposals",
+        type=int,
+        default=6,
+        help="Maximum WBM/WDM proposal tokens retained for count-partial matching.",
+    )
+    parser.add_argument(
+        "--use-classnumber",
+        action="store_true",
+        help="Split each KLARF by classnumber and run additional per-class WDM matching.",
+    )
+    parser.add_argument(
+        "--save-classnumber-figures",
+        action="store_true",
+        help="Save WBM, full WDM, and classnumber-split WDM review figures. Requires --use-classnumber.",
+    )
+    parser.add_argument(
+        "--classnumber-fig-dir",
+        default="match/output/classnumber_review",
+        help="Directory for classnumber split review figures.",
+    )
     return parser.parse_args()
 
 
@@ -129,7 +189,7 @@ def load_reference(path: str | Path) -> "GridMaps":
         return read_wbm_png(path)
     elif path.suffix.lower() == ".npz":
         ref_data = dict(np.load(path, allow_pickle=True))
-        from .models import GridMaps as GM
+        from ..core.models import GridMaps as GM
         return GM(
             count_map=ref_data["count_map"],
             binary_map=ref_data["binary_map"],
@@ -207,9 +267,50 @@ def process_one(
 
         result[method] = r
 
+    # Count-map partial matching: WBM failure tokens explained by WDM count-map evidence tokens.
+    try:
+        partial = compute_count_partial_match(
+            ref_gm,
+            grid_maps,
+            min_area=args.count_partial_min_area,
+            top_k=args.count_partial_top_k_proposals,
+        )
+        result["count-partial"] = partial.score
+        result["count-partial-shape"] = partial.mean_shape
+        result["count-partial-position"] = partial.mean_position
+        result["count-partial-scale"] = partial.mean_scale
+        result["count-partial-type"] = partial.mean_type
+        result["count-partial-tokens"] = partial
+    except Exception as e:
+        for col in PARTIAL_MATCH_COLUMNS:
+            result[col] = f"ERR:{e}"
+
+    if args.use_classnumber:
+        try:
+            class_result = compute_classnumber_matches(
+                klarf_path,
+                reference=ref_gm,
+                shape=shape,
+                mapper_name=args.mapper,
+                representation_name=args.representation,
+                defect_table_index=args.defect_table_index,
+                die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
+                die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
+                min_area=args.count_partial_min_area,
+                top_k=args.count_partial_top_k_proposals,
+            )
+            result.update(classnumber_scores_dict(class_result))
+            if args.save_classnumber_figures:
+                result["_classnumber_result"] = class_result
+        except Exception as e:
+            for col in CLASSNUMBER_COLUMNS:
+                result[col] = f"ERR:{e}"
+
     # 附加 metadata
     result["_mapped"] = grid_maps.metadata.get("mapped_defects", 0)
     result["_input"] = grid_maps.metadata.get("input_defects", 0)
+    if args.save_count_partial_figures or args.save_classnumber_figures:
+        result["_grid_maps"] = grid_maps
     result["_status"] = "OK"
     return result
 
@@ -218,6 +319,8 @@ def format_score(val) -> str:
     """将 similarity 结果格式化为 6 位小数字符串。"""
     if isinstance(val, SimilarityResult):
         return f"{val.score:.6f}"
+    if isinstance(val, LocalMatchResult):
+        return f"{val.matched_tokens}/{val.wbm_tokens}/{val.wdm_tokens}"
     if isinstance(val, (float, int)):
         return f"{val:.6f}"
     if isinstance(val, str):
@@ -278,12 +381,14 @@ def main() -> None:
     # ── 写 TSV log ──
     log_path = Path(args.log)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    header = ["file"] + SIMILARITY_COLUMNS + ["mapped_defects"]
+    extra_columns = CLASSNUMBER_COLUMNS if args.use_classnumber else []
+    result_columns = SIMILARITY_COLUMNS + PARTIAL_MATCH_COLUMNS + extra_columns
+    header = ["file"] + result_columns + ["mapped_defects"]
     with open(log_path, "w") as f:
         f.write("\t".join(header) + "\n")
         for fname, res in rows:
             scores = []
-            for col in SIMILARITY_COLUMNS:
+            for col in result_columns:
                 scores.append(format_score(res.get(col, "")))
             mapped = f"{res.get('_mapped', '')}/{res.get('_input', '')}"
             scores.append(mapped)
@@ -298,7 +403,10 @@ def main() -> None:
 
     with open(topk_log_path, "w") as f:
         f.write("metric\trank\tfile\tscore\n")
-        for col in SIMILARITY_COLUMNS:
+        ranking_columns = SIMILARITY_COLUMNS + ["count-partial"]
+        if args.use_classnumber:
+            ranking_columns.append("best-classnumber-partial")
+        for col in ranking_columns:
             # (filename, score) pairs, only valid numeric scores
             scored: list[tuple[str, float]] = []
             for fname, res in rows:
@@ -315,11 +423,16 @@ def main() -> None:
 
     print(f"Top-K log saved: {topk_log_path}")
 
+    if args.save_count_partial_figures:
+        _save_count_partial_figures(args, ref_gm, rows)
+    if args.use_classnumber and args.save_classnumber_figures:
+        _save_classnumber_figures(args, ref_gm, rows)
+
     # ── 打印摘要表格到 stdout ──
     col_widths = [max(len(h), 10) for h in header]
     for fname, res in rows:
         col_widths[0] = max(col_widths[0], len(fname))
-        for j, col in enumerate(SIMILARITY_COLUMNS):
+        for j, col in enumerate(result_columns):
             col_widths[j + 1] = max(col_widths[j + 1], len(format_score(res.get(col, ""))))
 
     def fmt_row(cells: list) -> str:
@@ -329,10 +442,106 @@ def main() -> None:
     print("-" * (sum(col_widths) + 2 * (len(col_widths) - 1)))
     for fname, res in rows:
         cells = [fname]
-        for col in SIMILARITY_COLUMNS:
+        for col in result_columns:
             cells.append(format_score(res.get(col, "")))
         cells.append(f"{res.get('_mapped', '')}/{res.get('_input', '')}")
         print(fmt_row(cells))
+
+
+def _save_count_partial_figures(args: argparse.Namespace, ref_gm: "GridMaps", rows: List[Tuple[str, dict]]) -> None:
+    import os
+
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from ..viz.count_partial_visualization import plot_count_partial_steps, plot_count_partial_topk
+
+    scored: list[tuple[str, "GridMaps", float]] = []
+    for fname, res in rows:
+        score = res.get("count-partial")
+        grid_maps = res.get("_grid_maps")
+        if isinstance(score, (float, int)) and grid_maps is not None:
+            scored.append((Path(fname).stem, grid_maps, float(score)))
+
+    if not scored:
+        print("Count-partial figures skipped: no valid count-partial GridMaps available")
+        return
+
+    scored.sort(key=lambda item: item[2], reverse=True)
+    out_dir = Path(args.count_partial_fig_dir)
+    steps_dir = out_dir / "proposal_steps"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    steps_dir.mkdir(parents=True, exist_ok=True)
+
+    top_n = max(args.count_partial_review_top_k, 1)
+    top_records = scored[:top_n]
+    topk_path = out_dir / f"top{len(top_records)}_count_partial.png"
+    plot_count_partial_topk(
+        ref_gm,
+        [(name, gm) for name, gm, _ in top_records],
+        title="Count-map partial matching top candidates",
+        min_area=args.count_partial_min_area,
+        top_k=args.count_partial_top_k_proposals,
+        save_path=topk_path,
+    )
+    plt.close("all")
+    print(f"Count-partial TopK figure saved: {topk_path}")
+
+    for rank, (name, gm, _) in enumerate(scored[: max(args.count_partial_step_max, 0)], start=1):
+        step_path = steps_dir / f"rank{rank:02d}_{_safe_name(name)}_steps.png"
+        plot_count_partial_steps(
+            ref_gm,
+            gm,
+            title=f"Rank {rank}: {name}",
+            min_area=args.count_partial_min_area,
+            top_k=args.count_partial_top_k_proposals,
+            save_path=step_path,
+        )
+        plt.close("all")
+        print(f"Count-partial step figure saved: {step_path}")
+
+
+def _save_classnumber_figures(args: argparse.Namespace, ref_gm: "GridMaps", rows: List[Tuple[str, dict]]) -> None:
+    import os
+
+    os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from ..viz.classnumber_visualization import plot_classnumber_splits
+
+    out_dir = Path(args.classnumber_fig_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    saved = 0
+    for fname, res in rows:
+        grid_maps = res.get("_grid_maps")
+        class_result = res.get("_classnumber_result")
+        if grid_maps is None or class_result is None or not class_result.splits:
+            continue
+        path = out_dir / f"{_safe_name(Path(fname).stem)}_classnumber_splits.png"
+        plot_classnumber_splits(
+            ref_gm,
+            grid_maps,
+            class_result,
+            title=f"{fname} classnumber split matching",
+            save_path=path,
+        )
+        plt.close("all")
+        print(f"Classnumber split figure saved: {path}")
+        saved += 1
+
+    if saved == 0:
+        print("Classnumber figures skipped: no valid classnumber split results available")
+
+
+def _safe_name(name: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
 
 
 if __name__ == "__main__":

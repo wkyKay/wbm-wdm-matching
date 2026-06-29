@@ -10,7 +10,7 @@ from typing import Tuple
 import numpy as np
 import matplotlib.pyplot as plt
 
-from .models import GridMaps, BACKGROUND, UNINSPECTED
+from ..core.models import GridMaps, BACKGROUND, UNINSPECTED
 
 # ── 状态掩码（掩掉 wafer 外的区域）────────────────────────────────
 
@@ -230,3 +230,4 @@ def plot_representation_panel(
         fig.savefig(save_path, dpi=150, bbox_inches="tight")
 
     return fig, axes
+
