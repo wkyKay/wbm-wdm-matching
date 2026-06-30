@@ -30,7 +30,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)
-    out_dir = Path(args.count_partial_fig_dir)
+    out_dir = _review_output_dir(args.count_partial_fig_dir, getattr(args, "identifier", ""), "count_partial_review")
     steps_dir = out_dir / "proposal_steps"
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
@@ -74,7 +74,8 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
         plot_classnumber_topk_splits,
     )
 
-    out_dir = Path(args.classnumber_fig_dir)
+    review_name = _classnumber_review_name(args)
+    out_dir = _review_output_dir(args.classnumber_fig_dir, getattr(args, "identifier", ""), review_name)
     steps_dir = out_dir / "topk_steps"
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
@@ -191,5 +192,23 @@ def _effective_classnumber_rank_by(args) -> str:
     return args.classnumber_rank_by
 
 
+def _classnumber_review_name(args) -> str:
+    mode = getattr(args, "classnumber_match_mode", "count")
+    if mode == "both":
+        rank_by = _effective_classnumber_rank_by(args)
+        return f"classnumber_review_both_rank_{_safe_name(rank_by)}"
+    return f"classnumber_review_{_safe_name(mode)}"
+
+
 def _safe_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
+
+
+def _review_output_dir(base_dir: str, identifier: str, review_name: str) -> Path:
+    base = Path(base_dir)
+    run_id = _safe_name(str(identifier).strip())
+    if not run_id:
+        return base
+    if base.name.startswith(review_name) or base.name.startswith("classnumber_review"):
+        base = base.parent
+    return base / run_id / review_name

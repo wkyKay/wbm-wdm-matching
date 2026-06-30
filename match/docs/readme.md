@@ -136,10 +136,13 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --die-defect-threshold 1 \
+  --identifier AF00138 \
   --log results.tsv
 ```
 
 `--die-defect-threshold 1` 是默认值，表示只要某个 die/cell 有至少 1 个 defect，就会在 `binary_map` 中置 1。调大该值只影响 `binary_map` 及基于 binary 的匹配/绘图，不改变 `count_map`。
+
+`--identifier` 用于组织多次实验输出。例如 `--count-partial-fig-dir results --identifier AF00138` 会保存到 `results/AF00138/count_partial_review`。classnumber review 会额外按匹配模式分目录，例如 `results/AF00138/classnumber_review_count`、`results/AF00138/classnumber_review_binary`、`results/AF00138/classnumber_review_both_rank_binary`。不传 `--identifier` 时保持旧行为，直接使用对应的 `*-fig-dir`。
 
 ### 4.1 生成 count-partial 图片
 
@@ -153,17 +156,18 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --die-defect-threshold 1 \
+  --identifier AF00138 \
   --log results.tsv \
   --topk-log topk.tsv \
   --save-count-partial-figures \
-  --count-partial-fig-dir results/count_partial_review \
+  --count-partial-fig-dir results \
   --count-partial-review-top-k 3 \
   --count-partial-step-max 3
 ```
 
 会生成：
-- `results/count_partial_review/top3_count_partial.png`
-- `results/count_partial_review/proposal_steps/rankXX_*.png`
+- `results/AF00138/count_partial_review/top3_count_partial.png`
+- `results/AF00138/count_partial_review/proposal_steps/rankXX_*.png`
 
 所有 8 种相似度指标自动计算，结果写入 TSV：
 
@@ -190,9 +194,10 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --representation density \
   --defect-threshold 5 \
   --die-defect-threshold 1 \
+  --identifier AF00138 \
   --use-classnumber \
   --save-classnumber-figures \
-  --classnumber-fig-dir results/classnumber_review
+  --classnumber-fig-dir results
 ```
 
 默认是 `count` 模式，也就是沿用 `count-partial` 的 token 匹配结果。若要用
@@ -207,10 +212,11 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --representation density \
   --defect-threshold 5 \
   --die-defect-threshold 2 \
+  --identifier AF00138 \
   --use-classnumber \
   --classnumber-match-mode binary \
   --save-classnumber-figures \
-  --classnumber-fig-dir results/classnumber_review
+  --classnumber-fig-dir results
 ```
 
 也可以同时算 `count` 和 `binary`，并指定最终排序依据：
@@ -224,20 +230,21 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --representation density \
   --defect-threshold 5 \
   --die-defect-threshold 2 \
+  --identifier AF00138 \
   --use-classnumber \
   --classnumber-match-mode both \
   --classnumber-rank-by binary \
   --save-classnumber-figures \
-  --classnumber-fig-dir results/classnumber_review
+  --classnumber-fig-dir results
 ```
 
 上面 binary 示例使用 `--die-defect-threshold 2`，表示单个 die/cell 至少有 2 个 defect 才进入 binary proposal。生产数据中如果 binary 图仍然过碎，可以试 `3`；如果担心稀疏真实形状被过滤，则回到 `1`。
 
 这组命令会生成：
-- `results/classnumber_review/<file>_classnumber_splits.png`
-- `results/classnumber_review/classnumber_topk.tsv`
-- `results/classnumber_review/classnumber_topK.png`
-- `results/classnumber_review/topk_steps/rankXX_*.png`
+- `results/AF00138/classnumber_review_both_rank_binary/<file>_classnumber_splits.png`
+- `results/AF00138/classnumber_review_both_rank_binary/classnumber_topk.tsv`
+- `results/AF00138/classnumber_review_both_rank_binary/classnumber_topK.png`
+- `results/AF00138/classnumber_review_both_rank_binary/topk_steps/rankXX_*.png`
 
 其中：
 - `classnumber_topk.tsv` 记录所有分图的排序结果
@@ -250,6 +257,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 |------|--------|------|
 | `--defect-threshold` | `5` | 文件级过滤：KLARF 总 defect 数低于该值则跳过 |
 | `--die-defect-threshold` | `1` | die/cell 级过滤：单个 die/cell 至少包含多少个 defect 才会在 `binary_map` 中置 1 |
+| `--identifier` | 空 | 可选运行标识；设置后 review 图片保存到 `<fig-dir>/<identifier>/<review_name>`，classnumber 会按 count/binary/both_rank_* 自动区分目录 |
 | `--classnumber-match-mode {count,binary,both}` | `count` | classnumber 分图计算 count、binary 或两者 |
 | `--classnumber-rank-by {count,binary}` | `count` | `both` 模式下 topK 和最佳分图的排序依据 |
 | `--classnumber-binary-dilation` | `1` | 兼容旧命令保留；当前 binary token 匹配不再使用 dilation |
@@ -264,6 +272,10 @@ binary classnumber 分数现在与 count-partial 使用同一套 proposal / desc
 
 保存图片时，无论选择 `count`、`binary` 还是 `both`，都会生成上面的三类图。
 `binary` 排序时，step 图展示同一 classnumber 分图的局部结构，方便对照解释路径。
+
+count-partial 和 classnumber review 图片的颜色规则：
+- WBM 面板保持 WM811K 原图风格：背景黑色、晶圆内正常 die 灰色、失效 die 白色。
+- WDM count / binary heatmap 使用晶圆外黑色、晶圆内灰白到红色的热力图；`rank_by=binary` 时底图使用 binary map，`rank_by=count` 时底图使用 count map。
 
 ### 4.3 `density` 和 `count` 的区别
 

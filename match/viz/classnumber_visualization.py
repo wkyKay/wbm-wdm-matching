@@ -6,16 +6,19 @@ from typing import List
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
 
 from ..core.classnumber_matching import ClassNumberMatchResult, split_score
-from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
+from ..core.models import GridMaps, VALID_NO_DEFECT
 
 
+STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
+STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 CLASSNUMBER_CMAP = LinearSegmentedColormap.from_list(
     "classnumber_counts",
-    ["#111111", "#7f1d1d", "#dc2626", "#fca5a5", "#fff1f2"],
+    ["#7f7f7f", "#f2f2f2", "#fca5a5", "#dc2626", "#7f1d1d"],
 )
+CLASSNUMBER_CMAP.set_bad("black")
 
 
 def plot_classnumber_splits(
@@ -43,8 +46,7 @@ def plot_classnumber_splits(
     last_im = None
     for ax, (label, gm, split) in zip(axes_list, panels):
         if label == "WBM":
-            ref_mask = (reference.status_map == VALID_HAS_DEFECT).astype(np.float32)
-            ax.imshow(ref_mask, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=1.0, interpolation="nearest")
+            ax.imshow(reference.status_map, cmap=STATUS_CMAP, norm=STATUS_NORM, interpolation="nearest")
             ax.set_title("WBM")
         else:
             image = _masked_wdm_image(gm, reference.status_map, score_mode)

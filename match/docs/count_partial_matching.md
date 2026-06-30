@@ -588,12 +588,12 @@ matched_tokens = 0
 
 ## 14. 可视化颜色
 
-当前 count-partial 可视化中：
+当前 count-partial 和 classnumber review 可视化中：
 
-- WBM failure 使用红色系。
-- WDM count heatmap 也使用红色系。
+- WBM 面板使用 WM811K 风格的状态色：背景黑色、晶圆内正常 die 灰色、失效 die 白色。
+- WDM count / binary heatmap 使用晶圆外黑色、晶圆内灰白到红色的热力图。
 
-这样 WBM/WDM 的视觉语义保持一致，避免红蓝对比造成“不同类别”的误解。
+这样 WBM 保持与原始参考图一致，WDM 热力图保持统一红色系，避免 WBM/WDM 红蓝对比造成“不同类别”的误解。
 
 ## 15. 当前限制
 

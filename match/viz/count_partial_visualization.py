@@ -13,12 +13,13 @@ from ..core.local_matching import explain_count_partial_match
 from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 
-STATUS_CMAP = ListedColormap(["black", "#b8b8b8", "#d62728", "#444444"])
+STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
     "count_partial_counts",
-    ["#111111", "#7f1d1d", "#dc2626", "#fca5a5", "#fff1f2"],
+    ["#7f7f7f", "#f2f2f2", "#fca5a5", "#dc2626", "#7f1d1d"],
 )
+COUNT_PARTIAL_CMAP.set_bad("black")
 TOKEN_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#17becf",
     "#e377c2", "#bcbd22", "#7f7f7f", "#d62728",
@@ -148,8 +149,7 @@ def _plot_wbm_status(ax: plt.Axes, grid_maps: GridMaps, title: str) -> None:
 
 
 def _plot_wbm_defects(ax: plt.Axes, grid_maps: GridMaps, title: str) -> None:
-    defect_mask = (grid_maps.status_map == VALID_HAS_DEFECT).astype(np.float32)
-    ax.imshow(defect_mask, cmap=COUNT_PARTIAL_CMAP, vmin=0.0, vmax=1.0, interpolation="nearest")
+    ax.imshow(grid_maps.status_map, cmap=STATUS_CMAP, norm=STATUS_NORM, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
 
@@ -164,14 +164,14 @@ def _plot_wdm_heatmap(ax: plt.Axes, log_count: np.ndarray, title: str, vmax: flo
 def _masked_log_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
     valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
     log_count = np.log1p(count_map.astype(np.float32))
-    log_count[~valid] = 0.0
+    log_count[~valid] = np.nan
     return log_count
 
 
 def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
     valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
     image = (binary_map > 0).astype(np.float32)
-    image[~valid] = 0.0
+    image[~valid] = np.nan
     return image
 
 

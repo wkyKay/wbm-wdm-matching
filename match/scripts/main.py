@@ -131,6 +131,11 @@ def _add_mapping_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_output_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
+        "--identifier",
+        default="",
+        help="Optional run identifier. Review figures are saved under <fig-dir>/<identifier>/<review-name> when set.",
+    )
+    parser.add_argument(
         "--output-dir",
         default="match/output",
         help="Directory for per-file .npz outputs.",
