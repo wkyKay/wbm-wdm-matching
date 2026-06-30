@@ -260,11 +260,24 @@ short_side = min(height, width)
 ring-aware 会在 wafer edge band 中寻找稳定半径带，生成 `edge_ring` token，并从 residual components 中移除这些 ring pixels。保守判据包括：
 
 ```text
+global defect ratio
 edge fraction
 radial band support area
 angular coverage
 radial std
 ```
+
+当缺陷面积占有效 die 比例过高时，ring-aware 会直接跳过：
+
+```text
+short_side <= 12:
+  max_defect_ratio_for_ring = 0.45
+
+short_side > 12:
+  max_defect_ratio_for_ring = 0.35
+```
+
+这样可以避免 random / near-full / full 等大面积缺陷图被误拆出 edge-ring token。
 
 当前小图与中大图的核心差异：
 
@@ -759,7 +772,7 @@ matched_tokens = 0
 当前 count-partial 和 classnumber review 可视化中：
 
 - WBM 面板使用 WM811K 风格的状态色：背景黑色、晶圆内正常 die 灰色、失效 die 白色。
-- WDM count / binary heatmap 使用晶圆外黑色、晶圆内由浅到深的红色热力图。count 模式的 colorbar 显示原始整数 defect count，不做 log 变换；binary 模式显示 0/1。
+- WDM count / binary heatmap 使用晶圆外黑色；晶圆内无缺陷 die 使用与 WBM 正常 die 相同的灰色；有缺陷 die 从灰色向红色/深红渐变。count 模式的 colorbar 显示原始整数 defect count，不做 log 变换；binary 模式显示 0/1。
 
 这样 WBM 保持与原始参考图一致，WDM 热力图保持统一红色系，避免 WBM/WDM 红蓝对比造成“不同类别”的误解。
 

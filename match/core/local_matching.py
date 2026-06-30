@@ -507,10 +507,14 @@ def _apply_ring_aware_token(
     max_radial_std = 0.22 if short_side <= 12 else 0.16
     min_angular_coverage = 0.14 if short_side <= 12 else 0.16
     min_ring_points = max(proposal_config.min_area, 3 if short_side <= 12 else 6)
+    max_defect_ratio_for_ring = 0.45 if short_side <= 12 else 0.35
 
     mask = (weight_map > 0) & valid_mask
     points = np.argwhere(mask)
     if len(points) < min_ring_points:
+        return tokens
+    defect_ratio = float(len(points) / max(int(valid_mask.sum()), 1))
+    if defect_ratio > max_defect_ratio_for_ring:
         return tokens
 
     center = np.array([h / 2.0, w / 2.0], dtype=np.float32)

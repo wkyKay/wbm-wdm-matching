@@ -192,11 +192,17 @@ count-partial=... shape=... pos=... scale=... type=... tokens=...
 
 即同一候选的完整 `LocalMatchResult`。即使 `map_mode=binary`，标题字段名仍沿用 `count-partial` 字样，但其数值来自 binary partial 的同一套 token matching 公式。
 
-图中 token 轮廓颜色表示不同 token。`Local matches` 面板中：
+step 图使用 cluster 上色显示 token。`WBM tokens` 和 `WDM tokens` 面板中，每个 token 的原始 pixel cell 会用不同颜色半透明填充，并在质心处标出 token id。
 
-- 虚线轮廓通常表示 WBM token。
-- 实线轮廓表示 WDM token。
+`Local matches` 面板中：
+
+- `W0`, `W1`, ... 表示 WBM token。
+- `D0`, `D1`, ... 表示 WDM token。
+- WBM token 使用带 hatch 的半透明色块。
+- WDM token 使用半透明实色块。
 - 连线表示每个 WBM token 选择到的最佳 WDM token。
+
+TopK 对比图仍以 WDM heatmap 为主，只保留 token 轮廓、编号和连线作为辅助标记，避免色块遮挡候选 count 强度。
 
 注意：当前不是 Hungarian 一对一匹配。多个 WBM token 可以连到同一个 WDM token。
 

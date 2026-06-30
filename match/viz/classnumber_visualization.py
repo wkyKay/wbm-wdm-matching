@@ -17,7 +17,7 @@ STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 CLASSNUMBER_CMAP = LinearSegmentedColormap.from_list(
     "classnumber_counts",
-    ["#f2f2f2", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
+    ["#7f7f7f", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
 )
 CLASSNUMBER_CMAP.set_bad("black")
 
