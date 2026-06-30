@@ -46,6 +46,7 @@ def compute_classnumber_matches(
     binary_beta: float = 0.5,
     die_defect_threshold: int = 1,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -86,9 +87,23 @@ def compute_classnumber_matches(
         partial = None
         binary = None
         if match_mode in ("count", "both"):
-            partial = compute_count_partial_match(reference, gm, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode)
+            partial = compute_count_partial_match(
+                reference,
+                gm,
+                min_area=min_area,
+                top_k=top_k,
+                proposal_mode=proposal_mode,
+                rotation_tolerance=rotation_tolerance,
+            )
         if match_mode in ("binary", "both"):
-            binary = compute_binary_class_score(reference, gm, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode)
+            binary = compute_binary_class_score(
+                reference,
+                gm,
+                min_area=min_area,
+                top_k=top_k,
+                proposal_mode=proposal_mode,
+                rotation_tolerance=rotation_tolerance,
+            )
 
         rank_score = _rank_score(partial, binary, rank_by)
         splits.append(
@@ -152,9 +167,17 @@ def compute_binary_class_score(
     min_area: int = 5,
     top_k: int = 6,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> LocalMatchResult:
     """Score a classnumber split using binary-token partial matching."""
-    return compute_binary_partial_match(reference, candidate, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode)
+    return compute_binary_partial_match(
+        reference,
+        candidate,
+        min_area=min_area,
+        top_k=top_k,
+        proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
+    )
 
 
 def split_score(split: ClassSplitMatch, mode: str) -> float:

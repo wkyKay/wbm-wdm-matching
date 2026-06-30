@@ -45,6 +45,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         min_area=args.count_partial_min_area,
         top_k=args.count_partial_top_k_proposals,
         proposal_mode=args.count_partial_proposal_mode,
+        rotation_tolerance=args.count_partial_rotation_tolerance,
         save_path=topk_path,
     )
     plt.close("all")
@@ -59,6 +60,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
             proposal_mode=args.count_partial_proposal_mode,
+            rotation_tolerance=args.count_partial_rotation_tolerance,
             save_path=step_path,
         )
         plt.close("all")
@@ -82,42 +84,44 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
 
-    saved = 0
     split_records = []
     for fname, res in rows:
         grid_maps = res.get("_grid_maps")
         class_result = res.get("_classnumber_result")
         if grid_maps is None or class_result is None or not class_result.splits:
             continue
-        path = out_dir / f"{_safe_name(Path(fname).stem)}_classnumber_splits.png"
-        plot_classnumber_splits(
-            ref_gm,
-            grid_maps,
-            class_result,
-            title=f"{fname} classnumber split matching",
-            save_path=path,
-        )
-        plt.close("all")
-        print(f"Classnumber split figure saved: {path}")
-        saved += 1
+        file_stem = Path(fname).stem
         for split in class_result.splits:
             split_records.append({
-                "file": Path(fname).stem,
+                "file": file_stem,
+                "file_name": fname,
                 "classnumber": split.classnumber,
                 "split": split,
                 "grid_maps": split.grid_maps,
+                "full_grid_maps": grid_maps,
+                "class_result": class_result,
                 "partial": split.partial,
                 "binary": split.binary,
                 "rank_score": split.rank_score,
                 "rank_mode": class_result.rank_by,
             })
 
-    if saved == 0:
+    if not split_records:
         print("Classnumber figures skipped: no valid classnumber split results available")
         return
 
     rank_by = _effective_classnumber_rank_by(args)
     split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
+    top_k = max(args.count_partial_review_top_k, 1)
+    top_records = split_records[:top_k]
+    _save_topk_classnumber_split_maps(
+        ref_gm=ref_gm,
+        top_records=top_records,
+        out_dir=out_dir,
+        plot_classnumber_splits=plot_classnumber_splits,
+        close_all=plt.close,
+    )
+
     ranking_path = out_dir / "classnumber_topk.tsv"
     with open(ranking_path, "w") as file:
         file.write(
@@ -158,7 +162,6 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
             )
     print(f"Classnumber ranking saved: {ranking_path}")
 
-    top_k = max(args.count_partial_review_top_k, 1)
     topk_path = out_dir / f"classnumber_top{min(top_k, len(split_records))}.png"
     plot_classnumber_topk_splits(
         ref_gm,
@@ -181,10 +184,36 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
             proposal_mode=args.count_partial_proposal_mode,
+            rotation_tolerance=args.count_partial_rotation_tolerance,
             save_path=step_path,
         )
         plt.close("all")
         print(f"Classnumber TopK step figure saved: {step_path}")
+
+
+def _save_topk_classnumber_split_maps(
+    ref_gm,
+    top_records,
+    out_dir: Path,
+    plot_classnumber_splits,
+    close_all,
+) -> None:
+    saved_files = set()
+    for record in top_records:
+        file_key = record["file"]
+        if file_key in saved_files:
+            continue
+        saved_files.add(file_key)
+        path = out_dir / f"{_safe_name(file_key)}_classnumber_splits.png"
+        plot_classnumber_splits(
+            ref_gm,
+            record["full_grid_maps"],
+            record["class_result"],
+            title=f"{record['file_name']} classnumber split matching",
+            save_path=path,
+        )
+        close_all("all")
+        print(f"Classnumber split figure saved: {path}")
 
 
 def _effective_classnumber_rank_by(args) -> str:

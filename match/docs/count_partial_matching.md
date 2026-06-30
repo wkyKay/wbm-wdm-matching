@@ -85,6 +85,14 @@ CLI 参数：
 
 默认值为 `cc`，因此不传该参数时保持旧逻辑。
 
+另有一个独立的 shape descriptor 开关：
+
+```text
+--count-partial-rotation-tolerance
+```
+
+该开关不会改变 proposal 生成流程，也不会做全局位置旋转搜索。它只改变 shape descriptor：去掉绝对方向相关的 orientation 和 angular histogram，保留更稳定的形态统计与 radial profile，使 token shape 相似度对旋转更不敏感。
+
 ### 3.1 小图配置
 
 适用条件：
@@ -181,26 +189,73 @@ effective_top_k    = min(user_top_k, adaptive_top_k)
 
 ### 4.1 Compact Proposal Mode
 
-`compact` 模式保留 connected components 作为基础候选，但在进入 descriptor 和匹配前增加三步保守后处理：
+`compact` 模式保留 connected components 作为基础候选，但在进入 descriptor 和匹配前增加保守后处理：
 
 ```text
 base connected components
- -> medium/large map ring-aware token extraction
+ -> gap-aware grouping
+ -> size-adaptive ring-aware token extraction
  -> geometry fragment merge
  -> type-diverse top-k selection
 ```
 
 该模式不会改变 descriptor 计算，也不会改变 token pair 匹配公式。
 
-#### Ring-aware
+#### Gap-aware Grouping
 
-ring-aware 只在：
+gap-aware grouping 用来处理小图中常见的 1-cell 断点。它只在 `compact` 模式下启用，且仅用于小图/中图：
 
 ```text
-short_side = min(height, width) >= 18
+short_side <= 25
 ```
 
-时启用。小图会自动跳过主动 ring extraction，避免 10x10 左右 map 上角度覆盖、径向厚度等统计量过度抖动。
+流程：
+
+```text
+original defect mask
+ -> 3x3 square structuring element closing
+ -> connected components on closed mask
+ -> 每个 closed group 回取其中的 original defect pixels
+ -> 用 original pixels 重新计算 token stats
+```
+
+关键点：
+
+- closing 只用于 grouping。
+- token 的 `area`、`mass`、PCA、descriptor 仍然只来自原始 defect pixels。
+- closing 产生的虚拟填补像素不会进入 token pixels。
+- 如果 closed group 中虚拟 gap 面积占比过高，则该 group 会被丢弃，回退到原始 token。
+
+保护阈值：
+
+```text
+short_side <= 12:
+  max_virtual_gap_ratio = 0.75
+
+13 <= short_side <= 25:
+  max_virtual_gap_ratio = 0.45
+
+short_side > 25:
+  disabled
+```
+
+其中：
+
+```text
+virtual_gap_ratio = virtual_gap_area / original_pixels_in_group
+```
+
+这样可以允许小图中一个像素的断点，同时避免 closing 把大量无关区域粘成一个 token。
+
+#### Ring-aware
+
+ring-aware 在 `compact` 模式下会对所有尺寸尝试启用，但参数会随 map 尺寸自适应：
+
+```text
+short_side = min(height, width)
+```
+
+小图不会跳过 ring extraction，而是使用更粗的 radial/angular bins、更低的最小 ring 支持点数和更宽松的 radial std 阈值。这样可以在 10x10 左右的小图上保留 edge-ring 的主动提取能力，同时避免照搬大图参数导致过度抖动。
 
 ring-aware 会在 wafer edge band 中寻找稳定半径带，生成 `edge_ring` token，并从 residual components 中移除这些 ring pixels。保守判据包括：
 
@@ -209,6 +264,20 @@ edge fraction
 radial band support area
 angular coverage
 radial std
+```
+
+当前小图与中大图的核心差异：
+
+```text
+small map:
+  edge_r_min 更低
+  radial/angular bins 更少
+  min_ring_points 更低
+  band_width / max_radial_std 更宽松
+
+medium/large map:
+  使用更细的 radial/angular bins
+  对 radial consistency 要求更严格
 ```
 
 #### Geometry Fragment Merge
@@ -483,6 +552,43 @@ profile 特征 8 维：
 - histogram bin 数减少，避免 10x10 左右图中 descriptor 过稀疏。
 - 保留 fill、aspect、elongation、radial、angular 等粗形状信号。
 
+### 8.3 Rotation-Tolerant Descriptor
+
+启用：
+
+```text
+--count-partial-rotation-tolerance
+```
+
+后，descriptor 会进入 rotation-tolerant 版本。该版本仍是手工 descriptor，不使用训练模型。
+
+它保留：
+
+```text
+fill_ratio
+log1p(aspect) / log(16)
+log1p(elongation) / log(64)
+min(compactness / 4, 1)
+angular_coverage
+radial_std
+radial histogram
+```
+
+它去掉：
+
+```text
+cos(orientation)
+sin(orientation)
+angular histogram
+radial_distance_norm
+```
+
+设计目的：
+
+- 降低 token shape descriptor 对绝对方向的敏感度。
+- 保留面积、长宽、细长度、紧密度和径向分布等旋转更稳定的形态信息。
+- 不改变 `position_affinity`，因此整张图匹配仍然不是严格旋转不变；它只是 token shape 层面的旋转容忍。
+
 ## 9. Token Pair 相似度
 
 每个 WBM token 会和每个 WDM token 计算 pairwise score。
@@ -555,15 +661,16 @@ blob <-> irregular
 central <-> blob
 ```
 
-## 10. 形状强约束
+## 10. Shape Gate 与 Type Soft Penalty
 
-生产数据中发现小尺寸 WBM 下，位置和尺度容易掩盖形状差异。因此当前版本增加了形状强约束。
+生产数据中发现小尺寸 WBM 下，位置和尺度容易掩盖形状差异。因此当前版本保留 shape gate：descriptor 明显不相似时，不允许靠位置接近拿高分。
+
+`geometry_type` 仍由 proposal 阶段的启发式规则生成，并用于 proposal 排序、compact 多样性选择和匹配解释。但在 token matching 中，type 不再作为硬门槛；它只作为 soft penalty 乘到最终 pair score 上。
 
 阈值：
 
 ```text
 MIN_SHAPE_SIM_FOR_MATCH = 0.45
-MIN_TYPE_AFFINITY_FOR_MATCH = 0.6
 SHAPE_SCORE_POWER = 2.0
 ```
 
@@ -572,8 +679,6 @@ SHAPE_SCORE_POWER = 2.0
 ```text
 if shape_sim < 0.45:
     pair_score = 0
-elif type_affinity < 0.6:
-    pair_score = 0
 else:
     pair_score = shape_sim^2 * position_affinity * scale_affinity * type_affinity
 ```
@@ -581,8 +686,8 @@ else:
 含义：
 
 - descriptor 不相似时，不允许靠位置接近拿高分。
-- 几何类型完全不兼容时，直接置 0。
 - shape 使用平方项，进一步放大形状差异。
+- 几何类型不兼容时不会直接清零，但会通过较低的 `type_affinity` 降权。
 
 这使 `count-partial` 更接近“形状先验约束下的位置/尺度匹配”。
 
@@ -654,7 +759,7 @@ matched_tokens = 0
 当前 count-partial 和 classnumber review 可视化中：
 
 - WBM 面板使用 WM811K 风格的状态色：背景黑色、晶圆内正常 die 灰色、失效 die 白色。
-- WDM count / binary heatmap 使用晶圆外黑色、晶圆内灰白到红色的热力图。
+- WDM count / binary heatmap 使用晶圆外黑色、晶圆内由浅到深的红色热力图。count 模式的 colorbar 显示原始整数 defect count，不做 log 变换；binary 模式显示 0/1。
 
 这样 WBM 保持与原始参考图一致，WDM 热力图保持统一红色系，避免 WBM/WDM 红蓝对比造成“不同类别”的误解。
 

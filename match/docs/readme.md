@@ -243,7 +243,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 上面 binary 示例使用 `--die-defect-threshold 2`，表示单个 die/cell 至少有 2 个 defect 才进入 binary proposal。生产数据中如果 binary 图仍然过碎，可以试 `3`；如果担心稀疏真实形状被过滤，则回到 `1`。
 
 这组命令会生成：
-- `results/AF00138/classnumber_review_both_rank_binary/<file>_classnumber_splits.png`
+- `results/AF00138/classnumber_review_both_rank_binary/<file>_classnumber_splits.png`（只为全局 TopK classnumber 分图涉及的文件生成；同一文件只生成一张）
 - `results/AF00138/classnumber_review_both_rank_binary/classnumber_topk.tsv`
 - `results/AF00138/classnumber_review_both_rank_binary/classnumber_topK.png`
 - `results/AF00138/classnumber_review_both_rank_binary/topk_steps/rankXX_*.png`
@@ -261,6 +261,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 | `--die-defect-threshold` | `1` | die/cell 级过滤：单个 die/cell 至少包含多少个 defect 才会在 `binary_map` 中置 1 |
 | `--identifier` | 空 | 可选运行标识；设置后 review 图片保存到 `<fig-dir>/<identifier>/<review_name>`，classnumber 会按 count/binary/both_rank_* 自动区分目录 |
 | `--count-partial-proposal-mode {cc,compact}` | `cc` | count-partial/classnumber token 提取模式；`cc` 保持旧连通域逻辑，`compact` 启用保守 ring-aware、fragment merge 和多样性 topK |
+| `--count-partial-rotation-tolerance` | 关闭 | 使用旋转容忍的 shape descriptor；只影响 token shape 相似度，不做全局位置旋转搜索 |
 | `--classnumber-match-mode {count,binary,both}` | `count` | classnumber 分图计算 count、binary 或两者 |
 | `--classnumber-rank-by {count,binary}` | `count` | `both` 模式下 topK 和最佳分图的排序依据 |
 | `--classnumber-binary-dilation` | `1` | 兼容旧命令保留；当前 binary token 匹配不再使用 dilation |
@@ -271,7 +272,7 @@ binary classnumber 分数现在与 count-partial 使用同一套 proposal / desc
 - WDM token 来自 `binary_map > 0`
 - `binary_map` 由 `count_map >= --die-defect-threshold` 生成，默认 `1` 等价于旧的 `count > 0`
 - WDM token 权重统一为 1，不使用 count 强度
-- 最终分数仍由 shape、position、scale、type 组成，并使用相同的 shape/type gate
+- 最终分数仍由 shape、position、scale、type 组成；shape 使用硬门槛，type 作为 soft penalty
 
 保存图片时，无论选择 `count`、`binary` 还是 `both`，都会生成上面的三类图。
 `binary` 排序时，step 图展示同一 classnumber 分图的局部结构，方便对照解释路径。

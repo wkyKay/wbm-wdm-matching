@@ -7,6 +7,7 @@ from typing import List
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
+from matplotlib.ticker import MaxNLocator
 
 from ..core.classnumber_matching import ClassNumberMatchResult, split_score
 from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
@@ -16,7 +17,7 @@ STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 CLASSNUMBER_CMAP = LinearSegmentedColormap.from_list(
     "classnumber_counts",
-    ["#7f7f7f", "#f2f2f2", "#fca5a5", "#dc2626", "#7f1d1d"],
+    ["#f2f2f2", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
 )
 CLASSNUMBER_CMAP.set_bad("black")
 
@@ -135,6 +136,7 @@ def plot_classnumber_step(
     min_area: int = 5,
     top_k: int = 6,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
     save_path: str | Path | None = None,
 ) -> tuple[plt.Figure, List[plt.Axes]]:
     """Render a classnumber split with its local partial matching steps."""
@@ -150,17 +152,18 @@ def plot_classnumber_step(
         min_area=min_area,
         top_k=top_k,
         proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
         save_path=save_path,
         explain_fn=explain_fn,
         map_mode=score_mode,
     )
 
 
-def _masked_log_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
+def _masked_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
     valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
-    log_count = np.log1p(count_map.astype(np.float32))
-    log_count[~valid] = np.nan
-    return log_count
+    image = count_map.astype(np.float32)
+    image[~valid] = np.nan
+    return image
 
 
 def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
@@ -173,13 +176,13 @@ def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.n
 def _masked_wdm_image(grid_maps: GridMaps, reference_status: np.ndarray, score_mode: str) -> np.ndarray:
     if score_mode == "binary":
         return _masked_binary(grid_maps.binary_map, reference_status)
-    return _masked_log_count(grid_maps.count_map, reference_status)
+    return _masked_count(grid_maps.count_map, reference_status)
 
 
 def _wdm_image_label(score_mode: str) -> str:
     if score_mode == "binary":
         return "binary defect"
-    return "log1p(count)"
+    return "count"
 
 
 def _heatmap_vmax(images: List[np.ndarray]) -> float:
@@ -192,10 +195,14 @@ def _heatmap_vmax(images: List[np.ndarray]) -> float:
     if not values:
         return 1.0
     combined = np.concatenate(values)
-    return float(max(np.percentile(combined, 95), combined.max() * 0.25, 1e-6))
+    vmax = float(max(np.percentile(combined, 95), combined.max() * 0.25, 1e-6))
+    return float(np.ceil(vmax))
 
 
 def _add_edge_colorbar(fig: plt.Figure, image, label: str) -> None:
     cax = fig.add_axes([0.925, 0.14, 0.018, 0.68])
     cbar = fig.colorbar(image, cax=cax)
     cbar.set_label(label)
+    if label in {"count", "binary defect"}:
+        cbar.locator = MaxNLocator(integer=True)
+        cbar.update_ticks()

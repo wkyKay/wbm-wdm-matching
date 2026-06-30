@@ -8,6 +8,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
 from matplotlib.colors import LinearSegmentedColormap
+from matplotlib.ticker import MaxNLocator
 
 from ..core.local_matching import explain_count_partial_match
 from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
@@ -17,7 +18,7 @@ STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
     "count_partial_counts",
-    ["#7f7f7f", "#f2f2f2", "#fca5a5", "#dc2626", "#7f1d1d"],
+    ["#f2f2f2", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
 )
 COUNT_PARTIAL_CMAP.set_bad("black")
 TOKEN_COLORS = [
@@ -33,12 +34,20 @@ def plot_count_partial_steps(
     min_area: int = 5,
     top_k: int = 6,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render one WBM/WDM pair as proposal-to-match steps."""
-    explanation = explain_fn(reference, candidate, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode)
+    explanation = explain_fn(
+        reference,
+        candidate,
+        min_area=min_area,
+        top_k=top_k,
+        proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
+    )
     result = explanation["result"]
     wbm_tokens = explanation["wbm_tokens"]
     wdm_tokens = explanation["wdm_tokens"]
@@ -85,15 +94,27 @@ def plot_count_partial_topk(
     min_area: int = 5,
     top_k: int = 6,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
     save_path: str | Path | None = None,
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render reference WBM tokens against top candidate WDM count heatmaps."""
     explanations = [
-        (name, gm, explain_count_partial_match(reference, gm, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode))
+        (
+            name,
+            gm,
+            explain_count_partial_match(
+                reference,
+                gm,
+                min_area=min_area,
+                top_k=top_k,
+                proposal_mode=proposal_mode,
+                rotation_tolerance=rotation_tolerance,
+            ),
+        )
         for name, gm in candidates
     ]
-    log_counts = [_masked_log_count(gm.count_map, reference.status_map) for _, gm, _ in explanations]
-    vmax = _heatmap_vmax(log_counts)
+    count_images = [_masked_count(gm.count_map, reference.status_map) for _, gm, _ in explanations]
+    vmax = _heatmap_vmax(count_images)
 
     n = max(len(explanations), 1)
     fig, axes = plt.subplots(n, 2, figsize=(9.5, 3.4 * n))
@@ -111,8 +132,8 @@ def plot_count_partial_topk(
         _plot_wbm_defects(ax_ref, reference, "Reference WBM tokens")
         _draw_tokens(ax_ref, wbm_tokens)
 
-        log_count = _masked_log_count(gm.count_map, reference.status_map)
-        last_im = _plot_wdm_heatmap(ax_cnd, log_count, f"{row + 1}. {name}", vmax=vmax)
+        count_image = _masked_count(gm.count_map, reference.status_map)
+        last_im = _plot_wdm_heatmap(ax_cnd, count_image, f"{row + 1}. {name}", vmax=vmax)
         _draw_tokens(ax_cnd, wdm_tokens)
         _draw_tokens(ax_cnd, wbm_tokens, linestyle="--", linewidth=1.0)
         _draw_matches(ax_cnd, matches)
@@ -133,7 +154,7 @@ def plot_count_partial_topk(
     fig.suptitle(title, fontsize=12)
     fig.subplots_adjust(left=0.04, right=0.88, bottom=0.05, top=0.92, wspace=0.12, hspace=0.35)
     if last_im is not None:
-        _add_edge_colorbar(fig, last_im, "log1p(count)")
+        _add_edge_colorbar(fig, last_im, "count")
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -153,18 +174,18 @@ def _plot_wbm_defects(ax: plt.Axes, grid_maps: GridMaps, title: str) -> None:
     ax.axis("off")
 
 
-def _plot_wdm_heatmap(ax: plt.Axes, log_count: np.ndarray, title: str, vmax: float):
-    im = ax.imshow(log_count, cmap=COUNT_PARTIAL_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
+def _plot_wdm_heatmap(ax: plt.Axes, image: np.ndarray, title: str, vmax: float):
+    im = ax.imshow(image, cmap=COUNT_PARTIAL_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
     return im
 
 
-def _masked_log_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
+def _masked_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
     valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
-    log_count = np.log1p(count_map.astype(np.float32))
-    log_count[~valid] = np.nan
-    return log_count
+    image = count_map.astype(np.float32)
+    image[~valid] = np.nan
+    return image
 
 
 def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
@@ -177,13 +198,13 @@ def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.n
 def _masked_wdm_image(candidate: GridMaps, reference_status: np.ndarray, map_mode: str) -> np.ndarray:
     if map_mode == "binary":
         return _masked_binary(candidate.binary_map, reference_status)
-    return _masked_log_count(candidate.count_map, reference_status)
+    return _masked_count(candidate.count_map, reference_status)
 
 
 def _wdm_image_label(map_mode: str) -> str:
     if map_mode == "binary":
         return "binary defect"
-    return "log1p(count)"
+    return "count"
 
 
 def _heatmap_vmax(images: List[np.ndarray]) -> float:
@@ -196,13 +217,17 @@ def _heatmap_vmax(images: List[np.ndarray]) -> float:
     if not values:
         return 1.0
     combined = np.concatenate(values)
-    return float(max(np.percentile(combined, 95), combined.max() * 0.25, 1e-6))
+    vmax = float(max(np.percentile(combined, 95), combined.max() * 0.25, 1e-6))
+    return float(np.ceil(vmax))
 
 
 def _add_edge_colorbar(fig: plt.Figure, image, label: str) -> None:
     cax = fig.add_axes([0.925, 0.14, 0.018, 0.68])
     cbar = fig.colorbar(image, cax=cax)
     cbar.set_label(label)
+    if label in {"count", "binary defect"}:
+        cbar.locator = MaxNLocator(integer=True)
+        cbar.update_ticks()
 
 
 def _draw_tokens(

@@ -59,6 +59,11 @@ def parse_args() -> argparse.Namespace:
         default="cc",
         help="Proposal mode for token extraction. 'cc' preserves legacy connected components.",
     )
+    parser.add_argument(
+        "--rotation-tolerance",
+        action="store_true",
+        help="Use a rotation-tolerant shape descriptor for token matching.",
+    )
     return parser.parse_args()
 
 
@@ -102,6 +107,7 @@ def main() -> None:
                 min_area=args.min_area,
                 top_k=args.top_k_proposals,
                 proposal_mode=args.proposal_mode,
+                rotation_tolerance=args.rotation_tolerance,
             )
         except Exception as exc:
             print(f"ERROR ({type(exc).__name__}: {exc})")
@@ -123,6 +129,7 @@ def main() -> None:
         min_area=args.min_area,
         top_k=args.top_k_proposals,
         proposal_mode=args.proposal_mode,
+        rotation_tolerance=args.rotation_tolerance,
         save_path=topk_path,
     )
     plt.close("all")
@@ -137,6 +144,7 @@ def main() -> None:
             min_area=args.min_area,
             top_k=args.top_k_proposals,
             proposal_mode=args.proposal_mode,
+            rotation_tolerance=args.rotation_tolerance,
             save_path=step_path,
         )
         plt.close("all")

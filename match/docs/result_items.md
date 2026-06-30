@@ -21,6 +21,7 @@ classnumber_review_*/
 - `batch_topk.tsv`: 对每个可排序指标分别列出 Top-K 文件。
 - `count_partial_review/topN_count_partial.png`: count-partial 排名前 N 的候选可视化。
 - `count_partial_review/proposal_steps/rankXX_*.png`: 单个候选的 token 生成和匹配过程图。
+- `classnumber_review_*/<file>_classnumber_splits.png`: 只为全局 Top-K classnumber 分图涉及的文件生成 split map；同一文件只生成一张。
 - `classnumber_review_*/classnumber_topk.tsv`: 所有 classnumber 分图的全局排序明细。
 - `classnumber_review_*/classnumber_topN.png`: classnumber 分图 Top-N 总览。
 - `classnumber_review_*/topk_steps/rankXX_*.png`: classnumber 分图的 token 匹配过程图。
@@ -75,8 +76,6 @@ WDM count_map > 0 inside WBM valid_mask
 ```text
 if shape_sim < 0.45:
     pair_score = 0
-elif type_affinity < 0.6:
-    pair_score = 0
 else:
     pair_score = shape_sim^2 * position_affinity * scale_affinity * type_affinity
 ```
@@ -87,6 +86,10 @@ else:
 - `position_affinity`: 质心位置越接近越高。
 - `scale_affinity`: token 面积比例越接近越高。
 - `type_affinity`: 几何类型越兼容越高，同类型为 1.0，兼容类型为 0.6，不兼容为 0.25。
+
+如果启用 `--count-partial-rotation-tolerance`，`shape_sim` 使用旋转容忍的 shape descriptor 计算。该 descriptor 去掉 orientation 和 angular histogram，只保留形态统计与 radial profile；`position_affinity` 不变，因此这不是整图旋转不变匹配。
+
+其中 shape 是硬门槛，type 是软降权项。也就是说，几何类型不兼容不会直接把 pair score 置 0，但会降低最终分数。
 
 最终四个分量列不是独立排序分数，而是最佳 token-pair 分量的加权平均，用于解释 `count-partial` 为什么高或低。
 
@@ -116,7 +119,7 @@ else:
 - `count`: WDM token 来自 `count_map > 0`，并使用 count 作为 token 权重。
 - `binary`: WDM token 来自 `binary_map > 0`，token 权重统一为 1。
 
-两者共享同一套 proposal、descriptor、shape/type gate 和最终加权平均公式。
+两者共享同一套 proposal、descriptor、shape gate、type soft penalty 和最终加权平均公式。
 
 ## 5. classnumber_topk.tsv
 
@@ -260,7 +263,7 @@ count-partial=... shape=... pos=... scale=... type=... tokens=...
 - `shape` 高但 `pos` 低：形状类似，但位置偏移明显。
 - `pos` 高但 `shape` 低：位置接近但形状不匹配；由于 shape gate，最终 `score` 往往不会高。
 - `scale` 低：candidate token 面积和 WBM token 面积比例差异大。
-- `type` 低：几何类型不兼容，pair score 会被 gate 置 0。
+- `type` 低：几何类型不兼容，pair score 会被软降权，但不会仅因 type 低而直接置 0。
 - `tokens` 中 WDM token 很少：candidate 结构过少，可能解释不了全部 WBM 局部区域。
 - `tokens` 中 WDM token 很多：candidate 结构碎片多，可能噪声多或 proposal 过碎。
 

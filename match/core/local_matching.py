@@ -11,7 +11,6 @@ from .models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 GEOMETRY_TYPES = ["blob", "line", "edge_ring", "central", "irregular"]
 MIN_SHAPE_SIM_FOR_MATCH = 0.45
-MIN_TYPE_AFFINITY_FOR_MATCH = 0.6
 SHAPE_SCORE_POWER = 2.0
 
 
@@ -34,6 +33,7 @@ class ProposalConfig:
     connectivity: int
     descriptor_mode: str
     proposal_mode: str
+    rotation_tolerance: bool
 
 
 def compute_count_partial_match(
@@ -44,6 +44,7 @@ def compute_count_partial_match(
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> LocalMatchResult:
     """Score how well a WDM count map explains local WBM failure tokens.
 
@@ -58,6 +59,7 @@ def compute_count_partial_match(
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
     )
     return explanation["result"]
 
@@ -70,6 +72,7 @@ def compute_binary_partial_match(
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> LocalMatchResult:
     """Score a WDM binary map with the same token logic as count-partial.
 
@@ -85,6 +88,7 @@ def compute_binary_partial_match(
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
     )
     return explanation["result"]
 
@@ -97,6 +101,7 @@ def explain_count_partial_match(
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> Dict:
     """Return local matching score plus tokens and best token-pair details."""
     valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
@@ -115,6 +120,7 @@ def explain_count_partial_match(
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
     )
 
 
@@ -126,6 +132,7 @@ def explain_binary_partial_match(
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> Dict:
     """Return binary-map token matching score plus token-pair details."""
     valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
@@ -144,6 +151,7 @@ def explain_binary_partial_match(
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
     )
 
 
@@ -158,6 +166,7 @@ def _explain_local_partial_match(
     sigma_pos: float,
     sigma_scale: float,
     proposal_mode: str,
+    rotation_tolerance: bool,
 ) -> Dict:
     proposal_config = _proposal_config(
         reference.status_map.shape,
@@ -165,6 +174,7 @@ def _explain_local_partial_match(
         min_area,
         top_k,
         proposal_mode=proposal_mode,
+        rotation_tolerance=rotation_tolerance,
     )
     wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
     wdm_tokens = _tokens_from_weighted_mask(
@@ -379,13 +389,105 @@ def _compact_tokens(
     """Conservative compact proposal for count-partial production maps."""
     if not tokens:
         return tokens
-    h, w = weight_map.shape
-    short_side = min(h, w)
     compacted = list(tokens)
-    if short_side >= 18:
-        compacted = _apply_ring_aware_token(compacted, weight_map, valid_mask, proposal_config, source)
+    compacted = _apply_gap_aware_grouping(compacted, weight_map, valid_mask, proposal_config, source)
+    compacted = _apply_ring_aware_token(compacted, weight_map, valid_mask, proposal_config, source)
     compacted = _merge_geometry_fragments(compacted, weight_map, valid_mask, proposal_config, source)
     return compacted
+
+
+def _apply_gap_aware_grouping(
+    tokens: List[Dict],
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+) -> List[Dict]:
+    h, w = weight_map.shape
+    short_side = min(h, w)
+    if short_side > 25:
+        return tokens
+
+    original = (weight_map > 0) & valid_mask
+    if int(original.sum()) < proposal_config.min_area:
+        return tokens
+
+    grouped_mask = _binary_closing_square(original) & valid_mask
+    groups = _connected_components(grouped_mask, connectivity=proposal_config.connectivity)
+    max_virtual_gap_ratio = 0.75 if short_side <= 12 else 0.45
+    total_mass = float(weight_map[original].sum())
+    grouped_tokens = []
+    used_pixels = set()
+
+    for group in groups:
+        group_mask = np.zeros((h, w), dtype=bool)
+        group_mask[group[:, 0], group[:, 1]] = True
+        original_pixels = np.argwhere(original & group_mask).astype(np.int64)
+        if len(original_pixels) < proposal_config.min_area:
+            continue
+        virtual_gap_area = int(group_mask.sum() - len(original_pixels))
+        virtual_gap_ratio = virtual_gap_area / max(len(original_pixels), 1)
+        if virtual_gap_ratio > max_virtual_gap_ratio:
+            continue
+
+        token = _token_stats(
+            original_pixels,
+            weight_map,
+            valid_mask,
+            total_mass=total_mass,
+            source=source,
+        )
+        token.update(
+            proposal_source="compact_gap_grouping",
+            grouping_area=int(group_mask.sum()),
+            virtual_gap_area=virtual_gap_area,
+            virtual_gap_ratio=float(virtual_gap_ratio),
+        )
+        grouped_tokens.append(token)
+        used_pixels.update((int(r), int(c)) for r, c in original_pixels)
+
+    for token in tokens:
+        token_pixels = set((int(r), int(c)) for r, c in token.get("pixels", []))
+        if not token_pixels or token_pixels.issubset(used_pixels):
+            continue
+        grouped_tokens.append(token)
+
+    return grouped_tokens if grouped_tokens else tokens
+
+
+def _binary_closing_square(mask: np.ndarray) -> np.ndarray:
+    dilated = _binary_dilation_square(mask)
+    return _binary_erosion_square(dilated)
+
+
+def _binary_dilation_square(mask: np.ndarray) -> np.ndarray:
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    return (
+        padded[1:-1, 1:-1]
+        | padded[:-2, 1:-1]
+        | padded[2:, 1:-1]
+        | padded[1:-1, :-2]
+        | padded[1:-1, 2:]
+        | padded[:-2, :-2]
+        | padded[:-2, 2:]
+        | padded[2:, :-2]
+        | padded[2:, 2:]
+    )
+
+
+def _binary_erosion_square(mask: np.ndarray) -> np.ndarray:
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    return (
+        padded[1:-1, 1:-1]
+        & padded[:-2, 1:-1]
+        & padded[2:, 1:-1]
+        & padded[1:-1, :-2]
+        & padded[1:-1, 2:]
+        & padded[:-2, :-2]
+        & padded[:-2, 2:]
+        & padded[2:, :-2]
+        & padded[2:, 2:]
+    )
 
 
 def _apply_ring_aware_token(
@@ -396,9 +498,19 @@ def _apply_ring_aware_token(
     source: str,
 ) -> List[Dict]:
     h, w = weight_map.shape
+    short_side = min(h, w)
+    edge_r_min = 0.50 if short_side <= 12 else 0.65
+    min_edge_fraction = 0.30 if short_side <= 12 else 0.35
+    radial_bins = 4 if short_side <= 12 else (8 if short_side < 26 else 12)
+    angular_bins = 12 if short_side <= 12 else (36 if short_side < 26 else 72)
+    band_width = 0.24 if short_side <= 12 else (0.14 if short_side < 26 else 0.10)
+    max_radial_std = 0.22 if short_side <= 12 else 0.16
+    min_angular_coverage = 0.14 if short_side <= 12 else 0.16
+    min_ring_points = max(proposal_config.min_area, 3 if short_side <= 12 else 6)
+
     mask = (weight_map > 0) & valid_mask
     points = np.argwhere(mask)
-    if len(points) < max(proposal_config.min_area * 2, 8):
+    if len(points) < min_ring_points:
         return tokens
 
     center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
@@ -409,32 +521,29 @@ def _apply_ring_aware_token(
 
     rel = points.astype(np.float32) - center
     radial = np.linalg.norm(rel, axis=1) / radius_ref
-    edge_keep = radial >= 0.65
+    edge_keep = radial >= edge_r_min
     edge_fraction = float(edge_keep.sum() / max(len(points), 1))
-    if edge_fraction < 0.35:
+    if edge_fraction < min_edge_fraction:
         return tokens
 
     edge_points = points[edge_keep]
     edge_radial = radial[edge_keep]
-    bins = 8 if min(h, w) < 26 else 12
-    hist, edges = np.histogram(edge_radial, bins=bins, range=(0.65, 1.05))
-    if hist.max() < max(proposal_config.min_area * 2, 6):
+    hist, edges = np.histogram(edge_radial, bins=radial_bins, range=(edge_r_min, 1.05))
+    if hist.max() < min_ring_points:
         return tokens
 
     peak = int(hist.argmax())
     band_center = float((edges[peak] + edges[peak + 1]) / 2.0)
-    band_width = 0.14 if min(h, w) < 26 else 0.10
     band_keep = np.abs(edge_radial - band_center) <= band_width
     ring_points = edge_points[band_keep]
-    if len(ring_points) < max(proposal_config.min_area * 2, 6):
+    if len(ring_points) < min_ring_points:
         return tokens
 
     theta = (np.degrees(np.arctan2(ring_points[:, 0] - center[0], ring_points[:, 1] - center[1])) + 360.0) % 360.0
-    angular_bins = 36 if min(h, w) < 26 else 72
     occupied = np.unique(np.floor(theta / (360.0 / angular_bins)).astype(np.int64)) if len(theta) else []
     angular_coverage = float(len(occupied) / angular_bins)
     radial_std = float(radial[edge_keep][band_keep].std()) if len(ring_points) else 0.0
-    if angular_coverage < 0.16 or radial_std > 0.16:
+    if angular_coverage < min_angular_coverage or radial_std > max_radial_std:
         return tokens
 
     ring_set = set((int(r), int(c)) for r, c in ring_points)
@@ -590,13 +699,19 @@ def _type_priority(geometry_type: str) -> float:
 
 
 def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: ProposalConfig) -> None:
-    token["descriptor"] = _shape_descriptor(token, map_shape, mode=proposal_config.descriptor_mode)
+    token["descriptor"] = _shape_descriptor(
+        token,
+        map_shape,
+        mode=proposal_config.descriptor_mode,
+        rotation_tolerance=proposal_config.rotation_tolerance,
+    )
     token["proposal_config"] = {
         "min_area": proposal_config.min_area,
         "top_k": proposal_config.top_k,
         "connectivity": proposal_config.connectivity,
         "descriptor_mode": proposal_config.descriptor_mode,
         "proposal_mode": proposal_config.proposal_mode,
+        "rotation_tolerance": proposal_config.rotation_tolerance,
     }
 
 
@@ -606,6 +721,7 @@ def _proposal_config(
     min_area: int,
     top_k: int,
     proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
 ) -> ProposalConfig:
     """Adapt proposal extraction to WBM resolution while honoring stricter caller limits."""
     proposal_mode = proposal_mode.lower().strip()
@@ -636,10 +752,11 @@ def _proposal_config(
         connectivity=connectivity,
         descriptor_mode=descriptor_mode,
         proposal_mode=proposal_mode,
+        rotation_tolerance=bool(rotation_tolerance),
     )
 
 
-def _shape_descriptor(token: Dict, map_shape, mode: str = "normal") -> np.ndarray:
+def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False) -> np.ndarray:
     bbox_h = float(token.get("bbox_height", 1))
     bbox_w = float(token.get("bbox_width", 1))
     area = float(token.get("area", 0))
@@ -650,7 +767,18 @@ def _shape_descriptor(token: Dict, map_shape, mode: str = "normal") -> np.ndarra
     compactness = float(token.get("compactness", 0.0))
     orientation = float(token.get("orientation", 0.0))
 
-    if mode == "coarse":
+    if rotation_tolerance:
+        bins = 4 if mode == "coarse" else 8
+        features = np.array([
+            fill_ratio,
+            np.log1p(aspect) / np.log(16.0),
+            np.log1p(elongation) / np.log(64.0),
+            min(compactness / 4.0, 1.0),
+            float(token.get("angular_coverage", 0.0)),
+            float(token.get("radial_std", 0.0)),
+        ], dtype=np.float32)
+        desc = np.concatenate([features, _radial_profile(token, map_shape, bins=bins)]).astype(np.float32)
+    elif mode == "coarse":
         features = np.array([
             fill_ratio,
             np.log1p(aspect) / np.log(16.0),
@@ -687,11 +815,11 @@ def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigm
     c_scale = max(float(candidate.get("support_area_ratio", 0.0)), 1e-12)
     scale_affinity = float(np.exp(-abs(np.log(q_scale / c_scale)) / max(sigma_scale, 1e-6)))
     type_affinity = _type_affinity(query["geometry_type"], candidate["geometry_type"])
-    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH or type_affinity < MIN_TYPE_AFFINITY_FOR_MATCH:
+    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH:
         score = 0.0
     else:
         # Small WBM grids make position easy to over-reward, so shape is used as a gate
-        # and then sharpened in the final product.
+        # and then sharpened in the final product. Type remains a soft penalty.
         score = (shape_sim**SHAPE_SCORE_POWER) * position_affinity * scale_affinity * type_affinity
     return {
         "score": float(score),
@@ -740,6 +868,21 @@ def _shape_profiles(token: Dict, map_shape, bins: int) -> np.ndarray:
     theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
     theta_hist, _ = np.histogram(theta, bins=bins, range=(0.0, 360.0))
     profile = np.concatenate([radial_hist, theta_hist]).astype(np.float32)
+    profile /= max(float(profile.sum()), 1.0)
+    return profile
+
+
+def _radial_profile(token: Dict, map_shape, bins: int) -> np.ndarray:
+    pixels = np.asarray(token.get("pixels", []), dtype=np.float32)
+    if len(pixels) == 0:
+        return np.zeros(bins, dtype=np.float32)
+    h, w = map_shape
+    center = np.array([token.get("centroid_row", h / 2.0), token.get("centroid_col", w / 2.0)], dtype=np.float32)
+    rel = pixels - center
+    radius = np.linalg.norm(rel, axis=1)
+    radius = radius / max(float(radius.max()), 1.0)
+    radial_hist, _ = np.histogram(radius, bins=bins, range=(0.0, 1.0))
+    profile = radial_hist.astype(np.float32)
     profile /= max(float(profile.sum()), 1.0)
     return profile
 

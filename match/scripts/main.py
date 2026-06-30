@@ -205,6 +205,11 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         default="cc",
         help="Proposal mode for count-partial/classnumber token extraction. 'cc' preserves legacy connected components.",
     )
+    parser.add_argument(
+        "--count-partial-rotation-tolerance",
+        action="store_true",
+        help="Use a rotation-tolerant shape descriptor for count-partial/classnumber token matching.",
+    )
 
 
 def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
@@ -377,6 +382,7 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
             proposal_mode=args.count_partial_proposal_mode,
+            rotation_tolerance=args.count_partial_rotation_tolerance,
         )
         return {
             "count-partial": partial.score,
@@ -416,6 +422,7 @@ def _compute_classnumber_scores(
             binary_beta=args.classnumber_binary_beta,
             die_defect_threshold=args.die_defect_threshold,
             proposal_mode=args.count_partial_proposal_mode,
+            rotation_tolerance=args.count_partial_rotation_tolerance,
         )
         result = classnumber_scores_dict(class_result)
         if args.save_classnumber_figures:
