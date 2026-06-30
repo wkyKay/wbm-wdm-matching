@@ -14,7 +14,7 @@ from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 CLASSNUMBER_CMAP = LinearSegmentedColormap.from_list(
     "classnumber_counts",
-    ["#111111", "#22577a", "#4ea8de", "#9bd3f5", "#f4fbff"],
+    ["#111111", "#7f1d1d", "#dc2626", "#fca5a5", "#fff1f2"],
 )
 
 
@@ -30,8 +30,9 @@ def plot_classnumber_splits(
     for split in class_result.splits:
         panels.append((f"class {split.classnumber}", split.grid_maps, split))
 
-    log_images = [_masked_log_count(gm.count_map, reference.status_map) for _, gm, split in panels if split is not None or gm is full_candidate]
-    vmax = _heatmap_vmax(log_images)
+    score_mode = class_result.rank_by
+    images = [_masked_wdm_image(gm, reference.status_map, score_mode) for _, gm, split in panels if split is not None or gm is full_candidate]
+    vmax = _heatmap_vmax(images)
     n = len(panels)
     cols = min(4, n)
     rows = int(np.ceil(n / cols))
@@ -46,8 +47,8 @@ def plot_classnumber_splits(
             ax.imshow(ref_mask, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=1.0, interpolation="nearest")
             ax.set_title("WBM")
         else:
-            log_count = _masked_log_count(gm.count_map, reference.status_map)
-            last_im = ax.imshow(log_count, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
+            image = _masked_wdm_image(gm, reference.status_map, score_mode)
+            last_im = ax.imshow(image, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
             if split is None:
                 ax.set_title("WDM all")
             else:
@@ -67,7 +68,7 @@ def plot_classnumber_splits(
 
     if last_im is not None:
         cbar = fig.colorbar(last_im, ax=axes_list[:len(panels)], fraction=0.025, pad=0.015)
-        cbar.set_label("log1p(count)")
+        cbar.set_label(_wdm_image_label(score_mode))
     if title:
         fig.suptitle(title, fontsize=12)
     fig.subplots_adjust(left=0.03, right=0.92, bottom=0.04, top=0.90, wspace=0.18, hspace=0.28)
@@ -96,15 +97,15 @@ def plot_classnumber_topk_splits(
     axes_list = np.asarray(axes).reshape(-1).tolist()
 
     if records:
-        log_images = [_masked_log_count(rec["grid_maps"].count_map, reference.status_map) for rec in records]
-        vmax = _heatmap_vmax(log_images)
+        images = [_masked_wdm_image(rec["grid_maps"], reference.status_map, score_mode) for rec in records]
+        vmax = _heatmap_vmax(images)
     else:
         vmax = 1.0
 
     last_im = None
     for ax, rec in zip(axes_list, records):
-        log_count = _masked_log_count(rec["grid_maps"].count_map, reference.status_map)
-        last_im = ax.imshow(log_count, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
+        image = _masked_wdm_image(rec["grid_maps"], reference.status_map, score_mode)
+        last_im = ax.imshow(image, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
         score = split_score(rec["split"], score_mode)
         ax.set_title(f"{rec['file']} / class {rec['classnumber']}\n{score_mode}: {score:.3f}", fontsize=9)
         ax.set_xticks([])
@@ -115,7 +116,7 @@ def plot_classnumber_topk_splits(
 
     if last_im is not None:
         cbar = fig.colorbar(last_im, ax=axes_list[:len(records)], fraction=0.025, pad=0.015)
-        cbar.set_label("log1p(count)")
+        cbar.set_label(_wdm_image_label(score_mode))
     if title:
         fig.suptitle(title, fontsize=12)
     fig.subplots_adjust(left=0.03, right=0.92, bottom=0.04, top=0.90, wspace=0.18, hspace=0.28)
@@ -129,6 +130,7 @@ def plot_classnumber_topk_splits(
 def plot_classnumber_step(
     reference: GridMaps,
     candidate: GridMaps,
+    score_mode: str = "count",
     title: str = "",
     min_area: int = 5,
     top_k: int = 6,
@@ -136,6 +138,9 @@ def plot_classnumber_step(
 ) -> tuple[plt.Figure, List[plt.Axes]]:
     """Render a classnumber split with its local partial matching steps."""
     from .count_partial_visualization import plot_count_partial_steps
+    from ..core.local_matching import explain_binary_partial_match, explain_count_partial_match
+
+    explain_fn = explain_binary_partial_match if score_mode == "binary" else explain_count_partial_match
 
     return plot_count_partial_steps(
         reference,
@@ -144,6 +149,8 @@ def plot_classnumber_step(
         min_area=min_area,
         top_k=top_k,
         save_path=save_path,
+        explain_fn=explain_fn,
+        map_mode=score_mode,
     )
 
 
@@ -152,6 +159,25 @@ def _masked_log_count(count_map: np.ndarray, reference_status: np.ndarray) -> np
     log_count = np.log1p(count_map.astype(np.float32))
     log_count[~valid] = np.nan
     return log_count
+
+
+def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
+    valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
+    image = (binary_map > 0).astype(np.float32)
+    image[~valid] = np.nan
+    return image
+
+
+def _masked_wdm_image(grid_maps: GridMaps, reference_status: np.ndarray, score_mode: str) -> np.ndarray:
+    if score_mode == "binary":
+        return _masked_binary(grid_maps.binary_map, reference_status)
+    return _masked_log_count(grid_maps.count_map, reference_status)
+
+
+def _wdm_image_label(score_mode: str) -> str:
+    if score_mode == "binary":
+        return "binary defect"
+    return "log1p(count)"
 
 
 def _heatmap_vmax(images: List[np.ndarray]) -> float:

@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default=None, help="Output PNG path (default: auto-generated).")
     parser.add_argument("--die-x-range", nargs=2, type=int)
     parser.add_argument("--die-y-range", nargs=2, type=int)
+    parser.add_argument(
+        "--die-defect-threshold",
+        type=int,
+        default=1,
+        help="Minimum defects in one mapped die/cell required to mark binary_map=1.",
+    )
     return parser.parse_args()
 
 
@@ -75,6 +81,7 @@ def main() -> None:
             representation_name=args.representation,
             die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
             die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
+            die_defect_threshold=args.die_defect_threshold,
         )
         cnd_label = Path(args.klarf).stem
     else:

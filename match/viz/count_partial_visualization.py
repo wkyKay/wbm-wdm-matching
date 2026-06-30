@@ -32,33 +32,36 @@ def plot_count_partial_steps(
     min_area: int = 5,
     top_k: int = 6,
     save_path: str | Path | None = None,
+    explain_fn=explain_count_partial_match,
+    map_mode: str = "count",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render one WBM/WDM pair as proposal-to-match steps."""
-    explanation = explain_count_partial_match(reference, candidate, min_area=min_area, top_k=top_k)
+    explanation = explain_fn(reference, candidate, min_area=min_area, top_k=top_k)
     result = explanation["result"]
     wbm_tokens = explanation["wbm_tokens"]
     wdm_tokens = explanation["wdm_tokens"]
     matches = explanation["matches"]
 
-    log_count = _masked_log_count(candidate.count_map, reference.status_map)
-    vmax = _heatmap_vmax([log_count])
+    wdm_image = _masked_wdm_image(candidate, reference.status_map, map_mode=map_mode)
+    vmax = _heatmap_vmax([wdm_image])
+    label = _wdm_image_label(map_mode)
 
     fig, axes = plt.subplots(1, 5, figsize=(18, 4.2))
     _plot_wbm_defects(axes[0], reference, "WBM defects")
     _plot_wbm_status(axes[1], reference, "WBM tokens")
     _draw_tokens(axes[1], wbm_tokens)
 
-    im = _plot_wdm_heatmap(axes[2], log_count, "WDM count", vmax=vmax)
-    _plot_wdm_heatmap(axes[3], log_count, "WDM tokens", vmax=vmax)
+    im = _plot_wdm_heatmap(axes[2], wdm_image, f"WDM {map_mode}", vmax=vmax)
+    _plot_wdm_heatmap(axes[3], wdm_image, "WDM tokens", vmax=vmax)
     _draw_tokens(axes[3], wdm_tokens)
 
-    _plot_wdm_heatmap(axes[4], log_count, "Local matches", vmax=vmax)
+    _plot_wdm_heatmap(axes[4], wdm_image, "Local matches", vmax=vmax)
     _draw_tokens(axes[4], wbm_tokens, linestyle="--", linewidth=1.2)
     _draw_tokens(axes[4], wdm_tokens, linewidth=1.6)
     _draw_matches(axes[4], matches)
 
     cbar = fig.colorbar(im, ax=axes[2:5], fraction=0.025, pad=0.015)
-    cbar.set_label("log1p(count)")
+    cbar.set_label(label)
 
     subtitle = (
         f"count-partial={result.score:.3f}  "
@@ -163,6 +166,25 @@ def _masked_log_count(count_map: np.ndarray, reference_status: np.ndarray) -> np
     log_count = np.log1p(count_map.astype(np.float32))
     log_count[~valid] = 0.0
     return log_count
+
+
+def _masked_binary(binary_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
+    valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
+    image = (binary_map > 0).astype(np.float32)
+    image[~valid] = 0.0
+    return image
+
+
+def _masked_wdm_image(candidate: GridMaps, reference_status: np.ndarray, map_mode: str) -> np.ndarray:
+    if map_mode == "binary":
+        return _masked_binary(candidate.binary_map, reference_status)
+    return _masked_log_count(candidate.count_map, reference_status)
+
+
+def _wdm_image_label(map_mode: str) -> str:
+    if map_mode == "binary":
+        return "binary defect"
+    return "log1p(count)"
 
 
 def _heatmap_vmax(images: List[np.ndarray]) -> float:

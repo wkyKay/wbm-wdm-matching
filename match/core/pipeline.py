@@ -18,6 +18,7 @@ def map_klarf_to_grid(
     defect_table_index: int = 0,
     die_x_range: Tuple[int, int] | None = None,
     die_y_range: Tuple[int, int] | None = None,
+    die_defect_threshold: int = 1,
 ) -> GridMaps:
     """第一层负责把缺陷放进目标网格，第二层把同一份 count/status 转成不同 baseline 表达。"""
     tables = load_defect_tables(klarf_path)
@@ -46,6 +47,7 @@ def map_klarf_to_grid(
         mapper=mapper,
         representation_name=representation_name,
         metadata=metadata,
+        die_defect_threshold=die_defect_threshold,
     )
 
 
@@ -95,6 +97,7 @@ def map_defect_table_to_grid(
     mapper: GridMapper,
     representation_name: str = DensityMapBuilder.name,
     metadata: dict | None = None,
+    die_defect_threshold: int = 1,
 ) -> GridMaps:
     """Map an already-loaded DefectTable to GridMaps."""
     if representation_name not in REPRESENTATIONS:
@@ -110,11 +113,16 @@ def map_defect_table_to_grid(
         name: builder.build(count_map, status_map, row_indices, col_indices)
         for name, builder in REPRESENTATIONS.items()
     }
+    threshold = max(int(die_defect_threshold), 1)
+    representation_maps["binary"] = (count_map >= threshold).astype("uint8")
 
     merged_metadata = mapped["metadata"]
     if metadata:
         merged_metadata.update(metadata)
-    merged_metadata.update({"representation": representation_name})
+    merged_metadata.update({
+        "representation": representation_name,
+        "die_defect_threshold": threshold,
+    })
     return GridMaps(
         count_map=representation_maps["count"],
         binary_map=representation_maps["binary"],

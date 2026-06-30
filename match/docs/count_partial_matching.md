@@ -56,6 +56,14 @@ wdm_count = candidate.count_map inside valid_mask
 wdm_mask  = wdm_count > 0
 ```
 
+如果使用 classnumber binary matching，则 WDM token 来源改为：
+
+```text
+candidate.binary_map > 0
+```
+
+其中 `binary_map` 由 `count_map >= --die-defect-threshold` 生成。默认阈值为 `1`，等价于旧的 `count_map > 0`；调高阈值可以过滤单个 die/cell 上缺陷数过少的噪声点。
+
 ## 3. 自适应 Proposal 配置
 
 当前 proposal 不再使用固定配置，而是根据 WBM map 尺寸自动选择参数。该策略用于解决生产数据中 WBM 尺寸较小，例如 `10x10` 左右时，固定 `min_area=5` 和 8 邻域连通域过粗的问题。

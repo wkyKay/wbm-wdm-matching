@@ -120,7 +120,7 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
         file.write(
             "rank\tfile\tclassnumber\trank_by\trank_score\t"
             "count_partial\tshape\tposition\tscale\ttype\ttokens\t"
-            "binary\tbinary_coverage\tbinary_leakage\tbinary_overlap\tbinary_wbm_pixels\tbinary_wdm_pixels\n"
+            "binary\tbinary_shape\tbinary_position\tbinary_scale\tbinary_type\tbinary_tokens\n"
         )
         for rank, record in enumerate(split_records, start=1):
             partial = record["partial"]
@@ -141,11 +141,11 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
             else:
                 binary_cells = [
                     f"{binary.score:.6f}",
-                    f"{binary.coverage:.6f}",
-                    f"{binary.leakage:.6f}",
-                    str(binary.overlap_pixels),
-                    str(binary.wbm_pixels),
-                    str(binary.wdm_pixels),
+                    f"{binary.mean_shape:.6f}",
+                    f"{binary.mean_position:.6f}",
+                    f"{binary.mean_scale:.6f}",
+                    f"{binary.mean_type:.6f}",
+                    f"{binary.matched_tokens}/{binary.wbm_tokens}/{binary.wdm_tokens}",
                 ]
             file.write(
                 f"{rank}\t{record['file']}\t{record['classnumber']}\t"
@@ -173,6 +173,7 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
         plot_classnumber_step(
             ref_gm,
             record["grid_maps"],
+            score_mode=rank_by,
             title=f"Rank {rank}: {record['file']} class {record['classnumber']} ({rank_by})",
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,

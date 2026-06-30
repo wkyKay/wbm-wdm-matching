@@ -59,6 +59,31 @@ def compute_count_partial_match(
     return explanation["result"]
 
 
+def compute_binary_partial_match(
+    reference: GridMaps,
+    candidate: GridMaps,
+    min_area: int = 5,
+    top_k: int = 6,
+    sigma_pos: float = 0.35,
+    sigma_scale: float = 1.5,
+) -> LocalMatchResult:
+    """Score a WDM binary map with the same token logic as count-partial.
+
+    WDM tokens are extracted from candidate.binary_map and use unit weights,
+    so shape, position, scale, and type matching are shared with count-partial
+    without count-intensity weighting.
+    """
+    explanation = explain_binary_partial_match(
+        reference,
+        candidate,
+        min_area=min_area,
+        top_k=top_k,
+        sigma_pos=sigma_pos,
+        sigma_scale=sigma_scale,
+    )
+    return explanation["result"]
+
+
 def explain_count_partial_match(
     reference: GridMaps,
     candidate: GridMaps,
@@ -71,10 +96,67 @@ def explain_count_partial_match(
     valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
     wbm_mask = reference.status_map == VALID_HAS_DEFECT
     wdm_count = np.where(valid_mask, candidate.count_map, 0).astype(np.float32)
+    wdm_mask = wdm_count > 0
 
+    return _explain_local_partial_match(
+        reference=reference,
+        wbm_mask=wbm_mask & valid_mask,
+        wdm_mask=wdm_mask & valid_mask,
+        wdm_weight_map=wdm_count,
+        valid_mask=valid_mask,
+        min_area=min_area,
+        top_k=top_k,
+        sigma_pos=sigma_pos,
+        sigma_scale=sigma_scale,
+    )
+
+
+def explain_binary_partial_match(
+    reference: GridMaps,
+    candidate: GridMaps,
+    min_area: int = 5,
+    top_k: int = 6,
+    sigma_pos: float = 0.35,
+    sigma_scale: float = 1.5,
+) -> Dict:
+    """Return binary-map token matching score plus token-pair details."""
+    valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
+    wbm_mask = reference.status_map == VALID_HAS_DEFECT
+    wdm_mask = (candidate.binary_map > 0) & valid_mask
+    wdm_weight_map = wdm_mask.astype(np.float32)
+
+    return _explain_local_partial_match(
+        reference=reference,
+        wbm_mask=wbm_mask & valid_mask,
+        wdm_mask=wdm_mask,
+        wdm_weight_map=wdm_weight_map,
+        valid_mask=valid_mask,
+        min_area=min_area,
+        top_k=top_k,
+        sigma_pos=sigma_pos,
+        sigma_scale=sigma_scale,
+    )
+
+
+def _explain_local_partial_match(
+    reference: GridMaps,
+    wbm_mask: np.ndarray,
+    wdm_mask: np.ndarray,
+    wdm_weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    min_area: int,
+    top_k: int,
+    sigma_pos: float,
+    sigma_scale: float,
+) -> Dict:
     proposal_config = _proposal_config(reference.status_map.shape, int(valid_mask.sum()), min_area, top_k)
     wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
-    wdm_tokens = _tokens_from_count(wdm_count, valid_mask, proposal_config=proposal_config)
+    wdm_tokens = _tokens_from_weighted_mask(
+        wdm_mask & valid_mask,
+        valid_mask,
+        wdm_weight_map.astype(np.float32),
+        proposal_config=proposal_config,
+    )
 
     if not wbm_tokens or not wdm_tokens:
         return {
@@ -147,7 +229,16 @@ def _tokens_from_mask(mask: np.ndarray, valid_mask: np.ndarray, proposal_config:
 
 def _tokens_from_count(count_map: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
     mask = (count_map > 0) & valid_mask
-    return _tokens_from_components(mask, valid_mask, count_map.astype(np.float32), proposal_config=proposal_config, source="wdm")
+    return _tokens_from_weighted_mask(mask, valid_mask, count_map.astype(np.float32), proposal_config=proposal_config)
+
+
+def _tokens_from_weighted_mask(
+    mask: np.ndarray,
+    valid_mask: np.ndarray,
+    weight_map: np.ndarray,
+    proposal_config: ProposalConfig,
+) -> List[Dict]:
+    return _tokens_from_components(mask, valid_mask, weight_map, proposal_config=proposal_config, source="wdm")
 
 
 def _tokens_from_components(

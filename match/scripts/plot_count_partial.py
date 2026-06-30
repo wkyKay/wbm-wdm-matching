@@ -42,6 +42,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--die-x-range", nargs=2, type=int)
     parser.add_argument("--die-y-range", nargs=2, type=int)
     parser.add_argument("--defect-table-index", type=int, default=0)
+    parser.add_argument(
+        "--die-defect-threshold",
+        type=int,
+        default=1,
+        help="Minimum defects in one mapped die/cell required to mark binary_map=1.",
+    )
     parser.add_argument("--out-dir", default="match/output/count_partial_review")
     parser.add_argument("--review-top-k", type=int, default=3, help="Number of top candidates shown in the TopK figure.")
     parser.add_argument("--step-max", type=int, default=3, help="Number of top candidates to render step figures for.")
@@ -82,6 +88,7 @@ def main() -> None:
                 defect_table_index=args.defect_table_index,
                 die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
                 die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
+                die_defect_threshold=args.die_defect_threshold,
             )
             score = compute_count_partial_match(
                 ref_gm,

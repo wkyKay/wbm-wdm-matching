@@ -5,22 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import numpy as np
-
 from ..data.fileio import load_defect_tables, split_defect_table_by_classnumber
-from .local_matching import LocalMatchResult, compute_count_partial_match
-from .models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
+from .local_matching import LocalMatchResult, compute_binary_partial_match, compute_count_partial_match
+from .models import GridMaps
 from .pipeline import build_mapper, map_defect_table_to_grid
-
-
-@dataclass(frozen=True)
-class BinaryClassScore:
-    score: float
-    coverage: float
-    leakage: float
-    wbm_pixels: int
-    wdm_pixels: int
-    overlap_pixels: int
 
 
 @dataclass(frozen=True)
@@ -28,7 +16,7 @@ class ClassSplitMatch:
     classnumber: int
     grid_maps: GridMaps
     partial: LocalMatchResult | None
-    binary: BinaryClassScore | None
+    binary: LocalMatchResult | None
     rank_score: float
     rank_mode: str
 
@@ -56,6 +44,7 @@ def compute_classnumber_matches(
     rank_by: str = "count",
     binary_dilation: int = 1,
     binary_beta: float = 0.5,
+    die_defect_threshold: int = 1,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -91,18 +80,14 @@ def compute_classnumber_matches(
                 "classnumber": classnumber,
                 "representation": representation_name,
             },
+            die_defect_threshold=die_defect_threshold,
         )
         partial = None
         binary = None
         if match_mode in ("count", "both"):
             partial = compute_count_partial_match(reference, gm, min_area=min_area, top_k=top_k)
         if match_mode in ("binary", "both"):
-            binary = compute_binary_class_score(
-                reference,
-                gm,
-                dilation=binary_dilation,
-                beta=binary_beta,
-            )
+            binary = compute_binary_class_score(reference, gm, min_area=min_area, top_k=top_k)
 
         rank_score = _rank_score(partial, binary, rank_by)
         splits.append(
@@ -129,6 +114,11 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
             "best-classnumber-partial": "",
             "best-classnumber-tokens": "",
             "best-classnumber-binary": "",
+            "best-classnumber-binary-shape": "",
+            "best-classnumber-binary-position": "",
+            "best-classnumber-binary-scale": "",
+            "best-classnumber-binary-type": "",
+            "best-classnumber-binary-tokens": "",
             "best-classnumber-binary-coverage": "",
             "best-classnumber-binary-leakage": "",
             "best-classnumber-rank-mode": result.rank_by,
@@ -137,16 +127,19 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
     partial_score = result.best.partial.score if result.best.partial is not None else ""
     partial_tokens = result.best.partial if result.best.partial is not None else ""
     binary_score = result.best.binary.score if result.best.binary is not None else ""
-    binary_coverage = result.best.binary.coverage if result.best.binary is not None else ""
-    binary_leakage = result.best.binary.leakage if result.best.binary is not None else ""
     return {
         "classnumber-count": str(len(result.splits)),
         "best-classnumber": str(result.best.classnumber),
         "best-classnumber-partial": partial_score,
         "best-classnumber-tokens": partial_tokens,
         "best-classnumber-binary": binary_score,
-        "best-classnumber-binary-coverage": binary_coverage,
-        "best-classnumber-binary-leakage": binary_leakage,
+        "best-classnumber-binary-shape": result.best.binary.mean_shape if result.best.binary is not None else "",
+        "best-classnumber-binary-position": result.best.binary.mean_position if result.best.binary is not None else "",
+        "best-classnumber-binary-scale": result.best.binary.mean_scale if result.best.binary is not None else "",
+        "best-classnumber-binary-type": result.best.binary.mean_type if result.best.binary is not None else "",
+        "best-classnumber-binary-tokens": result.best.binary if result.best.binary is not None else "",
+        "best-classnumber-binary-coverage": "",
+        "best-classnumber-binary-leakage": "",
         "best-classnumber-rank-mode": result.rank_by,
         "best-classnumber-rank-score": result.best.rank_score,
     }
@@ -155,37 +148,11 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
 def compute_binary_class_score(
     reference: GridMaps,
     candidate: GridMaps,
-    dilation: int = 1,
-    beta: float = 0.5,
-) -> BinaryClassScore:
-    """Score a classnumber split using binary coverage minus leakage."""
-    valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
-    wbm_mask = (reference.status_map == VALID_HAS_DEFECT) & valid_mask
-    wdm_mask = (candidate.binary_map > 0) & valid_mask
-    if dilation > 0:
-        wdm_match_mask = _dilate_binary(wdm_mask, radius=dilation) & valid_mask
-    else:
-        wdm_match_mask = wdm_mask
-
-    overlap = wbm_mask & wdm_match_mask
-    wbm_pixels = int(wbm_mask.sum())
-    wdm_pixels = int(wdm_mask.sum())
-    overlap_pixels = int(overlap.sum())
-    coverage = float(overlap_pixels / max(wbm_pixels, 1))
-
-    no_defect_mask = (reference.status_map == VALID_NO_DEFECT) & valid_mask
-    leakage_pixels = int((wdm_mask & no_defect_mask).sum())
-    leakage = float(leakage_pixels / max(wdm_pixels, 1))
-    score = float(coverage - beta * leakage)
-
-    return BinaryClassScore(
-        score=score,
-        coverage=coverage,
-        leakage=leakage,
-        wbm_pixels=wbm_pixels,
-        wdm_pixels=wdm_pixels,
-        overlap_pixels=overlap_pixels,
-    )
+    min_area: int = 5,
+    top_k: int = 6,
+) -> LocalMatchResult:
+    """Score a classnumber split using binary-token partial matching."""
+    return compute_binary_partial_match(reference, candidate, min_area=min_area, top_k=top_k)
 
 
 def split_score(split: ClassSplitMatch, mode: str) -> float:
@@ -199,7 +166,7 @@ def split_score(split: ClassSplitMatch, mode: str) -> float:
 
 def _rank_score(
     partial: LocalMatchResult | None,
-    binary: BinaryClassScore | None,
+    binary: LocalMatchResult | None,
     rank_by: str,
 ) -> float:
     if rank_by == "count":
@@ -223,21 +190,3 @@ def _normalize_rank_by(match_mode: str, rank_by: str) -> str:
     if rank_by not in {"count", "binary"}:
         raise ValueError(f"Unsupported classnumber rank mode: {rank_by}")
     return rank_by
-
-
-def _dilate_binary(mask: np.ndarray, radius: int) -> np.ndarray:
-    radius = max(int(radius), 0)
-    if radius == 0:
-        return mask.copy()
-
-    out = mask.astype(bool).copy()
-    padded = np.pad(mask.astype(bool), radius, mode="constant", constant_values=False)
-    h, w = mask.shape
-    for dr in range(-radius, radius + 1):
-        for dc in range(-radius, radius + 1):
-            if dr * dr + dc * dc > radius * radius:
-                continue
-            r0 = radius + dr
-            c0 = radius + dc
-            out |= padded[r0:r0 + h, c0:c0 + w]
-    return out

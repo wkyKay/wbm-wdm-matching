@@ -40,6 +40,11 @@ CLASSNUMBER_COLUMNS: List[str] = [
     "best-classnumber-partial",
     "best-classnumber-tokens",
     "best-classnumber-binary",
+    "best-classnumber-binary-shape",
+    "best-classnumber-binary-position",
+    "best-classnumber-binary-scale",
+    "best-classnumber-binary-type",
+    "best-classnumber-binary-tokens",
     "best-classnumber-binary-coverage",
     "best-classnumber-binary-leakage",
     "best-classnumber-rank-mode",
@@ -115,6 +120,12 @@ def _add_mapping_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--defect-table-index", type=int, default=0,
         help="Which DefectList to use when a KLARF contains multiple wafers.",
+    )
+    parser.add_argument(
+        "--die-defect-threshold",
+        type=int,
+        default=1,
+        help="Minimum defects in one mapped die/cell required to mark binary_map=1. 1 keeps the legacy count>0 behavior.",
     )
 
 
@@ -217,13 +228,13 @@ def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
         "--classnumber-binary-dilation",
         type=int,
         default=1,
-        help="Pixel radius used to tolerate small offsets in classnumber binary matching.",
+        help="Deprecated compatibility option; binary matching now uses token descriptors without dilation.",
     )
     parser.add_argument(
         "--classnumber-binary-beta",
         type=float,
         default=0.5,
-        help="Leakage penalty weight for classnumber binary score: coverage - beta * leakage.",
+        help="Deprecated compatibility option; binary matching now uses token-descriptor partial matching.",
     )
 
 
@@ -315,6 +326,7 @@ def _map_klarf_file(klarf_path: Path, args: argparse.Namespace, shape: Tuple[int
             defect_table_index=args.defect_table_index,
             die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
             die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
+            die_defect_threshold=args.die_defect_threshold,
         )
     except ValueError as e:
         msg = str(e)
@@ -390,6 +402,7 @@ def _compute_classnumber_scores(
             rank_by=args.classnumber_rank_by,
             binary_dilation=args.classnumber_binary_dilation,
             binary_beta=args.classnumber_binary_beta,
+            die_defect_threshold=args.die_defect_threshold,
         )
         result = classnumber_scores_dict(class_result)
         if args.save_classnumber_figures:
@@ -403,6 +416,7 @@ def _attach_metadata(grid_maps: "GridMaps", args: argparse.Namespace) -> dict:
     result = {
         "_mapped": grid_maps.metadata.get("mapped_defects", 0),
         "_input": grid_maps.metadata.get("input_defects", 0),
+        "_die_defect_threshold": grid_maps.metadata.get("die_defect_threshold", args.die_defect_threshold),
     }
     if args.save_count_partial_figures or args.save_classnumber_figures:
         result["_grid_maps"] = grid_maps

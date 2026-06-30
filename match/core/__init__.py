@@ -28,5 +28,11 @@ from .similarity import (
     compute_similarity,
     top_k_retrieval,
 )
-from .local_matching import LocalMatchResult, compute_count_partial_match, explain_count_partial_match
-from .classnumber_matching import BinaryClassScore, ClassNumberMatchResult, ClassSplitMatch, compute_classnumber_matches
+from .local_matching import (
+    LocalMatchResult,
+    compute_binary_partial_match,
+    compute_count_partial_match,
+    explain_binary_partial_match,
+    explain_count_partial_match,
+)
+from .classnumber_matching import ClassNumberMatchResult, ClassSplitMatch, compute_classnumber_matches

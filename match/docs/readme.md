@@ -135,8 +135,11 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
+  --die-defect-threshold 1 \
   --log results.tsv
 ```
+
+`--die-defect-threshold 1` 是默认值，表示只要某个 die/cell 有至少 1 个 defect，就会在 `binary_map` 中置 1。调大该值只影响 `binary_map` 及基于 binary 的匹配/绘图，不改变 `count_map`。
 
 ### 4.1 生成 count-partial 图片
 
@@ -149,6 +152,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
+  --die-defect-threshold 1 \
   --log results.tsv \
   --topk-log topk.tsv \
   --save-count-partial-figures \
@@ -185,6 +189,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --defect-threshold 5 \
+  --die-defect-threshold 1 \
   --use-classnumber \
   --save-classnumber-figures \
   --classnumber-fig-dir results/classnumber_review
@@ -201,6 +206,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --defect-threshold 5 \
+  --die-defect-threshold 2 \
   --use-classnumber \
   --classnumber-match-mode binary \
   --save-classnumber-figures \
@@ -217,12 +223,15 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --defect-threshold 5 \
+  --die-defect-threshold 2 \
   --use-classnumber \
   --classnumber-match-mode both \
   --classnumber-rank-by binary \
   --save-classnumber-figures \
   --classnumber-fig-dir results/classnumber_review
 ```
+
+上面 binary 示例使用 `--die-defect-threshold 2`，表示单个 die/cell 至少有 2 个 defect 才进入 binary proposal。生产数据中如果 binary 图仍然过碎，可以试 `3`；如果担心稀疏真实形状被过滤，则回到 `1`。
 
 这组命令会生成：
 - `results/classnumber_review/<file>_classnumber_splits.png`
@@ -239,17 +248,22 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 
 | 参数 | 默认值 | 含义 |
 |------|--------|------|
+| `--defect-threshold` | `5` | 文件级过滤：KLARF 总 defect 数低于该值则跳过 |
+| `--die-defect-threshold` | `1` | die/cell 级过滤：单个 die/cell 至少包含多少个 defect 才会在 `binary_map` 中置 1 |
 | `--classnumber-match-mode {count,binary,both}` | `count` | classnumber 分图计算 count、binary 或两者 |
 | `--classnumber-rank-by {count,binary}` | `count` | `both` 模式下 topK 和最佳分图的排序依据 |
-| `--classnumber-binary-dilation` | `1` | binary 匹配时 WDM 缺陷允许的像素偏移半径 |
-| `--classnumber-binary-beta` | `0.5` | binary 分数中的 leakage 惩罚权重 |
+| `--classnumber-binary-dilation` | `1` | 兼容旧命令保留；当前 binary token 匹配不再使用 dilation |
+| `--classnumber-binary-beta` | `0.5` | 兼容旧命令保留；当前 binary token 匹配不再使用 leakage beta |
 
-binary classnumber 分数为 `coverage - beta * leakage`：
-- `coverage`：WBM 缺陷区域被 WDM binary 分图覆盖的比例
-- `leakage`：WDM binary 缺陷落在 WBM 正常区域的比例
+binary classnumber 分数现在与 count-partial 使用同一套 proposal / descriptor / token 相似度流程：
+- WBM token 仍来自 `status_map == VALID_HAS_DEFECT`
+- WDM token 来自 `binary_map > 0`
+- `binary_map` 由 `count_map >= --die-defect-threshold` 生成，默认 `1` 等价于旧的 `count > 0`
+- WDM token 权重统一为 1，不使用 count 强度
+- 最终分数仍由 shape、position、scale、type 组成，并使用相同的 shape/type gate
 
 保存图片时，无论选择 `count`、`binary` 还是 `both`，都会生成上面的三类图。
-`binary` 排序时，step 图仍展示 count-token 的局部结构，方便对照解释路径。
+`binary` 排序时，step 图展示同一 classnumber 分图的局部结构，方便对照解释路径。
 
 ### 4.3 `density` 和 `count` 的区别
 
@@ -294,7 +308,11 @@ from match.core.pipeline import map_klarf_to_grid
 from match.viz.visualization import plot_comparison, plot_overlay
 
 ref_gm = read_wbm_png("reference.png")
-cnd_gm = map_klarf_to_grid("data.klarf", shape=ref_gm.count_map.shape)
+cnd_gm = map_klarf_to_grid(
+    "data.klarf",
+    shape=ref_gm.count_map.shape,
+    die_defect_threshold=1,
+)
 
 # 并排 density 热力图对比
 plot_comparison(ref_gm, cnd_gm, representation="density", cmap="hot",
@@ -317,6 +335,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.plot_ref_cnd \
     --klarf ../data/klarf/some_file \
     --mapper die-index \
     --representation density \
+    --die-defect-threshold 1 \
     --output comparison.png
 ```
 
