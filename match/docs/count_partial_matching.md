@@ -70,6 +70,21 @@ candidate.binary_map > 0
 
 配置由 `_proposal_config(shape, valid_area, min_area, top_k)` 生成。
 
+`count-partial` 当前支持两种 proposal mode：
+
+```text
+cc       legacy 默认模式，仅使用 connected components
+compact 试验模式，在 cc 基础上增加保守 compact 后处理
+```
+
+CLI 参数：
+
+```text
+--count-partial-proposal-mode {cc,compact}
+```
+
+默认值为 `cc`，因此不传该参数时保持旧逻辑。
+
 ### 3.1 小图配置
 
 适用条件：
@@ -142,7 +157,7 @@ effective_top_k    = min(user_top_k, adaptive_top_k)
 
 ## 4. Proposal 生成
 
-proposal 生成使用 connected components：
+默认 `cc` proposal 生成使用 connected components：
 
 - WBM: 对 `wbm_mask & valid_mask` 提取连通域。
 - WDM: 对 `(count_map > 0) & valid_mask` 提取连通域。
@@ -163,6 +178,54 @@ proposal 生成使用 connected components：
 5. 过滤面积小于 `effective_min_area` 的 component。
 6. 将 component 转成 token。
 7. 按 importance 排序，保留前 `effective_top_k` 个。
+
+### 4.1 Compact Proposal Mode
+
+`compact` 模式保留 connected components 作为基础候选，但在进入 descriptor 和匹配前增加三步保守后处理：
+
+```text
+base connected components
+ -> medium/large map ring-aware token extraction
+ -> geometry fragment merge
+ -> type-diverse top-k selection
+```
+
+该模式不会改变 descriptor 计算，也不会改变 token pair 匹配公式。
+
+#### Ring-aware
+
+ring-aware 只在：
+
+```text
+short_side = min(height, width) >= 18
+```
+
+时启用。小图会自动跳过主动 ring extraction，避免 10x10 左右 map 上角度覆盖、径向厚度等统计量过度抖动。
+
+ring-aware 会在 wafer edge band 中寻找稳定半径带，生成 `edge_ring` token，并从 residual components 中移除这些 ring pixels。保守判据包括：
+
+```text
+edge fraction
+radial band support area
+angular coverage
+radial std
+```
+
+#### Geometry Fragment Merge
+
+fragment merge 会合并相近且几何兼容的 token：
+
+```text
+edge_ring <-> edge_ring
+line      <-> line      且方向接近
+blob/central/irregular 之间的近邻 fragment
+```
+
+小图允许的 bbox gap 更小，大图允许更宽松的 gap。合并后重新计算 token stats 和 descriptor。
+
+#### Type-diverse Top-K
+
+`compact` 不只按 importance 截断，而是先尽量保留不同 geometry type 的强 token，再用 importance 填满剩余名额。这样可以降低单一高 mass WDM cluster 占满 top-k 的风险。
 
 ## 5. Token 统计特征
 

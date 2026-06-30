@@ -53,6 +53,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--step-max", type=int, default=3, help="Number of top candidates to render step figures for.")
     parser.add_argument("--min-area", type=int, default=5, help="Minimum token support area.")
     parser.add_argument("--top-k-proposals", type=int, default=6, help="Maximum WBM/WDM tokens retained per map.")
+    parser.add_argument(
+        "--proposal-mode",
+        choices=("cc", "compact"),
+        default="cc",
+        help="Proposal mode for token extraction. 'cc' preserves legacy connected components.",
+    )
     return parser.parse_args()
 
 
@@ -95,6 +101,7 @@ def main() -> None:
                 gm,
                 min_area=args.min_area,
                 top_k=args.top_k_proposals,
+                proposal_mode=args.proposal_mode,
             )
         except Exception as exc:
             print(f"ERROR ({type(exc).__name__}: {exc})")
@@ -115,6 +122,7 @@ def main() -> None:
         title="Count-map partial matching top candidates",
         min_area=args.min_area,
         top_k=args.top_k_proposals,
+        proposal_mode=args.proposal_mode,
         save_path=topk_path,
     )
     plt.close("all")
@@ -128,6 +136,7 @@ def main() -> None:
             title=f"Rank {rank}: {name}",
             min_area=args.min_area,
             top_k=args.top_k_proposals,
+            proposal_mode=args.proposal_mode,
             save_path=step_path,
         )
         plt.close("all")

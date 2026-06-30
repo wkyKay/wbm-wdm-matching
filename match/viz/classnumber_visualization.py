@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, LinearSegmentedColormap, ListedColormap
 
 from ..core.classnumber_matching import ClassNumberMatchResult, split_score
-from ..core.models import GridMaps, VALID_NO_DEFECT
+from ..core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 
 STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
@@ -68,12 +68,11 @@ def plot_classnumber_splits(
     for ax in axes_list[len(panels):]:
         ax.axis("off")
 
-    if last_im is not None:
-        cbar = fig.colorbar(last_im, ax=axes_list[:len(panels)], fraction=0.025, pad=0.015)
-        cbar.set_label(_wdm_image_label(score_mode))
     if title:
         fig.suptitle(title, fontsize=12)
-    fig.subplots_adjust(left=0.03, right=0.92, bottom=0.04, top=0.90, wspace=0.18, hspace=0.28)
+    fig.subplots_adjust(left=0.03, right=0.88, bottom=0.04, top=0.90, wspace=0.18, hspace=0.28)
+    if last_im is not None:
+        _add_edge_colorbar(fig, last_im, _wdm_image_label(score_mode))
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -116,12 +115,11 @@ def plot_classnumber_topk_splits(
     for ax in axes_list[len(records):]:
         ax.axis("off")
 
-    if last_im is not None:
-        cbar = fig.colorbar(last_im, ax=axes_list[:len(records)], fraction=0.025, pad=0.015)
-        cbar.set_label(_wdm_image_label(score_mode))
     if title:
         fig.suptitle(title, fontsize=12)
-    fig.subplots_adjust(left=0.03, right=0.92, bottom=0.04, top=0.90, wspace=0.18, hspace=0.28)
+    fig.subplots_adjust(left=0.03, right=0.88, bottom=0.04, top=0.90, wspace=0.18, hspace=0.28)
+    if last_im is not None:
+        _add_edge_colorbar(fig, last_im, _wdm_image_label(score_mode))
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -136,6 +134,7 @@ def plot_classnumber_step(
     title: str = "",
     min_area: int = 5,
     top_k: int = 6,
+    proposal_mode: str = "cc",
     save_path: str | Path | None = None,
 ) -> tuple[plt.Figure, List[plt.Axes]]:
     """Render a classnumber split with its local partial matching steps."""
@@ -150,6 +149,7 @@ def plot_classnumber_step(
         title=title,
         min_area=min_area,
         top_k=top_k,
+        proposal_mode=proposal_mode,
         save_path=save_path,
         explain_fn=explain_fn,
         map_mode=score_mode,
@@ -193,3 +193,9 @@ def _heatmap_vmax(images: List[np.ndarray]) -> float:
         return 1.0
     combined = np.concatenate(values)
     return float(max(np.percentile(combined, 95), combined.max() * 0.25, 1e-6))
+
+
+def _add_edge_colorbar(fig: plt.Figure, image, label: str) -> None:
+    cax = fig.add_axes([0.925, 0.14, 0.018, 0.68])
+    cbar = fig.colorbar(image, cax=cax)
+    cbar.set_label(label)

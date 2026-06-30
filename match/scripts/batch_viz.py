@@ -44,6 +44,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         title="Count-map partial matching top candidates",
         min_area=args.count_partial_min_area,
         top_k=args.count_partial_top_k_proposals,
+        proposal_mode=args.count_partial_proposal_mode,
         save_path=topk_path,
     )
     plt.close("all")
@@ -57,6 +58,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
             title=f"Rank {rank}: {name}",
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
+            proposal_mode=args.count_partial_proposal_mode,
             save_path=step_path,
         )
         plt.close("all")
@@ -178,6 +180,7 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
             title=f"Rank {rank}: {record['file']} class {record['classnumber']} ({rank_by})",
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
+            proposal_mode=args.count_partial_proposal_mode,
             save_path=step_path,
         )
         plt.close("all")

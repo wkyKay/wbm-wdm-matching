@@ -33,6 +33,7 @@ class ProposalConfig:
     top_k: int
     connectivity: int
     descriptor_mode: str
+    proposal_mode: str
 
 
 def compute_count_partial_match(
@@ -42,6 +43,7 @@ def compute_count_partial_match(
     top_k: int = 6,
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
 ) -> LocalMatchResult:
     """Score how well a WDM count map explains local WBM failure tokens.
 
@@ -55,6 +57,7 @@ def compute_count_partial_match(
         top_k=top_k,
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode,
     )
     return explanation["result"]
 
@@ -66,6 +69,7 @@ def compute_binary_partial_match(
     top_k: int = 6,
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
 ) -> LocalMatchResult:
     """Score a WDM binary map with the same token logic as count-partial.
 
@@ -80,6 +84,7 @@ def compute_binary_partial_match(
         top_k=top_k,
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode,
     )
     return explanation["result"]
 
@@ -91,6 +96,7 @@ def explain_count_partial_match(
     top_k: int = 6,
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
 ) -> Dict:
     """Return local matching score plus tokens and best token-pair details."""
     valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
@@ -108,6 +114,7 @@ def explain_count_partial_match(
         top_k=top_k,
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode,
     )
 
 
@@ -118,6 +125,7 @@ def explain_binary_partial_match(
     top_k: int = 6,
     sigma_pos: float = 0.35,
     sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
 ) -> Dict:
     """Return binary-map token matching score plus token-pair details."""
     valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
@@ -135,6 +143,7 @@ def explain_binary_partial_match(
         top_k=top_k,
         sigma_pos=sigma_pos,
         sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode,
     )
 
 
@@ -148,8 +157,15 @@ def _explain_local_partial_match(
     top_k: int,
     sigma_pos: float,
     sigma_scale: float,
+    proposal_mode: str,
 ) -> Dict:
-    proposal_config = _proposal_config(reference.status_map.shape, int(valid_mask.sum()), min_area, top_k)
+    proposal_config = _proposal_config(
+        reference.status_map.shape,
+        int(valid_mask.sum()),
+        min_area,
+        top_k,
+        proposal_mode=proposal_mode,
+    )
     wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
     wdm_tokens = _tokens_from_weighted_mask(
         wdm_mask & valid_mask,
@@ -255,17 +271,20 @@ def _tokens_from_components(
         if len(comp) < proposal_config.min_area:
             continue
         token = _token_stats(comp, weight_map, valid_mask, total_mass=total_mass, source=source)
-        token["descriptor"] = _shape_descriptor(token, (h, w), mode=proposal_config.descriptor_mode)
-        token["proposal_config"] = {
-            "min_area": proposal_config.min_area,
-            "top_k": proposal_config.top_k,
-            "connectivity": proposal_config.connectivity,
-            "descriptor_mode": proposal_config.descriptor_mode,
-        }
         tokens.append(token)
 
+    if proposal_config.proposal_mode == "compact":
+        tokens = _compact_tokens(tokens, weight_map, valid_mask, proposal_config, source=source)
+
     tokens.sort(key=_token_importance, reverse=True)
-    return tokens[:proposal_config.top_k]
+    tokens = (
+        _select_diverse_tokens(tokens, proposal_config.top_k)
+        if proposal_config.proposal_mode == "compact"
+        else tokens[:proposal_config.top_k]
+    )
+    for token in tokens:
+        _finalize_token(token, (h, w), proposal_config)
+    return tokens
 
 
 def _token_stats(
@@ -350,8 +369,248 @@ def _token_stats(
     return token
 
 
-def _proposal_config(shape: tuple[int, int], valid_area: int, min_area: int, top_k: int) -> ProposalConfig:
+def _compact_tokens(
+    tokens: List[Dict],
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+) -> List[Dict]:
+    """Conservative compact proposal for count-partial production maps."""
+    if not tokens:
+        return tokens
+    h, w = weight_map.shape
+    short_side = min(h, w)
+    compacted = list(tokens)
+    if short_side >= 18:
+        compacted = _apply_ring_aware_token(compacted, weight_map, valid_mask, proposal_config, source)
+    compacted = _merge_geometry_fragments(compacted, weight_map, valid_mask, proposal_config, source)
+    return compacted
+
+
+def _apply_ring_aware_token(
+    tokens: List[Dict],
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+) -> List[Dict]:
+    h, w = weight_map.shape
+    mask = (weight_map > 0) & valid_mask
+    points = np.argwhere(mask)
+    if len(points) < max(proposal_config.min_area * 2, 8):
+        return tokens
+
+    center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
+    valid_points = np.argwhere(valid_mask).astype(np.float32)
+    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else float(np.linalg.norm(center))
+    if radius_ref <= 1e-6:
+        return tokens
+
+    rel = points.astype(np.float32) - center
+    radial = np.linalg.norm(rel, axis=1) / radius_ref
+    edge_keep = radial >= 0.65
+    edge_fraction = float(edge_keep.sum() / max(len(points), 1))
+    if edge_fraction < 0.35:
+        return tokens
+
+    edge_points = points[edge_keep]
+    edge_radial = radial[edge_keep]
+    bins = 8 if min(h, w) < 26 else 12
+    hist, edges = np.histogram(edge_radial, bins=bins, range=(0.65, 1.05))
+    if hist.max() < max(proposal_config.min_area * 2, 6):
+        return tokens
+
+    peak = int(hist.argmax())
+    band_center = float((edges[peak] + edges[peak + 1]) / 2.0)
+    band_width = 0.14 if min(h, w) < 26 else 0.10
+    band_keep = np.abs(edge_radial - band_center) <= band_width
+    ring_points = edge_points[band_keep]
+    if len(ring_points) < max(proposal_config.min_area * 2, 6):
+        return tokens
+
+    theta = (np.degrees(np.arctan2(ring_points[:, 0] - center[0], ring_points[:, 1] - center[1])) + 360.0) % 360.0
+    angular_bins = 36 if min(h, w) < 26 else 72
+    occupied = np.unique(np.floor(theta / (360.0 / angular_bins)).astype(np.int64)) if len(theta) else []
+    angular_coverage = float(len(occupied) / angular_bins)
+    radial_std = float(radial[edge_keep][band_keep].std()) if len(ring_points) else 0.0
+    if angular_coverage < 0.16 or radial_std > 0.16:
+        return tokens
+
+    ring_set = set((int(r), int(c)) for r, c in ring_points)
+    ring_token = _token_stats(
+        ring_points.astype(np.int64),
+        weight_map,
+        valid_mask,
+        total_mass=float(weight_map[mask].sum()),
+        source=source,
+    )
+    ring_token.update(
+        geometry_type="edge_ring",
+        proposal_source="compact_ring_aware",
+        proposal_type="ring_band",
+        radial_band_center=band_center,
+    )
+
+    residual_tokens = []
+    for token in tokens:
+        pixels = [pixel for pixel in token.get("pixels", []) if (int(pixel[0]), int(pixel[1])) not in ring_set]
+        if len(pixels) < proposal_config.min_area:
+            continue
+        if len(pixels) == token.get("area", 0):
+            residual_tokens.append(token)
+        else:
+            residual_tokens.append(_token_stats(
+                np.asarray(pixels, dtype=np.int64),
+                weight_map,
+                valid_mask,
+                total_mass=float(weight_map[mask].sum()),
+                source=source,
+            ))
+    return [ring_token] + residual_tokens
+
+
+def _merge_geometry_fragments(
+    tokens: List[Dict],
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+) -> List[Dict]:
+    if len(tokens) <= 1:
+        return tokens
+
+    h, w = weight_map.shape
+    short_side = min(h, w)
+    max_gap = 2 if short_side <= 12 else (3 if short_side <= 25 else 5)
+    mask = (weight_map > 0) & valid_mask
+    total_mass = float(weight_map[mask].sum())
+    remaining = [dict(token) for token in tokens]
+    changed = True
+    while changed:
+        changed = False
+        best_pair = None
+        best_gap = float("inf")
+        for i in range(len(remaining)):
+            for j in range(i + 1, len(remaining)):
+                if not _merge_compatible(remaining[i], remaining[j]):
+                    continue
+                gap = _bbox_gap(remaining[i], remaining[j])
+                if gap <= max_gap and gap < best_gap:
+                    best_pair = (i, j)
+                    best_gap = gap
+        if best_pair is None:
+            break
+        i, j = best_pair
+        pixels = _unique_pixels(remaining[i].get("pixels", []) + remaining[j].get("pixels", []))
+        merged = _token_stats(
+            np.asarray(pixels, dtype=np.int64),
+            weight_map,
+            valid_mask,
+            total_mass=total_mass,
+            source=source,
+        )
+        merged["proposal_source"] = "compact_geometry_merge"
+        merged["merged_count"] = int(remaining[i].get("merged_count", 1)) + int(remaining[j].get("merged_count", 1))
+        for idx in sorted((i, j), reverse=True):
+            remaining.pop(idx)
+        remaining.append(merged)
+        changed = True
+    return remaining
+
+
+def _merge_compatible(a: Dict, b: Dict) -> bool:
+    ta = a.get("geometry_type", "irregular")
+    tb = b.get("geometry_type", "irregular")
+    if ta == "edge_ring" and tb == "edge_ring":
+        return True
+    if ta == "line" and tb == "line":
+        return _angle_delta(float(a.get("orientation", 0.0)), float(b.get("orientation", 0.0))) <= 25.0
+    if ta in {"blob", "central", "irregular"} and tb in {"blob", "central", "irregular"}:
+        return True
+    return False
+
+
+def _bbox_gap(a: Dict, b: Dict) -> float:
+    row_gap = max(0, max(a["bbox_row_min"], b["bbox_row_min"]) - min(a["bbox_row_max"], b["bbox_row_max"]) - 1)
+    col_gap = max(0, max(a["bbox_col_min"], b["bbox_col_min"]) - min(a["bbox_col_max"], b["bbox_col_max"]) - 1)
+    return float(np.hypot(row_gap, col_gap))
+
+
+def _angle_delta(a: float, b: float) -> float:
+    delta = abs((a - b + 90.0) % 180.0 - 90.0)
+    return float(delta)
+
+
+def _unique_pixels(pixels: List[tuple]) -> List[tuple[int, int]]:
+    return sorted({(int(pixel[0]), int(pixel[1])) for pixel in pixels})
+
+
+def _select_diverse_tokens(tokens: List[Dict], top_k: int) -> List[Dict]:
+    if len(tokens) <= top_k:
+        return tokens[:top_k]
+    by_type: Dict[str, List[Dict]] = {}
+    for token in tokens:
+        by_type.setdefault(token.get("geometry_type", "irregular"), []).append(token)
+    for items in by_type.values():
+        items.sort(key=_token_importance, reverse=True)
+
+    type_order = sorted(
+        by_type,
+        key=lambda key: _type_priority(key) + 0.01 * _token_importance(by_type[key][0]),
+        reverse=True,
+    )
+    selected = []
+    used = set()
+    for geometry_type in type_order:
+        if len(selected) >= top_k:
+            break
+        token = by_type[geometry_type][0]
+        selected.append(token)
+        used.add(id(token))
+
+    leftovers = [token for token in tokens if id(token) not in used]
+    leftovers.sort(key=_token_importance, reverse=True)
+    for token in leftovers:
+        if len(selected) >= top_k:
+            break
+        selected.append(token)
+    selected.sort(key=_token_importance, reverse=True)
+    return selected[:top_k]
+
+
+def _type_priority(geometry_type: str) -> float:
+    return {
+        "edge_ring": 5.0,
+        "central": 4.0,
+        "blob": 3.5,
+        "line": 3.0,
+        "irregular": 2.5,
+    }.get(geometry_type, 2.5)
+
+
+def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: ProposalConfig) -> None:
+    token["descriptor"] = _shape_descriptor(token, map_shape, mode=proposal_config.descriptor_mode)
+    token["proposal_config"] = {
+        "min_area": proposal_config.min_area,
+        "top_k": proposal_config.top_k,
+        "connectivity": proposal_config.connectivity,
+        "descriptor_mode": proposal_config.descriptor_mode,
+        "proposal_mode": proposal_config.proposal_mode,
+    }
+
+
+def _proposal_config(
+    shape: tuple[int, int],
+    valid_area: int,
+    min_area: int,
+    top_k: int,
+    proposal_mode: str = "cc",
+) -> ProposalConfig:
     """Adapt proposal extraction to WBM resolution while honoring stricter caller limits."""
+    proposal_mode = proposal_mode.lower().strip()
+    if proposal_mode not in {"cc", "compact"}:
+        raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
     short_side = min(int(shape[0]), int(shape[1]))
     valid_area = max(int(valid_area), 1)
 
@@ -376,6 +635,7 @@ def _proposal_config(shape: tuple[int, int], valid_area: int, min_area: int, top
         top_k=max(1, min(int(top_k), adaptive_top_k)),
         connectivity=connectivity,
         descriptor_mode=descriptor_mode,
+        proposal_mode=proposal_mode,
     )
 
 

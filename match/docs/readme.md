@@ -146,6 +146,8 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 
 ### 4.1 生成 count-partial 图片
 
+结果 TSV 和 review 图片上各分数字段的含义见 [`result_items.md`](result_items.md)。
+
 如果你要看 `count-map partial` 的 top3 和 proposal step 图，直接加这组参数：
 
 ```bash
@@ -258,6 +260,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 | `--defect-threshold` | `5` | 文件级过滤：KLARF 总 defect 数低于该值则跳过 |
 | `--die-defect-threshold` | `1` | die/cell 级过滤：单个 die/cell 至少包含多少个 defect 才会在 `binary_map` 中置 1 |
 | `--identifier` | 空 | 可选运行标识；设置后 review 图片保存到 `<fig-dir>/<identifier>/<review_name>`，classnumber 会按 count/binary/both_rank_* 自动区分目录 |
+| `--count-partial-proposal-mode {cc,compact}` | `cc` | count-partial/classnumber token 提取模式；`cc` 保持旧连通域逻辑，`compact` 启用保守 ring-aware、fragment merge 和多样性 topK |
 | `--classnumber-match-mode {count,binary,both}` | `count` | classnumber 分图计算 count、binary 或两者 |
 | `--classnumber-rank-by {count,binary}` | `count` | `both` 模式下 topK 和最佳分图的排序依据 |
 | `--classnumber-binary-dilation` | `1` | 兼容旧命令保留；当前 binary token 匹配不再使用 dilation |

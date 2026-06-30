@@ -199,6 +199,12 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         default=6,
         help="Maximum WBM/WDM proposal tokens retained for count-partial matching.",
     )
+    parser.add_argument(
+        "--count-partial-proposal-mode",
+        choices=("cc", "compact"),
+        default="cc",
+        help="Proposal mode for count-partial/classnumber token extraction. 'cc' preserves legacy connected components.",
+    )
 
 
 def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
@@ -370,6 +376,7 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             grid_maps,
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
+            proposal_mode=args.count_partial_proposal_mode,
         )
         return {
             "count-partial": partial.score,
@@ -408,6 +415,7 @@ def _compute_classnumber_scores(
             binary_dilation=args.classnumber_binary_dilation,
             binary_beta=args.classnumber_binary_beta,
             die_defect_threshold=args.die_defect_threshold,
+            proposal_mode=args.count_partial_proposal_mode,
         )
         result = classnumber_scores_dict(class_result)
         if args.save_classnumber_figures:

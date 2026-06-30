@@ -32,12 +32,13 @@ def plot_count_partial_steps(
     title: str = "",
     min_area: int = 5,
     top_k: int = 6,
+    proposal_mode: str = "cc",
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render one WBM/WDM pair as proposal-to-match steps."""
-    explanation = explain_fn(reference, candidate, min_area=min_area, top_k=top_k)
+    explanation = explain_fn(reference, candidate, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode)
     result = explanation["result"]
     wbm_tokens = explanation["wbm_tokens"]
     wdm_tokens = explanation["wdm_tokens"]
@@ -61,9 +62,6 @@ def plot_count_partial_steps(
     _draw_tokens(axes[4], wdm_tokens, linewidth=1.6)
     _draw_matches(axes[4], matches)
 
-    cbar = fig.colorbar(im, ax=axes[2:5], fraction=0.025, pad=0.015)
-    cbar.set_label(label)
-
     subtitle = (
         f"count-partial={result.score:.3f}  "
         f"shape={result.mean_shape:.3f} pos={result.mean_position:.3f} "
@@ -71,7 +69,8 @@ def plot_count_partial_steps(
         f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
     )
     fig.suptitle(f"{title}\n{subtitle}" if title else subtitle, fontsize=11)
-    fig.subplots_adjust(left=0.02, right=0.94, bottom=0.04, top=0.80, wspace=0.12)
+    fig.subplots_adjust(left=0.02, right=0.90, bottom=0.04, top=0.80, wspace=0.12)
+    _add_edge_colorbar(fig, im, label)
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -85,11 +84,12 @@ def plot_count_partial_topk(
     title: str = "Top candidates",
     min_area: int = 5,
     top_k: int = 6,
+    proposal_mode: str = "cc",
     save_path: str | Path | None = None,
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render reference WBM tokens against top candidate WDM count heatmaps."""
     explanations = [
-        (name, gm, explain_count_partial_match(reference, gm, min_area=min_area, top_k=top_k))
+        (name, gm, explain_count_partial_match(reference, gm, min_area=min_area, top_k=top_k, proposal_mode=proposal_mode))
         for name, gm in candidates
     ]
     log_counts = [_masked_log_count(gm.count_map, reference.status_map) for _, gm, _ in explanations]
@@ -130,11 +130,10 @@ def plot_count_partial_topk(
         )
         all_axes.extend([ax_ref, ax_cnd])
 
-    if last_im is not None:
-        cbar = fig.colorbar(last_im, ax=axes_arr[:, 1].ravel().tolist(), fraction=0.025, pad=0.015)
-        cbar.set_label("log1p(count)")
     fig.suptitle(title, fontsize=12)
-    fig.subplots_adjust(left=0.04, right=0.92, bottom=0.05, top=0.92, wspace=0.12, hspace=0.35)
+    fig.subplots_adjust(left=0.04, right=0.88, bottom=0.05, top=0.92, wspace=0.12, hspace=0.35)
+    if last_im is not None:
+        _add_edge_colorbar(fig, last_im, "log1p(count)")
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -198,6 +197,12 @@ def _heatmap_vmax(images: List[np.ndarray]) -> float:
         return 1.0
     combined = np.concatenate(values)
     return float(max(np.percentile(combined, 95), combined.max() * 0.25, 1e-6))
+
+
+def _add_edge_colorbar(fig: plt.Figure, image, label: str) -> None:
+    cax = fig.add_axes([0.925, 0.14, 0.018, 0.68])
+    cbar = fig.colorbar(image, cax=cax)
+    cbar.set_label(label)
 
 
 def _draw_tokens(
