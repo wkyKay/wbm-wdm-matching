@@ -30,6 +30,8 @@ def main():
         seed=config.seed,
         max_samples=config.max_samples,
         decouple_input=config.decouple_input,
+        split_manifest=_resolve_optional_path(config.split_manifest),
+        query_manifest=_resolve_optional_path(config.query_manifest),
     )
     in_channels = 2 if config.decouple_input else 1
     backbone = _build_backbone(config, in_channels)
@@ -94,6 +96,10 @@ def _resolve_path(path):
         if os.path.exists(candidate):
             return candidate
     return path
+
+
+def _resolve_optional_path(path):
+    return None if path is None else _resolve_path(path)
 
 
 if __name__ == '__main__':

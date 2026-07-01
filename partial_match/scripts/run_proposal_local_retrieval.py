@@ -13,6 +13,7 @@ import numpy as np
 from partial_match.core.clustering import cluster
 from partial_match.core.descriptors import clusters_to_records, explain_map_similarity, map_similarity
 from partial_match.data.data_io import filter_valid_samples, load_wm38k
+from shared.wm38k.manifest import load_query_ids, load_split_manifest
 
 
 def main():
@@ -27,6 +28,9 @@ def parse_args():
     parser.add_argument('--max-samples', type=int, default=None)
     parser.add_argument('--sample-strategy', type=str, default='head', choices=['head', 'random', 'stratified'])
     parser.add_argument('--seed', type=int, default=42)
+    parser.add_argument('--split-manifest', type=str, default=None)
+    parser.add_argument('--query-manifest', type=str, default=None)
+    parser.add_argument('--split', type=str, default='test', choices=['train', 'valid', 'test', 'all'])
     parser.add_argument('--method', type=str, default='retrieval_compact')
     parser.add_argument('--min-area', type=int, default=5)
     parser.add_argument('--top-k-proposals', type=int, default=6)
@@ -46,7 +50,16 @@ def parse_args():
 def run_proposal_local_retrieval(args):
     maps, labels = load_wm38k(args.data_file)
     maps, labels, original_indices = filter_valid_samples(maps, labels)
-    if args.max_samples is not None:
+    query_original_ids = None
+    if getattr(args, 'split_manifest', None):
+        rows = load_split_manifest(args.split_manifest, split=getattr(args, 'split', 'test'))
+        sample_indices = np.asarray([int(row['valid_index']) for row in rows], dtype=np.int64)
+        maps = maps[sample_indices]
+        labels = labels[sample_indices]
+        original_indices = original_indices[sample_indices]
+        if getattr(args, 'query_manifest', None):
+            query_original_ids = set(load_query_ids(args.query_manifest))
+    elif args.max_samples is not None:
         sample_indices = _sample_indices(labels, args.max_samples, args.sample_strategy, args.seed)
         maps = maps[sample_indices]
         labels = labels[sample_indices]
@@ -81,20 +94,22 @@ def run_proposal_local_retrieval(args):
         if (i + 1) % 100 == 0:
             print(f'Prepared {i + 1}/{len(maps)} maps')
 
-    scores = np.full((len(records), len(records)), -np.inf, dtype=np.float32)
-    for i, query in enumerate(records):
+    query_positions = _query_positions(records, query_original_ids)
+    scores = np.full((len(query_positions), len(records)), -np.inf, dtype=np.float32)
+    for qi, i in enumerate(query_positions):
+        query = records[i]
         for j, candidate in enumerate(records):
             if i == j:
                 continue
-            scores[i, j] = map_similarity(
+            scores[qi, j] = map_similarity(
                 query['tokens'],
                 candidate['tokens'],
                 sigma_pos=args.sigma_pos,
                 sigma_area=args.sigma_area,
                 topk=args.topk_match,
             )
-        if (i + 1) % 50 == 0:
-            print(f'Scored {i + 1}/{len(records)} queries')
+        if (qi + 1) % 50 == 0:
+            print(f'Scored {qi + 1}/{len(query_positions)} queries')
 
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,17 +120,19 @@ def run_proposal_local_retrieval(args):
     with open(out_path, 'w', newline='') as f:
         writer = csv.writer(f)
         writer.writerow(['query_id', 'rank', 'candidate_id', 'similarity_score'])
-        for i, ranked in enumerate(rankings):
+        for qi, ranked in enumerate(rankings):
+            i = query_positions[qi]
             rank_out = 1
             for j in ranked:
                 if i == j:
                     continue
-                writer.writerow([records[i]['idx'], rank_out, records[j]['idx'], float(scores[i, j])])
+                writer.writerow([records[i]['idx'], rank_out, records[j]['idx'], float(scores[qi, j])])
                 rank_out += 1
     if args.save_match_details:
         _save_match_details(
             out_path.parent,
             records,
+            query_positions,
             rankings,
             scores,
             sigma_pos=args.sigma_pos,
@@ -130,6 +147,16 @@ def run_proposal_local_retrieval(args):
         'tokens_path': out_path.parent / 'tokens.csv',
         'descriptors_path': out_path.parent / 'descriptors.npz',
     }
+
+
+def _query_positions(records, query_original_ids):
+    if query_original_ids is None:
+        return list(range(len(records)))
+    positions = [i for i, record in enumerate(records) if int(record['idx']) in query_original_ids]
+    missing = sorted(query_original_ids - {int(records[i]['idx']) for i in positions})
+    if missing:
+        raise ValueError(f'{len(missing)} query ids are not in the selected candidate split. First missing: {missing[:5]}')
+    return positions
 
 
 def _sample_indices(labels, max_samples, strategy, seed):
@@ -203,7 +230,7 @@ def _save_token_details(out_dir, token_rows, descriptor_arrays):
     print(f'Saved token details to {token_path}')
 
 
-def _save_match_details(out_dir, records, rankings, scores, sigma_pos, sigma_area, topk_match,
+def _save_match_details(out_dir, records, query_positions, rankings, scores, sigma_pos, sigma_area, topk_match,
                         max_queries, max_candidates):
     path = out_dir / 'match_details.csv'
     fieldnames = [
@@ -227,11 +254,12 @@ def _save_match_details(out_dir, records, rankings, scores, sigma_pos, sigma_are
     with open(path, 'w', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for qi in range(min(max_queries, len(records))):
-            query = records[qi]
+        for qi in range(min(max_queries, len(query_positions))):
+            query_pos = query_positions[qi]
+            query = records[query_pos]
             rank_out = 1
             for cj in rankings[qi]:
-                if qi == cj:
+                if query_pos == cj:
                     continue
                 candidate = records[int(cj)]
                 explanation = explain_map_similarity(

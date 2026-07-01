@@ -42,6 +42,7 @@ WaPIRL/*.pdf
 MixedWa/checkpoints/
 Wafer-DenseIR/checkpoints/
 Wafer-DenseIR/artifacts/
+artifacts/
 # =====================
 # 其他
 # =====================

@@ -57,6 +57,25 @@ def main():
         default=42,
         help='Random seed for random/stratified sampling and proposal step figure sample selection.',
     )
+    parser.add_argument(
+        '--split-manifest',
+        type=str,
+        default=None,
+        help='Frozen WM38K split manifest. When set, retrieval pool is selected from this manifest.',
+    )
+    parser.add_argument(
+        '--query-manifest',
+        type=str,
+        default=None,
+        help='Frozen query manifest. When set, only these test samples are used as queries.',
+    )
+    parser.add_argument(
+        '--split',
+        type=str,
+        default='test',
+        choices=['train', 'valid', 'test', 'all'],
+        help='Split selected from split-manifest for the retrieval candidate pool.',
+    )
 
     parser.add_argument(
         '--method',
@@ -197,6 +216,9 @@ def main():
         max_samples=args.max_samples,
         sample_strategy=args.sample_strategy,
         seed=args.seed,
+        split_manifest=args.split_manifest,
+        query_manifest=args.query_manifest,
+        split=args.split,
         method=args.method,
         min_area=args.min_area,
         top_k_proposals=args.top_k_proposals,

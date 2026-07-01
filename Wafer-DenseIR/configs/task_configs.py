@@ -89,6 +89,8 @@ class ConfigBase(object):
         parser.add_argument('--valid_ratio', type=float, default=0.1)
         parser.add_argument('--seed', type=int, default=1993)
         parser.add_argument('--max_samples', type=int, default=None)
+        parser.add_argument('--split_manifest', type=str, default=None)
+        parser.add_argument('--query_manifest', type=str, default=None)
         return parser
 
     @staticmethod

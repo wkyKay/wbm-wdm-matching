@@ -31,6 +31,8 @@ class WM38KForWaPIRL(WM38K):
         min_valid_ratio: float = 0.05,
         max_valid_ratio: float = 0.98,
         deduplicate: bool = True,
+        split_manifest: str = None,
+        query_manifest: str = None,
     ):
         super(WM38KForWaPIRL, self).__init__(
             npz_file=npz_file,
@@ -41,6 +43,8 @@ class WM38KForWaPIRL(WM38K):
             seed=seed,
             max_samples=max_samples,
             decouple_input=decouple_input,
+            split_manifest=split_manifest,
+            query_manifest=query_manifest,
         )
         self.augmentation = augmentation
         self.crop_min_scale = crop_min_scale

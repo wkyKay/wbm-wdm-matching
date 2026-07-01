@@ -59,23 +59,24 @@ class DenseRetrieval(Task):
               f'{len(records)} images, avg {avg_tokens:.1f} tokens/image')
         return records
 
-    def run_retrieval(self, records, topk_tokens=5, sigma_pos=0.35, ks=(1, 5, 10)):
+    def run_retrieval(self, records, topk_tokens=5, sigma_pos=0.35, ks=(1, 5, 10), query_ids=None):
         n = len(records)
+        query_positions = _query_positions(records, query_ids)
         use_gpu = (self.device.type == 'cuda')
         
         if use_gpu:
-            return self._run_retrieval_gpu(records, topk_tokens, sigma_pos, ks)
-        return self._run_retrieval_cpu(records, topk_tokens, sigma_pos, ks)
+            return self._run_retrieval_gpu(records, topk_tokens, sigma_pos, ks, query_positions)
+        return self._run_retrieval_cpu(records, topk_tokens, sigma_pos, ks, query_positions)
 
-    def _run_retrieval_cpu(self, records, topk_tokens, sigma_pos, ks):
+    def _run_retrieval_cpu(self, records, topk_tokens, sigma_pos, ks, query_positions):
         n = len(records)
-        print(f'[Retrieval] Computing {n}x{n} dense matches (CPU, topk_tokens={topk_tokens})...')
-        scores = np.full((n, n), -np.inf, dtype=np.float32)
+        print(f'[Retrieval] Computing {len(query_positions)}x{n} dense matches (CPU, topk_tokens={topk_tokens})...')
+        scores = np.full((len(query_positions), n), -np.inf, dtype=np.float32)
         match_cache = {}
-        total_pairs = n * (n - 1)
+        total_pairs = len(query_positions) * (n - 1)
         start_time = time.time()
         with tqdm(total=total_pairs, desc='Dense matching', unit='pair', ncols=100) as pbar:
-            for i in range(n):
+            for qi, i in enumerate(query_positions):
                 for j in range(n):
                     if i == j:
                         continue
@@ -83,22 +84,22 @@ class DenseRetrieval(Task):
                         records[i]['tokens'], records[j]['tokens'],
                         topk_tokens=topk_tokens, sigma_pos=sigma_pos,
                     )
-                    scores[i, j] = score
-                    match_cache[(i, j)] = (q_scores, c_scores, matches)
+                    scores[qi, j] = score
+                    match_cache[(qi, j)] = (q_scores, c_scores, matches)
                     pbar.update(1)
         elapsed = time.time() - start_time
         print(f'[Retrieval] Done in {elapsed:.1f}s ({total_pairs/elapsed:.0f} pairs/s)')
 
         rankings = np.argsort(-scores, axis=1)
         labels = np.stack([r['label'] for r in records], axis=0)
-        metrics = retrieval_metrics(rankings, labels, ks=ks)
-        self._save_rankings(records, rankings, scores)
+        metrics = retrieval_metrics(rankings, labels, ks=ks, query_positions=query_positions)
+        self._save_rankings(records, rankings, scores, query_positions)
         self._save_metrics(metrics)
         return rankings, scores, metrics, match_cache
 
-    def _run_retrieval_gpu(self, records, topk_tokens, sigma_pos, ks):
+    def _run_retrieval_gpu(self, records, topk_tokens, sigma_pos, ks, query_positions):
         n = len(records)
-        print(f'[Retrieval GPU] Computing {n}x{n} dense matches '
+        print(f'[Retrieval GPU] Computing {len(query_positions)}x{n} dense matches '
               f'(topk_tokens={topk_tokens}, sigma_pos={sigma_pos})...')
 
         # Pre-load all token data to GPU
@@ -110,22 +111,22 @@ class DenseRetrieval(Task):
                 'weights': torch.from_numpy(r['tokens']['weights']).to(self.device).float(),
             })
 
-        scores = np.full((n, n), -np.inf, dtype=np.float32)
-        total_pairs = n * (n - 1)
+        scores = np.full((len(query_positions), n), -np.inf, dtype=np.float32)
+        total_pairs = len(query_positions) * (n - 1)
         start_time = time.time()
         
         with tqdm(total=total_pairs, desc='Dense matching (GPU)', unit='pair', ncols=100) as pbar:
-            for i in range(n):
-                qi = gpu_records[i]
+            for query_row, i in enumerate(query_positions):
+                query_gpu = gpu_records[i]
                 for j in range(n):
                     if i == j:
                         continue
                     score = _pair_score_gpu(
-                        qi['tokens'], gpu_records[j]['tokens'],
-                        qi['pos'], gpu_records[j]['pos'],
-                        qi['weights'], topk_tokens, sigma_pos,
+                        query_gpu['tokens'], gpu_records[j]['tokens'],
+                        query_gpu['pos'], gpu_records[j]['pos'],
+                        query_gpu['weights'], topk_tokens, sigma_pos,
                     )
-                    scores[i, j] = score
+                    scores[query_row, j] = score
                     pbar.update(1)
                     
                     # Free GPU memory of last used tensors periodically
@@ -137,8 +138,8 @@ class DenseRetrieval(Task):
 
         rankings = np.argsort(-scores, axis=1)
         labels = np.stack([r['label'] for r in records], axis=0)
-        metrics = retrieval_metrics(rankings, labels, ks=ks)
-        self._save_rankings(records, rankings, scores)
+        metrics = retrieval_metrics(rankings, labels, ks=ks, query_positions=query_positions)
+        self._save_rankings(records, rankings, scores, query_positions)
         self._save_metrics(metrics)
         
         # Free GPU records to reclaim memory
@@ -147,10 +148,14 @@ class DenseRetrieval(Task):
         
         return rankings, scores, metrics, {}
 
-    def save_explanations(self, records, rankings, scores, match_cache, num_queries=8):
+    def save_explanations(self, records, rankings, scores, match_cache, num_queries=8, query_ids=None):
         explain_dir = os.path.join(self.output_dir, 'explanations')
         os.makedirs(explain_dir, exist_ok=True)
+        query_positions = _query_positions(records, query_ids)
         for q in range(min(num_queries, len(records))):
+            if q >= len(query_positions):
+                break
+            query_pos = query_positions[q]
             c = int(rankings[q, 0])
             key = (q, c)
             if key in match_cache:
@@ -158,18 +163,18 @@ class DenseRetrieval(Task):
             else:
                 # Recompute match data for this pair (GPU path)
                 _, q_scores, c_scores, matches = dense_match(
-                    records[q]['tokens'], records[c]['tokens'],
+                    records[query_pos]['tokens'], records[c]['tokens'],
                 )
-            q_heat = make_heatmap(q_scores, records[q]['tokens']['pos'], records[q]['tokens']['grid_size'])
+            q_heat = make_heatmap(q_scores, records[query_pos]['tokens']['pos'], records[query_pos]['tokens']['grid_size'])
             c_heat = make_heatmap(c_scores, records[c]['tokens']['pos'], records[c]['tokens']['grid_size'])
-            out = os.path.join(explain_dir, f'query_{records[q]["idx"]}_top1_{records[c]["idx"]}.png')
+            out = os.path.join(explain_dir, f'query_{records[query_pos]["idx"]}_top1_{records[c]["idx"]}.png')
             save_retrieval_explanation(
                 out,
-                records[q]['raw'],
+                records[query_pos]['raw'],
                 records[c]['raw'],
                 q_heat,
                 c_heat,
-                records[q]['idx'],
+                records[query_pos]['idx'],
                 records[c]['idx'],
                 float(scores[q, c]),
                 matches=matches,
@@ -186,19 +191,30 @@ class DenseRetrieval(Task):
             arrays[f'weights_{i}'] = rec['tokens']['weights']
         np.savez_compressed(path, **arrays)
 
-    def _save_rankings(self, records, rankings, scores):
+    def _save_rankings(self, records, rankings, scores, query_positions):
         path = os.path.join(self.output_dir, 'rankings.csv')
         with open(path, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['query_id', 'rank', 'candidate_id', 'similarity_score'])
-            for i, ranked in enumerate(rankings):
+            for qi, ranked in enumerate(rankings):
+                i = query_positions[qi]
                 for rank, j in enumerate(ranked, start=1):
                     if i == j:
                         continue
-                    writer.writerow([records[i]['idx'], rank, records[j]['idx'], float(scores[i, j])])
+                    writer.writerow([records[i]['idx'], rank, records[j]['idx'], float(scores[qi, j])])
 
     def _save_metrics(self, metrics):
         path = os.path.join(self.output_dir, 'metrics.json')
         with open(path, 'w') as f:
             json.dump(metrics, f, indent=2)
 
+
+def _query_positions(records, query_ids):
+    if query_ids is None:
+        return list(range(len(records)))
+    query_ids = set(int(x) for x in query_ids)
+    positions = [i for i, record in enumerate(records) if int(record['idx']) in query_ids]
+    missing = sorted(query_ids - {int(records[i]['idx']) for i in positions})
+    if missing:
+        raise ValueError(f'{len(missing)} query ids are not in retrieval records. First missing: {missing[:5]}')
+    return positions

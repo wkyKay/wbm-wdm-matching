@@ -130,6 +130,8 @@ def _build_dataset(config, data_file, split):
         min_valid_ratio=config.min_valid_ratio,
         max_valid_ratio=config.max_valid_ratio,
         deduplicate=config.deduplicate,
+        split_manifest=_resolve_optional_path(config.split_manifest),
+        query_manifest=_resolve_optional_path(config.query_manifest),
     )
 
 
@@ -181,6 +183,10 @@ def _resolve_path(path):
         if os.path.exists(candidate):
             return candidate
     return path
+
+
+def _resolve_optional_path(path):
+    return None if path is None else _resolve_path(path)
 
 
 def _seed_everything(seed):

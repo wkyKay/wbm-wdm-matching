@@ -5,6 +5,11 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset
 
+try:
+    from shared.wm38k.manifest import manifest_valid_indices
+except ImportError:
+    manifest_valid_indices = None
+
 
 class WM38K(Dataset):
     idx2label = ['Center', 'Donut', 'Edge-Loc', 'Edge-Ring', 'Loc', 'Random', 'Scratch', 'Near-full']
@@ -20,15 +25,29 @@ class WM38K(Dataset):
         seed: int = 1993,
         max_samples: int = None,
         decouple_input: bool = True,
+        split_manifest: str = None,
+        query_manifest: str = None,
     ):
         super(WM38K, self).__init__()
         data = np.load(npz_file, allow_pickle=True)
-        self.maps = self._pick_array(data, ('maps', 'x', 'X', 'images', 'arr_0')).astype(np.float32)
-        self.labels = self._pick_array(data, ('labels', 'y', 'Y', 'targets', 'arr_1')).astype(np.float32)
+        maps = self._pick_array(data, ('maps', 'x', 'X', 'images', 'arr_0')).astype(np.float32)
+        labels = self._pick_array(data, ('labels', 'y', 'Y', 'targets', 'arr_1')).astype(np.float32)
+        valid_mask = labels.sum(axis=1) > 0
+        self.original_indices = np.where(valid_mask)[0].astype(np.int64)
+        self.maps = maps[valid_mask]
+        self.labels = labels[valid_mask]
         self.input_size = input_size
         self.decouple_input = decouple_input
 
-        indices = self._make_split_indices(len(self.maps), split, train_ratio, valid_ratio, seed)
+        indices = self._make_indices(
+            len(self.maps),
+            split=split,
+            train_ratio=train_ratio,
+            valid_ratio=valid_ratio,
+            seed=seed,
+            split_manifest=split_manifest,
+            query_manifest=query_manifest,
+        )
         if max_samples is not None:
             indices = indices[:max_samples]
         self.indices = indices
@@ -37,8 +56,9 @@ class WM38K(Dataset):
         return len(self.indices)
 
     def __getitem__(self, idx):
-        original_idx = int(self.indices[idx])
-        raw = torch.from_numpy(self.maps[original_idx]).float()
+        valid_idx = int(self.indices[idx])
+        original_idx = int(self.original_indices[valid_idx])
+        raw = torch.from_numpy(self.maps[valid_idx]).float()
         raw = self._normalize_bins(raw)
         raw = self._resize_nearest(raw, self.input_size)
         x = self.decouple_mask(raw) if self.decouple_input else raw.unsqueeze(0)
@@ -49,8 +69,9 @@ class WM38K(Dataset):
             'raw': raw,
             'defect_mask': defect_mask,
             'valid_mask': valid_mask,
-            'y': torch.from_numpy(self.labels[original_idx]).float(),
+            'y': torch.from_numpy(self.labels[valid_idx]).float(),
             'idx': original_idx,
+            'valid_idx': valid_idx,
         }
 
     @staticmethod
@@ -78,6 +99,27 @@ class WM38K(Dataset):
         raise ValueError(f'Unknown split: {split}')
 
     @staticmethod
+    def _make_indices(n, split, train_ratio, valid_ratio, seed, split_manifest=None, query_manifest=None):
+        if query_manifest is not None:
+            if split_manifest is None:
+                raise ValueError('query_manifest requires split_manifest so query ids can be mapped to valid indices.')
+            query_ids = _load_query_sample_ids(query_manifest)
+            rows = _load_manifest_rows(split_manifest, split='test')
+            by_sample_id = {int(row['sample_id']): int(row['valid_index']) for row in rows}
+            missing = [sample_id for sample_id in query_ids if sample_id not in by_sample_id]
+            if missing:
+                raise ValueError(f'{len(missing)} query ids are not in test split manifest. First missing: {missing[:5]}')
+            return np.asarray([by_sample_id[sample_id] for sample_id in query_ids], dtype=np.int64)
+
+        if split_manifest is not None:
+            if manifest_valid_indices is not None:
+                return manifest_valid_indices(split_manifest, split=split)
+            rows = _load_manifest_rows(split_manifest, split=split)
+            return np.asarray([int(row['valid_index']) for row in rows], dtype=np.int64)
+
+        return WM38K._make_split_indices(n, split, train_ratio, valid_ratio, seed)
+
+    @staticmethod
     def _normalize_bins(raw):
         # MixedWM38K often stores defect bins as 3. WaPIRL-style tensors use 2.
         return torch.where(raw.ge(3), torch.full_like(raw, 2.0), raw)
@@ -96,3 +138,17 @@ class WM38K(Dataset):
         defect = torch.clamp(x - 1, min=0., max=1.)
         return torch.stack([defect, valid], dim=0)
 
+
+def _load_manifest_rows(path, split=None):
+    import csv
+    with open(path, 'r', newline='') as f:
+        rows = list(csv.DictReader(f))
+    if split is not None and split != 'all':
+        rows = [row for row in rows if row['split'] == split]
+    return rows
+
+
+def _load_query_sample_ids(path):
+    import csv
+    with open(path, 'r', newline='') as f:
+        return [int(row['sample_id']) for row in csv.DictReader(f)]

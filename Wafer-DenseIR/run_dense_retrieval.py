@@ -30,7 +30,10 @@ def main():
         seed=config.seed,
         max_samples=config.max_samples,
         decouple_input=config.decouple_input,
+        split_manifest=_resolve_optional_path(config.split_manifest),
+        query_manifest=None,
     )
+    query_ids = _load_query_ids(_resolve_optional_path(config.query_manifest))
 
     in_channels = 2 if config.decouple_input else 1
     backbone = _build_backbone(config, in_channels)
@@ -53,8 +56,16 @@ def main():
         topk_tokens=config.topk_tokens,
         sigma_pos=config.sigma_pos,
         ks=tuple(config.topk_retrieval),
+        query_ids=query_ids,
     )
-    task.save_explanations(records, rankings, scores, match_cache, num_queries=config.explain_top_queries)
+    task.save_explanations(
+        records,
+        rankings,
+        scores,
+        match_cache,
+        num_queries=config.explain_top_queries,
+        query_ids=query_ids,
+    )
 
     print(f'Output directory: {config.output_dir}')
     print(metrics)
@@ -105,6 +116,18 @@ def _resolve_path(path):
         if os.path.exists(candidate):
             return candidate
     return path
+
+
+def _resolve_optional_path(path):
+    return None if path is None else _resolve_path(path)
+
+
+def _load_query_ids(path):
+    if path is None:
+        return None
+    import csv
+    with open(path, 'r', newline='') as f:
+        return [int(row['sample_id']) for row in csv.DictReader(f)]
 
 
 if __name__ == '__main__':

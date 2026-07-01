@@ -15,15 +15,18 @@ def relevance_matrix(labels):
     return hit, jaccard
 
 
-def retrieval_metrics(rankings, labels, ks=(1, 5, 10)):
+def retrieval_metrics(rankings, labels, ks=(1, 5, 10), query_positions=None):
     hit_rel, jac_rel = relevance_matrix(labels)
+    if query_positions is None:
+        query_positions = list(range(len(rankings)))
     out = {}
     aps = []
     ndcgs = {k: [] for k in ks}
     precisions = {k: [] for k in ks}
     recalls = {k: [] for k in ks}
 
-    for q, ranked in enumerate(rankings):
+    for row_idx, ranked in enumerate(rankings):
+        q = int(query_positions[row_idx])
         rel = hit_rel[q, ranked].astype(np.float32)
         jac = jac_rel[q, ranked].astype(np.float32)
         total = max(hit_rel[q].sum(), 1)
