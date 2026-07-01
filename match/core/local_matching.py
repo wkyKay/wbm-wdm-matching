@@ -750,6 +750,9 @@ def _proposal_config(
         connectivity = 8
         descriptor_mode = "normal"
 
+    if proposal_mode == "cc":
+        connectivity = 8
+
     return ProposalConfig(
         min_area=max(1, min(int(min_area), adaptive_min_area)),
         top_k=max(1, min(int(top_k), adaptive_top_k)),

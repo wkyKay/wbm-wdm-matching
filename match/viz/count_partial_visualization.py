@@ -21,6 +21,7 @@ COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
     ["#7f7f7f", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
 )
 COUNT_PARTIAL_CMAP.set_bad("black")
+COUNT_PARTIAL_CMAP.set_under("#7f7f7f")
 TOKEN_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#17becf",
     "#e377c2", "#bcbd22", "#7f7f7f", "#d62728",
@@ -60,20 +61,16 @@ def plot_count_partial_steps(
     fig, axes = plt.subplots(1, 5, figsize=(18, 4.2))
     _plot_wbm_defects(axes[0], reference, "WBM defects")
     _plot_wbm_status(axes[1], reference, "WBM tokens")
-    _draw_token_fills(axes[1], wbm_tokens, alpha=0.72)
-    _draw_token_labels(axes[1], wbm_tokens)
+    _draw_tokens(axes[1], wbm_tokens)
 
     im = _plot_wdm_heatmap(axes[2], wdm_image, f"WDM {map_mode}", vmax=vmax)
     _plot_wdm_heatmap(axes[3], wdm_image, "WDM tokens", vmax=vmax)
-    _draw_token_fills(axes[3], wdm_tokens, alpha=0.62)
-    _draw_token_labels(axes[3], wdm_tokens)
+    _draw_tokens(axes[3], wdm_tokens)
 
     _plot_wdm_heatmap(axes[4], wdm_image, "Local matches", vmax=vmax)
-    _draw_token_fills(axes[4], wbm_tokens, alpha=0.30, hatch="///")
-    _draw_token_fills(axes[4], wdm_tokens, alpha=0.58)
+    _draw_tokens(axes[4], wbm_tokens, linestyle="--", linewidth=1.2)
+    _draw_tokens(axes[4], wdm_tokens, linewidth=1.8)
     _draw_matches(axes[4], matches)
-    _draw_token_labels(axes[4], wbm_tokens, prefix="W")
-    _draw_token_labels(axes[4], wdm_tokens, prefix="D")
 
     subtitle = (
         f"count-partial={result.score:.3f}  "
@@ -179,7 +176,7 @@ def _plot_wbm_defects(ax: plt.Axes, grid_maps: GridMaps, title: str) -> None:
 
 
 def _plot_wdm_heatmap(ax: plt.Axes, image: np.ndarray, title: str, vmax: float):
-    im = ax.imshow(image, cmap=COUNT_PARTIAL_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
+    im = ax.imshow(image, cmap=COUNT_PARTIAL_CMAP, vmin=1e-6, vmax=vmax, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
     return im
@@ -254,44 +251,6 @@ def _draw_tokens(
             ha="center",
             va="center",
             bbox={"boxstyle": "circle,pad=0.18", "fc": color, "ec": "white", "lw": 0.5, "alpha": 0.9},
-        )
-
-
-def _draw_token_fills(
-    ax: plt.Axes,
-    tokens: List[Dict],
-    alpha: float = 0.6,
-    hatch: str | None = None,
-) -> None:
-    for idx, token in enumerate(tokens):
-        color = TOKEN_COLORS[idx % len(TOKEN_COLORS)]
-        for row, col in token.get("pixels", []):
-            rect = plt.Rectangle(
-                (float(col) - 0.5, float(row) - 0.5),
-                1.0,
-                1.0,
-                facecolor=color,
-                edgecolor="white",
-                linewidth=0.35,
-                alpha=alpha,
-                hatch=hatch,
-            )
-            ax.add_patch(rect)
-
-
-def _draw_token_labels(ax: plt.Axes, tokens: List[Dict], prefix: str = "") -> None:
-    for idx, token in enumerate(tokens):
-        color = TOKEN_COLORS[idx % len(TOKEN_COLORS)]
-        ax.text(
-            token.get("centroid_col", 0.0),
-            token.get("centroid_row", 0.0),
-            f"{prefix}{idx}",
-            color="white",
-            fontsize=8,
-            fontweight="bold",
-            ha="center",
-            va="center",
-            bbox={"boxstyle": "round,pad=0.18", "fc": color, "ec": "white", "lw": 0.6, "alpha": 0.95},
         )
 
 

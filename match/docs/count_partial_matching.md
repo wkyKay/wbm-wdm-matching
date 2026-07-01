@@ -110,6 +110,8 @@ connectivity = 4
 descriptor_mode = coarse
 ```
 
+注意：`cc` 模式当前固定使用 8 邻域；上述 4 邻域配置只会在非 `cc` 的 proposal 后处理路径中保留。
+
 设计原因：
 
 - 小图中 5 个 cell 已经占很大比例，容易过滤掉真实小失效区域。

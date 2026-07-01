@@ -20,6 +20,7 @@ CLASSNUMBER_CMAP = LinearSegmentedColormap.from_list(
     ["#7f7f7f", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
 )
 CLASSNUMBER_CMAP.set_bad("black")
+CLASSNUMBER_CMAP.set_under("#7f7f7f")
 
 
 def plot_classnumber_splits(
@@ -51,7 +52,7 @@ def plot_classnumber_splits(
             ax.set_title("WBM")
         else:
             image = _masked_wdm_image(gm, reference.status_map, score_mode)
-            last_im = ax.imshow(image, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
+            last_im = ax.imshow(image, cmap=CLASSNUMBER_CMAP, vmin=1e-6, vmax=vmax, interpolation="nearest")
             if split is None:
                 ax.set_title("WDM all")
             else:
@@ -107,7 +108,7 @@ def plot_classnumber_topk_splits(
     last_im = None
     for ax, rec in zip(axes_list, records):
         image = _masked_wdm_image(rec["grid_maps"], reference.status_map, score_mode)
-        last_im = ax.imshow(image, cmap=CLASSNUMBER_CMAP, vmin=0.0, vmax=vmax, interpolation="nearest")
+        last_im = ax.imshow(image, cmap=CLASSNUMBER_CMAP, vmin=1e-6, vmax=vmax, interpolation="nearest")
         score = split_score(rec["split"], score_mode)
         ax.set_title(f"{rec['file']} / class {rec['classnumber']}\n{score_mode}: {score:.3f}", fontsize=9)
         ax.set_xticks([])
