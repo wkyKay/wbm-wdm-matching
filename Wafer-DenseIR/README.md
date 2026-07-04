@@ -55,7 +55,6 @@ Use the resulting `best_model.pt` for DenseIR retrieval with `--pretrained_model
 Smoke test without a pretrained checkpoint:
 
 ```bash
-cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching/Wafer-DenseIR
 python3 run_dense_retrieval.py \
   --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
   --device cuda \

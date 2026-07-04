@@ -182,7 +182,7 @@ retrieval/rankings.csv
 
 ## Implementation Order
 
-第一步先实现 `core/proposal.py`、`core/cluster_patches.py` 和 `datasets/cluster_contrastive.py`，用 train split 跑一个小样本 smoke test，确认每张 map 的 proposal 数量、token metadata 与 `partial_match` 完全一致，同时确认 patch 尺寸统一且只作为 encoder 输入视图。第二步实现 `utils/loss.py`、`models/encoder.py`、`models/head.py` 和 `tasks/cluster_pretrain.py`，先用 `--max_train_clusters 512 --epochs 1 --device cpu` 或小 GPU 配置确认 checkpoint 可保存。第三步实现 `core/learned_descriptors.py`、`core/matching.py` 和 `tasks/learned_retrieval.py`，在 3 个 query、每个 query 5 个 candidate 的临时 manifest 上验证 ranking schema。第四步接入正式 candidate manifest，运行官方 `evaluation/` 指标，并与 `partial_match` 在相同 query/candidate 下比较。
+第一步先实现 `core/proposal.py`、`core/cluster_patches.py` 和 `datasets/cluster_contrastive.py`，用 train split 跑一个小样本 smoke test，确认每张 map 的 proposal 数量、token metadata 与 `partial_match` 完全一致，同时确认 patch 尺寸统一且只作为 encoder 输入视图。第二步实现 `utils/loss.py`、`models/encoder.py`、`models/head.py` 和 `tasks/cluster_pretrain.py`，先用 `--max-train-clusters 512 --epochs 1 --device cuda` 的小 GPU 配置确认 checkpoint 可保存。第三步实现 `core/learned_descriptors.py`、`core/matching.py` 和 `tasks/learned_retrieval.py`，在 3 个 query、每个 query 5 个 candidate 的临时 manifest 上验证 ranking schema。第四步接入正式 candidate manifest，运行官方 `evaluation/` 指标，并与 `partial_match` 在相同 query/candidate 下比较。
 
 ## Commands
 
@@ -210,7 +210,7 @@ python3 proposed/run_cluster_pretrain.py \
   --out-dir artifacts/proposed/cluster_pretrain/wm38k_seed2026
 ```
 
-Small smoke pretraining run:
+Small GPU smoke pretraining run:
 
 ```bash
 cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
@@ -223,14 +223,14 @@ python3 proposed/run_cluster_pretrain.py \
   --max-valid-clusters 128 \
   --epochs 1 \
   --batch-size 32 \
-  --device cpu \
+  --device cuda \
   --out-dir artifacts/proposed/smoke_pretrain
 ```
 
 Formal learned local retrieval using the fixed test query set and controlled candidate pool:
 
 ```bash
-cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
+
 python3 proposed/run_learned_retrieval_pipeline.py \
   --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
