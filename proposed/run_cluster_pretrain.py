@@ -46,8 +46,11 @@ def main():
 
     provider = PartialMatchProposalProvider(proposal_config)
     patch_builder = PatchBuilder(patch_config)
+    print(f'Loading {args.split} records...', flush=True)
     train_records = load_split_records(args.data_file, args.split_manifest, split=args.split)
+    print(f'Loading {args.valid_split} records...', flush=True)
     valid_records = load_split_records(args.data_file, args.split_manifest, split=args.valid_split)
+    print(f'Loaded {len(train_records)} train records and {len(valid_records)} valid records.', flush=True)
     train_set = ClusterContrastiveDataset(
         train_records,
         proposal_provider=provider,
@@ -55,6 +58,7 @@ def main():
         max_clusters=args.max_train_clusters,
         seed=args.seed,
         tokens_csv=str(out_dir / 'train_proposal_tokens.csv'),
+        progress_desc='Building train proposal tokens',
     )
     valid_set = ClusterContrastiveDataset(
         valid_records,
@@ -63,10 +67,13 @@ def main():
         max_clusters=args.max_valid_clusters,
         seed=args.seed + 1,
         tokens_csv=str(out_dir / 'valid_proposal_tokens.csv'),
+        progress_desc='Building valid proposal tokens',
     )
+    print('Writing cluster patch manifests...', flush=True)
     write_patch_manifest(out_dir / 'train_cluster_patches_manifest.csv', train_set.tokens, patch_config)
     write_patch_manifest(out_dir / 'valid_cluster_patches_manifest.csv', valid_set.tokens, patch_config)
 
+    print('Initializing model and optimizer...', flush=True)
     device = _get_device(args.device)
     encoder = ClusterEncoder(in_channels=3, embedding_dim=args.embedding_dim, width=args.encoder_width)
     projector = MLPHead(args.embedding_dim, args.projector_size)
@@ -94,6 +101,7 @@ def main():
     logger = get_logger(out_dir / 'main.log')
     logger.info(f'Train cluster tokens: {len(train_set)}')
     logger.info(f'Valid cluster tokens: {len(valid_set)}')
+    print('Starting cluster pretraining...', flush=True)
     task.run(
         train_set=train_set,
         valid_set=valid_set,
@@ -169,4 +177,3 @@ def _seed_everything(seed):
 
 if __name__ == '__main__':
     main()
-
