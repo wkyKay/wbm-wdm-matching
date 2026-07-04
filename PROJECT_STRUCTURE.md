@@ -37,6 +37,19 @@ Important entry points:
 - `Wafer-DenseIR/tasks/`
 - `Wafer-DenseIR/utils/`
 
+### `proposed/`
+
+Main proposed method for the current plan. It should use the same proposal and local token matching protocol as `partial_match`, while replacing handcrafted cluster descriptors with WaPIRL-style self-supervised cluster embeddings implemented inside this directory.
+
+Important entry points:
+
+- `proposed/README_INTERNAL.md`
+- `proposed/run_cluster_pretrain.py`
+- `proposed/run_learned_retrieval_pipeline.py`
+- `proposed/core/`
+- `proposed/datasets/`
+- `proposed/tasks/`
+
 ### `match/`
 
 Production-data study-case code. This directory is for WBM/WDM matching experiments outside the public MixedWM38K-only benchmark. Inspect this directory when working on production WDM-to-WBM conversion, classnumber-based matching, production study-case scripts, or production visualizations.
@@ -109,4 +122,4 @@ All retrieval methods should output compatible ranking files with:
 
 ## Where To Look First
 
-For data split or query-set questions, inspect `shared/` first. For official retrieval metrics or ranking-file evaluation, inspect `evaluation/` first. For traditional local handcrafted retrieval, inspect `partial_match/` first. For dense learned retrieval, inspect `Wafer-DenseIR/` first. For production WBM/WDM study cases, inspect `match/` first. Avoid spending time in `WaPIRL/` or `MixedWa/` unless the task explicitly asks for those legacy or reference implementations.
+For data split or query-set questions, inspect `shared/` first. For official retrieval metrics or ranking-file evaluation, inspect `evaluation/` first. For the main proposed local learned cluster retrieval method, inspect `proposed/` first. For traditional local handcrafted retrieval, inspect `partial_match/` first. For dense learned retrieval, inspect `Wafer-DenseIR/` first. For production WBM/WDM study cases, inspect `match/` first. Avoid spending time in `WaPIRL/` or `MixedWa/` unless the task explicitly asks for those legacy or reference implementations.
