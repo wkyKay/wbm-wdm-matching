@@ -20,6 +20,7 @@ from partial_match.scripts.evaluate_proposal_retrieval import evaluate_proposal_
 from partial_match.scripts.run_proposal_local_retrieval import run_proposal_local_retrieval
 from partial_match.scripts.visualize_retrieval_compact_steps import visualize_retrieval_compact_steps
 from partial_match.scripts.visualize_topk_retrieval import visualize_topk_retrieval
+from evaluation.evaluate_rankings import evaluate_rankings_from_files
 
 
 def main():
@@ -68,6 +69,12 @@ def main():
         type=str,
         default=None,
         help='Frozen query manifest. When set, only these test samples are used as queries.',
+    )
+    parser.add_argument(
+        '--candidate-manifest',
+        type=str,
+        default=None,
+        help='Optional per-query candidate manifest. When set, only listed query-candidate pairs are scored.',
     )
     parser.add_argument(
         '--split',
@@ -206,6 +213,7 @@ def main():
     rankings_path = out_dir / 'rankings.csv'
     tokens_path = out_dir / 'tokens.csv'
     metrics_path = out_dir / 'metrics_summary.json'
+    label_metrics_path = out_dir / 'label_metrics.json'
     review_dir = out_dir / f'top{args.review_top_k}_review'
     steps_dir = out_dir / 'proposal_steps'
 
@@ -218,6 +226,7 @@ def main():
         seed=args.seed,
         split_manifest=args.split_manifest,
         query_manifest=args.query_manifest,
+        candidate_manifest=args.candidate_manifest,
         split=args.split,
         method=args.method,
         min_area=args.min_area,
@@ -235,7 +244,7 @@ def main():
     ))
 
     print('\n[2/4] Evaluating retrieval metrics...', flush=True)
-    evaluate_proposal_retrieval(argparse.Namespace(
+    proposal_metrics = evaluate_proposal_retrieval(argparse.Namespace(
         data_file=args.data_file,
         rankings=str(rankings_path),
         tokens=str(tokens_path),
@@ -243,6 +252,22 @@ def main():
         k=args.metric_k,
     ))
     _write_flat_metrics(metrics_path, out_dir / 'metrics_summary_flat.csv')
+    if args.split_manifest and args.query_manifest:
+        label_metrics = evaluate_rankings_from_files(
+            rankings_path=str(rankings_path),
+            split_manifest=args.split_manifest,
+            query_manifest=args.query_manifest,
+            candidate_manifest=args.candidate_manifest,
+            split=args.split,
+            ks=args.metric_k,
+            relevance_mode='jaccard',
+            gain_mode='identity',
+            strict=False,
+        )
+        label_metrics['proposal_stats'] = proposal_metrics.get('proposal_stats', {})
+        label_metrics_path.write_text(json.dumps(label_metrics, indent=2), encoding='utf-8')
+        _write_flat_label_metrics(label_metrics, out_dir / 'label_metrics_flat.csv')
+        print(f'Saved official label metrics to {label_metrics_path}')
 
     if not args.skip_review:
         print('\n[3/4] Rendering top-k retrieval review figures...', flush=True)
@@ -285,6 +310,8 @@ def main():
     print(f'Rankings: {rankings_path}')
     print(f'Tokens: {tokens_path}')
     print(f'Metrics: {metrics_path}')
+    if args.split_manifest and args.query_manifest:
+        print(f'Official label metrics: {label_metrics_path}')
     if not args.skip_review:
         print(f'Review figures: {review_dir}')
     if args.save_step_figures:
@@ -308,6 +335,24 @@ def _write_flat_metrics(metrics_path, out_path):
         writer.writeheader()
         writer.writerows(rows)
     print(f'Saved flat metrics to {out_path}')
+
+
+def _write_flat_label_metrics(metrics, out_path):
+    rows = []
+    for section in ['retrieval', 'counts', 'skipped']:
+        for metric, value in metrics.get(section, {}).items():
+            rows.append({'section': section, 'metric': metric, 'value': value})
+    for class_name, values in metrics.get('per_class', {}).items():
+        for metric, value in values.items():
+            rows.append({'section': f'per_class:{class_name}', 'metric': metric, 'value': value})
+    for metric, value in metrics.get('proposal_stats', {}).items():
+        if isinstance(value, (int, float, str)):
+            rows.append({'section': 'proposal_stats', 'metric': metric, 'value': value})
+    with out_path.open('w', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=['section', 'metric', 'value'])
+        writer.writeheader()
+        writer.writerows(rows)
+    print(f'Saved flat official label metrics to {out_path}')
 
 
 if __name__ == '__main__':

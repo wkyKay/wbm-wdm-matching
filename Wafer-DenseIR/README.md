@@ -33,6 +33,7 @@ WaPIRL-style pretraining on MixedWM38K:
 cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching/Wafer-DenseIR
 python3 run_wapirl_pretrain.py \
   --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --split_manifest ../artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --device cuda \
   --split train \
   --input_size 96 \
@@ -86,6 +87,36 @@ python3 run_dense_retrieval.py \
   --sigma_pos 0.35
 ```
 
+Formal comparison experiment using the same fixed test query set and candidate pool as `partial_match`:
+
+```bash
+cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching/Wafer-DenseIR
+python3 run_dense_retrieval.py \
+  --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
+  --split_manifest ../artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
+  --query_manifest ../artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
+  --candidate_manifest ../artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
+  --pretrained_model_file /path/to/wapirl_checkpoint.pt \
+  --pretrained_model_key backbone \
+  --device cuda \
+  --split test \
+  --input_size 96 \
+  --num_workers 4 \
+  --token_mode defect_band \
+  --token_dilation 1 \
+  --topk_tokens 5 \
+  --sigma_pos 0.35 \
+  --topk_retrieval 1 5 10
+```
+
+In this formal mode:
+
+```text
+query set = ../artifacts/splits/wm38k_seed2026_test_queries_2000.csv
+candidate pool = ../artifacts/splits/wm38k_seed2026_test_candidates_1000.csv, fixed 1000 candidates per query
+official metrics = label_metrics.json / label_metrics_flat.csv
+```
+
 Run with Tiny-ViT patch tokens:
 
 ```bash
@@ -126,6 +157,8 @@ Files:
 - `configs.json`: runtime configuration.
 - `rankings.csv`: `query_id, rank, candidate_id, similarity_score`.
 - `metrics.json`: multi-label retrieval metrics, including Precision@K, Recall@K, NDCG@K, and mAP.
+- `label_metrics.json`: official method-independent label metrics from `evaluation/`.
+- `label_metrics_flat.csv`: flattened official label metrics for tables.
 - `explanations/*.png`: query wafer, top-1 candidate wafer, query correspondence heatmap, and candidate response heatmap.
 - `dense_features.npz`: optional dense token dump when `--save_features` is used.
 

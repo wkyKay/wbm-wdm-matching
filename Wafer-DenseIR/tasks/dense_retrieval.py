@@ -59,25 +59,27 @@ class DenseRetrieval(Task):
               f'{len(records)} images, avg {avg_tokens:.1f} tokens/image')
         return records
 
-    def run_retrieval(self, records, topk_tokens=5, sigma_pos=0.35, ks=(1, 5, 10), query_ids=None):
+    def run_retrieval(self, records, topk_tokens=5, sigma_pos=0.35, ks=(1, 5, 10), query_ids=None,
+                      candidate_ids_by_query=None):
         n = len(records)
         query_positions = _query_positions(records, query_ids)
+        candidate_positions_by_query = _candidate_positions_by_query(records, candidate_ids_by_query)
         use_gpu = (self.device.type == 'cuda')
         
         if use_gpu:
-            return self._run_retrieval_gpu(records, topk_tokens, sigma_pos, ks, query_positions)
-        return self._run_retrieval_cpu(records, topk_tokens, sigma_pos, ks, query_positions)
+            return self._run_retrieval_gpu(records, topk_tokens, sigma_pos, ks, query_positions, candidate_positions_by_query)
+        return self._run_retrieval_cpu(records, topk_tokens, sigma_pos, ks, query_positions, candidate_positions_by_query)
 
-    def _run_retrieval_cpu(self, records, topk_tokens, sigma_pos, ks, query_positions):
+    def _run_retrieval_cpu(self, records, topk_tokens, sigma_pos, ks, query_positions, candidate_positions_by_query):
         n = len(records)
-        print(f'[Retrieval] Computing {len(query_positions)}x{n} dense matches (CPU, topk_tokens={topk_tokens})...')
+        total_pairs = _total_pairs(records, query_positions, candidate_positions_by_query)
+        print(f'[Retrieval] Computing {total_pairs} dense matches (CPU, topk_tokens={topk_tokens})...')
         scores = np.full((len(query_positions), n), -np.inf, dtype=np.float32)
         match_cache = {}
-        total_pairs = len(query_positions) * (n - 1)
         start_time = time.time()
         with tqdm(total=total_pairs, desc='Dense matching', unit='pair', ncols=100) as pbar:
             for qi, i in enumerate(query_positions):
-                for j in range(n):
+                for j in _candidate_positions(records, i, candidate_positions_by_query):
                     if i == j:
                         continue
                     score, q_scores, c_scores, matches = dense_match(
@@ -97,9 +99,10 @@ class DenseRetrieval(Task):
         self._save_metrics(metrics)
         return rankings, scores, metrics, match_cache
 
-    def _run_retrieval_gpu(self, records, topk_tokens, sigma_pos, ks, query_positions):
+    def _run_retrieval_gpu(self, records, topk_tokens, sigma_pos, ks, query_positions, candidate_positions_by_query):
         n = len(records)
-        print(f'[Retrieval GPU] Computing {len(query_positions)}x{n} dense matches '
+        total_pairs = _total_pairs(records, query_positions, candidate_positions_by_query)
+        print(f'[Retrieval GPU] Computing {total_pairs} dense matches '
               f'(topk_tokens={topk_tokens}, sigma_pos={sigma_pos})...')
 
         # Pre-load all token data to GPU
@@ -112,13 +115,12 @@ class DenseRetrieval(Task):
             })
 
         scores = np.full((len(query_positions), n), -np.inf, dtype=np.float32)
-        total_pairs = len(query_positions) * (n - 1)
         start_time = time.time()
         
         with tqdm(total=total_pairs, desc='Dense matching (GPU)', unit='pair', ncols=100) as pbar:
             for query_row, i in enumerate(query_positions):
                 query_gpu = gpu_records[i]
-                for j in range(n):
+                for j in _candidate_positions(records, i, candidate_positions_by_query):
                     if i == j:
                         continue
                     score = _pair_score_gpu(
@@ -218,3 +220,32 @@ def _query_positions(records, query_ids):
     if missing:
         raise ValueError(f'{len(missing)} query ids are not in retrieval records. First missing: {missing[:5]}')
     return positions
+
+
+def _candidate_positions_by_query(records, candidate_ids_by_query):
+    if candidate_ids_by_query is None:
+        return None
+    id_to_position = {int(record['idx']): i for i, record in enumerate(records)}
+    out = {}
+    for query_id, candidate_ids in candidate_ids_by_query.items():
+        missing = [candidate_id for candidate_id in candidate_ids if int(candidate_id) not in id_to_position]
+        if missing:
+            raise ValueError(f'{len(missing)} candidate ids for query {query_id} are not in retrieval records. First missing: {missing[:5]}')
+        out[int(query_id)] = [id_to_position[int(candidate_id)] for candidate_id in candidate_ids]
+    return out
+
+
+def _candidate_positions(records, query_position, candidate_positions_by_query):
+    if candidate_positions_by_query is None:
+        return range(len(records))
+    query_id = int(records[query_position]['idx'])
+    return candidate_positions_by_query.get(query_id, [])
+
+
+def _total_pairs(records, query_positions, candidate_positions_by_query):
+    if candidate_positions_by_query is None:
+        return len(query_positions) * (len(records) - 1)
+    total = 0
+    for query_position in query_positions:
+        total += sum(1 for j in _candidate_positions(records, query_position, candidate_positions_by_query) if j != query_position)
+    return total

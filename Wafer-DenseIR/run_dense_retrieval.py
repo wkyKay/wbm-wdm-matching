@@ -6,11 +6,15 @@ import sys
 import numpy as np
 import torch
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from configs.network_configs import RESNET_BACKBONE_CONFIGS, VIT_BACKBONE_CONFIGS
 from configs.task_configs import DenseRetrievalConfig
 from datasets.wm38k import WM38K
+from evaluation.evaluate_rankings import evaluate_rankings_from_files, write_flat_metrics
 from models.resnet import ResNetBackbone
 from models.vit import ViTTinyBackbone
+from shared.wm38k.candidates import load_candidate_manifest
 from tasks.dense_retrieval import DenseRetrieval
 
 
@@ -34,6 +38,7 @@ def main():
         query_manifest=None,
     )
     query_ids = _load_query_ids(_resolve_optional_path(config.query_manifest))
+    candidate_ids_by_query = _load_candidate_manifest(_resolve_optional_path(config.candidate_manifest))
 
     in_channels = 2 if config.decouple_input else 1
     backbone = _build_backbone(config, in_channels)
@@ -57,6 +62,7 @@ def main():
         sigma_pos=config.sigma_pos,
         ks=tuple(config.topk_retrieval),
         query_ids=query_ids,
+        candidate_ids_by_query=candidate_ids_by_query,
     )
     task.save_explanations(
         records,
@@ -66,6 +72,27 @@ def main():
         num_queries=config.explain_top_queries,
         query_ids=query_ids,
     )
+    split_manifest = _resolve_optional_path(config.split_manifest)
+    query_manifest = _resolve_optional_path(config.query_manifest)
+    candidate_manifest = _resolve_optional_path(config.candidate_manifest)
+    if split_manifest and query_manifest:
+        label_metrics = evaluate_rankings_from_files(
+            rankings_path=os.path.join(config.output_dir, 'rankings.csv'),
+            split_manifest=split_manifest,
+            query_manifest=query_manifest,
+            candidate_manifest=candidate_manifest,
+            split=config.split,
+            ks=tuple(config.topk_retrieval),
+            relevance_mode='jaccard',
+            gain_mode='identity',
+            strict=False,
+        )
+        label_metrics_path = os.path.join(config.output_dir, 'label_metrics.json')
+        with open(label_metrics_path, 'w') as f:
+            import json
+            json.dump(label_metrics, f, indent=2)
+        write_flat_metrics(label_metrics, os.path.join(config.output_dir, 'label_metrics_flat.csv'))
+        print(f'Official label metrics: {label_metrics_path}')
 
     print(f'Output directory: {config.output_dir}')
     print(metrics)
@@ -128,6 +155,10 @@ def _load_query_ids(path):
     import csv
     with open(path, 'r', newline='') as f:
         return [int(row['sample_id']) for row in csv.DictReader(f)]
+
+
+def _load_candidate_manifest(path):
+    return None if path is None else load_candidate_manifest(path)
 
 
 if __name__ == '__main__':

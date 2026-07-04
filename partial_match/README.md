@@ -228,6 +228,30 @@ python3 partial_match/run_proposal_retrieval_pipeline.py \
   --metric-k 1 3 5 10
 ```
 
+正式对比实验必须使用 `shared` 生成的固定 split/query manifest，以保证它和 `Wafer-DenseIR` 使用完全一致的 test query set 和 candidate pool：
+
+```bash
+cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
+python3 partial_match/run_proposal_retrieval_pipeline.py \
+  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
+  --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
+  --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
+  --candidate-manifest artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
+  --split test \
+  --out-dir artifacts/proposal_based/test_manifest \
+  --review-max-queries 64 \
+  --review-top-k 3 \
+  --metric-k 1 5 10
+```
+
+该正式模式中：
+
+```text
+query set = artifacts/splits/wm38k_seed2026_test_queries_2000.csv
+candidate pool = artifacts/splits/wm38k_seed2026_test_candidates_1000.csv 中每个 query 固定 1000 个 candidates
+official metrics = label_metrics.json / label_metrics_flat.csv
+```
+
 如果需要同时生成 proposal 分步图，增加：
 
 ```bash
@@ -252,6 +276,8 @@ artifacts/proposal_based/system_test_512_stratified/
 ├── descriptors.npz
 ├── metrics_summary.json
 ├── metrics_summary_flat.csv
+├── label_metrics.json
+├── label_metrics_flat.csv
 └── top3_review/
 ```
 

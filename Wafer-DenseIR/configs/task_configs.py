@@ -91,6 +91,7 @@ class ConfigBase(object):
         parser.add_argument('--max_samples', type=int, default=None)
         parser.add_argument('--split_manifest', type=str, default=None)
         parser.add_argument('--query_manifest', type=str, default=None)
+        parser.add_argument('--candidate_manifest', type=str, default=None)
         return parser
 
     @staticmethod

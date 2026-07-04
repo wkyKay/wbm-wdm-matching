@@ -13,6 +13,7 @@ import numpy as np
 from partial_match.core.clustering import cluster
 from partial_match.core.descriptors import clusters_to_records, explain_map_similarity, map_similarity
 from partial_match.data.data_io import filter_valid_samples, load_wm38k
+from shared.wm38k.candidates import load_candidate_manifest
 from shared.wm38k.manifest import load_query_ids, load_split_manifest
 
 
@@ -30,6 +31,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--split-manifest', type=str, default=None)
     parser.add_argument('--query-manifest', type=str, default=None)
+    parser.add_argument('--candidate-manifest', type=str, default=None)
     parser.add_argument('--split', type=str, default='test', choices=['train', 'valid', 'test', 'all'])
     parser.add_argument('--method', type=str, default='retrieval_compact')
     parser.add_argument('--min-area', type=int, default=5)
@@ -51,6 +53,7 @@ def run_proposal_local_retrieval(args):
     maps, labels = load_wm38k(args.data_file)
     maps, labels, original_indices = filter_valid_samples(maps, labels)
     query_original_ids = None
+    candidate_ids_by_query = None
     if getattr(args, 'split_manifest', None):
         rows = load_split_manifest(args.split_manifest, split=getattr(args, 'split', 'test'))
         sample_indices = np.asarray([int(row['valid_index']) for row in rows], dtype=np.int64)
@@ -59,6 +62,8 @@ def run_proposal_local_retrieval(args):
         original_indices = original_indices[sample_indices]
         if getattr(args, 'query_manifest', None):
             query_original_ids = set(load_query_ids(args.query_manifest))
+        if getattr(args, 'candidate_manifest', None):
+            candidate_ids_by_query = load_candidate_manifest(args.candidate_manifest)
     elif args.max_samples is not None:
         sample_indices = _sample_indices(labels, args.max_samples, args.sample_strategy, args.seed)
         maps = maps[sample_indices]
@@ -94,11 +99,14 @@ def run_proposal_local_retrieval(args):
         if (i + 1) % 100 == 0:
             print(f'Prepared {i + 1}/{len(maps)} maps')
 
+    id_to_position = {int(record['idx']): i for i, record in enumerate(records)}
     query_positions = _query_positions(records, query_original_ids)
     scores = np.full((len(query_positions), len(records)), -np.inf, dtype=np.float32)
     for qi, i in enumerate(query_positions):
         query = records[i]
-        for j, candidate in enumerate(records):
+        candidate_positions = _candidate_positions_for_query(query['idx'], records, id_to_position, candidate_ids_by_query)
+        for j in candidate_positions:
+            candidate = records[j]
             if i == j:
                 continue
             scores[qi, j] = map_similarity(
@@ -157,6 +165,16 @@ def _query_positions(records, query_original_ids):
     if missing:
         raise ValueError(f'{len(missing)} query ids are not in the selected candidate split. First missing: {missing[:5]}')
     return positions
+
+
+def _candidate_positions_for_query(query_id, records, id_to_position, candidate_ids_by_query):
+    if candidate_ids_by_query is None:
+        return list(range(len(records)))
+    candidate_ids = candidate_ids_by_query.get(int(query_id), [])
+    missing = [candidate_id for candidate_id in candidate_ids if int(candidate_id) not in id_to_position]
+    if missing:
+        raise ValueError(f'{len(missing)} candidate ids for query {query_id} are not in selected split. First missing: {missing[:5]}')
+    return [id_to_position[int(candidate_id)] for candidate_id in candidate_ids]
 
 
 def _sample_indices(labels, max_samples, strategy, seed):
