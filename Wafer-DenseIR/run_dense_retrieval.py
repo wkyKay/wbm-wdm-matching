@@ -105,7 +105,7 @@ def _get_device(name):
     if device.type == 'cuda':
         if not torch.cuda.is_available():
             raise RuntimeError('CUDA requested but not available.')
-        torch.cuda.set_device(device)
+        torch.cuda.set_device(device.index if device.index is not None else 0)
         print(f'[Device] GPU: {torch.cuda.get_device_name(device)} (CUDA {torch.version.cuda})')
         torch.backends.cudnn.benchmark = True
     else:

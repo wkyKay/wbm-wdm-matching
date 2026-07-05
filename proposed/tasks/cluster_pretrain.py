@@ -97,17 +97,17 @@ class ClusterPretrainTask:
             if valid_loss < best_valid_loss:
                 best_valid_loss = valid_loss
                 best_epoch = epoch
-                self.save_checkpoint(self.best_ckpt, epoch=epoch, **epoch_history)
+                self.save_checkpoint(self.best_ckpt, **epoch_history)
                 self.memory.save(os.path.join(self.output_dir, 'best_memory.pt'), epoch=epoch)
             if save_every and epoch % int(save_every) == 0:
-                self.save_checkpoint(os.path.join(self.output_dir, f'epoch_{epoch:04d}.loss_{valid_loss:.4f}.pt'), epoch=epoch, **epoch_history)
+                self.save_checkpoint(os.path.join(self.output_dir, f'epoch_{epoch:04d}.loss_{valid_loss:.4f}.pt'), **epoch_history)
             if self.scheduler is not None:
                 self.scheduler.step()
             msg = f'Epoch {epoch}/{epochs} best={best_epoch} train_loss={train_history["loss"]:.4f} valid_loss={valid_loss:.4f} valid_top1={valid_history["top1"]:.4f}'
             print(msg)
             if logger is not None:
                 logger.info(msg)
-        self.save_checkpoint(self.last_ckpt, epoch=epochs, **history[-1])
+        self.save_checkpoint(self.last_ckpt, **history[-1])
         self.memory.save(os.path.join(self.output_dir, 'last_memory.pt'), epoch=epochs)
         with open(os.path.join(self.output_dir, 'history.json'), 'w') as f:
             json.dump(history, f, indent=2)

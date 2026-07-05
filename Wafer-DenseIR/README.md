@@ -74,7 +74,7 @@ Real retrieval experiment with a WaPIRL checkpoint:
 ```bash
 python3 run_dense_retrieval.py \
   --data_file ../../data/wm38k/Wafer_Map_Datasets.npz \
-  --pretrained_model_file /path/to/wapirl_checkpoint.pt \
+  --pretrained_model_file checkpoints/wm38k/wapirl_pretrain/resnet.18/2026-07-05_01:15:49/best_model.pt \
   --pretrained_model_key backbone \
   --device cuda \
   --split test \
@@ -95,7 +95,7 @@ python3 run_dense_retrieval.py \
   --split_manifest ../artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --query_manifest ../artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
   --candidate_manifest ../artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
-  --pretrained_model_file /path/to/wapirl_checkpoint.pt \
+  --pretrained_model_file checkpoints/wm38k/wapirl_pretrain/resnet.18/2026-07-05_01:15:49/best_model.pt \
   --pretrained_model_key backbone \
   --device cuda \
   --split test \

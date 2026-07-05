@@ -207,7 +207,7 @@ python3 proposed/run_cluster_pretrain.py \
   --num-negatives 1024 \
   --temperature 0.07 \
   --device cuda \
-  --out-dir artifacts/proposed/cluster_pretrain/wm38k_seed2026
+  --out-dir artifacts/proposed/cluster_pretrain/wm38k_seed2026_resnet18
 ```
 
 Small GPU smoke pretraining run:
@@ -224,7 +224,7 @@ python3 proposed/run_cluster_pretrain.py \
   --epochs 1 \
   --batch-size 32 \
   --device cuda \
-  --out-dir artifacts/proposed/smoke_pretrain
+  --out-dir artifacts/proposed/propsed_pretrain/resnet18
 ```
 
 Formal learned local retrieval using the fixed test query set and controlled candidate pool:
@@ -236,7 +236,7 @@ python3 proposed/run_learned_retrieval_pipeline.py \
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
   --candidate-manifest artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
-  --checkpoint artifacts/proposed/cluster_pretrain/wm38k_seed2026/best_model.pt \
+  --checkpoint artifacts/proposed/cluster_pretrain/wm38k_seed2026_resnet18/best_model.pt \
   --checkpoint-key encoder \
   --split test \
   --proposal-method retrieval_compact \
@@ -248,7 +248,7 @@ python3 proposed/run_learned_retrieval_pipeline.py \
   --sigma-area 1.0 \
   --metric-k 1 5 10 \
   --device cuda \
-  --out-dir artifacts/proposed/retrieval/wm38k_seed2026_test_candidates_1000
+  --out-dir artifacts/proposed/retrieval/wm38k_seed2026_resnet18_test_candidates_1000/7.5
 ```
 
 Expected formal outputs:

@@ -28,7 +28,7 @@ Example:
 
 ```bash
 python3 evaluation/evaluate_rankings.py \
-  --rankings artifacts/proposal_based/test/rankings.csv \
+  --rankings artifacts/proposed/retrieval/wm38k_seed2026_resnet18_test_candidates_1000/7.5/rankings.csv \
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
   --candidate-manifest artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
