@@ -134,7 +134,10 @@ def run_proposal_local_retrieval(args):
             for j in ranked:
                 if i == j:
                     continue
-                writer.writerow([records[i]['idx'], rank_out, records[j]['idx'], float(scores[qi, j])])
+                score = scores[qi, j]
+                if score == float('-inf'):
+                    continue
+                writer.writerow([records[i]['idx'], rank_out, records[j]['idx'], float(score)])
                 rank_out += 1
     if args.save_match_details:
         _save_match_details(

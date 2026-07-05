@@ -238,7 +238,7 @@ python3 partial_match/run_proposal_retrieval_pipeline.py \
   --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
   --candidate-manifest artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
   --split test \
-  --out-dir artifacts/proposal_based/test_manifest \
+  --out-dir artifacts/partial_match/pretrain/resnet18 \
   --review-max-queries 64 \
   --review-top-k 3 \
   --metric-k 1 5 10
