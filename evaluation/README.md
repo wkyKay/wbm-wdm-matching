@@ -28,11 +28,11 @@ Example:
 
 ```bash
 python3 evaluation/experiment_a/evaluate_rankings.py \
-  --rankings artifacts/proposed/retrieval/wm38k_seed2026_resnet18_test_candidates_1000/7.5/rankings.csv \
+  --rankings artifacts/partial_match/pretrain/resnet18/rankings.csv\
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
   --candidate-manifest artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
-  --out artifacts/proposal_based/test/label_metrics.json
+  --out artifacts/partial_match/metrics/label_metrics.json
 ```
 
 If `--candidate-manifest` is provided, IDCG, Recall, mAP, and Top-K metrics are computed against that fixed per-query candidate pool. If it is omitted, the evaluator uses the full test split from `--split-manifest` as the candidate pool.
