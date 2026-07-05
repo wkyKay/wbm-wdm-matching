@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from configs.network_configs import RESNET_BACKBONE_CONFIGS, VIT_BACKBONE_CONFIGS
 from configs.task_configs import DenseRetrievalConfig
 from datasets.wm38k import WM38K
-from evaluation.evaluate_rankings import evaluate_rankings_from_files, write_flat_metrics
+from evaluation.experiment_a.evaluate_rankings import evaluate_rankings_from_files, write_flat_metrics
 from models.resnet import ResNetBackbone
 from models.vit import ViTTinyBackbone
 from shared.wm38k.candidates import load_candidate_manifest

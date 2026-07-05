@@ -20,7 +20,7 @@ from partial_match.scripts.evaluate_proposal_retrieval import evaluate_proposal_
 from partial_match.scripts.run_proposal_local_retrieval import run_proposal_local_retrieval
 from partial_match.scripts.visualize_retrieval_compact_steps import visualize_retrieval_compact_steps
 from partial_match.scripts.visualize_topk_retrieval import visualize_topk_retrieval
-from evaluation.evaluate_rankings import evaluate_rankings_from_files
+from evaluation.experiment_a.evaluate_rankings import evaluate_rankings_from_files
 
 
 def main():

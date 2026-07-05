@@ -82,8 +82,8 @@ Method-independent evaluation code for the current plan. It consumes ranking fil
 Important entry points:
 
 - `evaluation/README.md`
-- `evaluation/evaluate_rankings.py`
-- `evaluation/relevance.py`
+- `evaluation/experiment_a/evaluate_rankings.py`
+- `evaluation/experiment_a/relevance.py`
 - `evaluation/metrics.py`
 - `evaluation/schemas.py`
 

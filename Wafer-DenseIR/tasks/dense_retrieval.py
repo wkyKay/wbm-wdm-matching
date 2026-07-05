@@ -95,7 +95,7 @@ class DenseRetrieval(Task):
         rankings = np.argsort(-scores, axis=1)
         labels = np.stack([r['label'] for r in records], axis=0)
         metrics = retrieval_metrics(rankings, labels, ks=ks, query_positions=query_positions)
-        self._save_rankings(records, rankings, scores, query_positions)
+        self._save_rankings(records, rankings, scores, query_positions, candidate_positions_by_query)
         self._save_metrics(metrics)
         return rankings, scores, metrics, match_cache
 
@@ -141,7 +141,7 @@ class DenseRetrieval(Task):
         rankings = np.argsort(-scores, axis=1)
         labels = np.stack([r['label'] for r in records], axis=0)
         metrics = retrieval_metrics(rankings, labels, ks=ks, query_positions=query_positions)
-        self._save_rankings(records, rankings, scores, query_positions)
+        self._save_rankings(records, rankings, scores, query_positions, candidate_positions_by_query)
         self._save_metrics(metrics)
         
         # Free GPU records to reclaim memory
@@ -193,17 +193,22 @@ class DenseRetrieval(Task):
             arrays[f'weights_{i}'] = rec['tokens']['weights']
         np.savez_compressed(path, **arrays)
 
-    def _save_rankings(self, records, rankings, scores, query_positions):
+    def _save_rankings(self, records, rankings, scores, query_positions, candidate_positions_by_query=None):
         path = os.path.join(self.output_dir, 'rankings.csv')
         with open(path, 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['query_id', 'rank', 'candidate_id', 'similarity_score'])
             for qi, ranked in enumerate(rankings):
                 i = query_positions[qi]
-                for rank, j in enumerate(ranked, start=1):
+                allowed = set(_candidate_positions(records, i, candidate_positions_by_query))
+                rank_out = 1
+                for j in ranked:
                     if i == j:
                         continue
-                    writer.writerow([records[i]['idx'], rank, records[j]['idx'], float(scores[qi, j])])
+                    if candidate_positions_by_query is not None and int(j) not in allowed:
+                        continue
+                    writer.writerow([records[i]['idx'], rank_out, records[j]['idx'], float(scores[qi, j])])
+                    rank_out += 1
 
     def _save_metrics(self, metrics):
         path = os.path.join(self.output_dir, 'metrics.json')

@@ -176,7 +176,7 @@ retrieval/rankings.csv
 
 `core/matching.py` 负责主方法的 token matching，建议从 `partial_match.core.descriptors` 的匹配公式复写或封装为同等逻辑，只把 `shape_sim = handcrafted_descriptor_dot` 替换为 `shape_sim = learned_embedding_cosine`。为保证实验解释清楚，`sigma_pos`、`sigma_area`、`topk_match` 和 query token 权重默认值应与 `partial_match` 一致。
 
-`tasks/learned_retrieval.py` 负责在 fixed query/candidate manifest 上生成 `rankings.csv`，并调用 `evaluation/evaluate_rankings.py` 生成 `label_metrics.json` 和 `label_metrics_flat.csv`。它不负责重新划分数据，也不使用 label 控制排序。
+`tasks/learned_retrieval.py` 负责在 fixed query/candidate manifest 上生成 `rankings.csv`，并调用 `evaluation/experiment_a/evaluate_rankings.py` 生成 `label_metrics.json` 和 `label_metrics_flat.csv`。它不负责重新划分数据，也不使用 label 控制排序。
 
 `run_cluster_pretrain.py` 是 cluster-level 对比学习入口，输出 checkpoint、history、config、proposal config、patch config 和可选 embedding 诊断图。`run_learned_retrieval_pipeline.py` 是正式检索入口，输出 `proposal_tokens.csv`、`rankings.csv`、`tokens.csv`、`embeddings.npz`、`match_details.csv`、`label_metrics.json` 和 `label_metrics_flat.csv`。
 
@@ -268,7 +268,7 @@ Official evaluation can also be run independently:
 
 ```bash
 cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
-python3 evaluation/evaluate_rankings.py \
+python3 evaluation/experiment_a/evaluate_rankings.py \
   --rankings artifacts/proposed/retrieval/wm38k_seed2026_test_candidates_1000/rankings.csv \
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \

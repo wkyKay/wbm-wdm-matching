@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 
 from evaluation.metrics import average_precision, mean_or_none, ndcg_at_k
-from evaluation.relevance import exact_match, gain, jaccard, overlap_hit, relevance_value
+from evaluation.experiment_a.relevance import exact_match, gain, jaccard, overlap_hit, relevance_value
 from evaluation.schemas import validate_ranking_columns
 from shared.wm38k.io import CLASS_NAMES
 from shared.wm38k.candidates import load_candidate_manifest

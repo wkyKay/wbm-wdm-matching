@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from evaluation.evaluate_rankings import evaluate_rankings_from_files, write_flat_metrics
+from evaluation.experiment_a.evaluate_rankings import evaluate_rankings_from_files, write_flat_metrics
 from proposed.core.cluster_patches import PatchBuilder
 from proposed.core.learned_descriptors import extract_learned_records, group_records_by_map, save_embeddings_npz, token_rows
 from proposed.core.matching import map_similarity
@@ -88,4 +88,3 @@ def _write_token_rows(path, rows):
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
-

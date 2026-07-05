@@ -3,7 +3,8 @@
 
 import argparse
 
-from .candidates import build_stratified_candidate_rows, write_candidate_manifest
+from shared.wm38k.candidates import write_candidate_manifest
+from shared.wm38k.experiment_a.candidate_sampling import build_stratified_candidate_rows
 
 
 def main():

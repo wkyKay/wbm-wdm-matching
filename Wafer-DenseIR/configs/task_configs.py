@@ -128,6 +128,7 @@ class ConfigBase(object):
     def logging_parser():
         parser = argparse.ArgumentParser("Logging", add_help=False)
         parser.add_argument('--output_root', type=str, default='artifacts/dense_retrieval')
+        parser.add_argument('--hash', type=str, default=argparse.SUPPRESS)
         parser.add_argument('--save_features', action='store_true')
         return parser
 
