@@ -124,7 +124,7 @@ python3 run_dense_retrieval.py \
   --backbone_type vit \
   --backbone_config tiny \
   --device cuda \
-  --split test \
+  --split test \-query_manifest
   --input_size 96 \
   --num_workers 4 \
   --token_mode defect_band \

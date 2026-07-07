@@ -35,7 +35,7 @@ class DenseRetrieval(Task):
               f'Batch size: {batch_size}, Token mode: {token_mode}',
               f'| pin_memory={use_pin}')
         start_time = time.time()
-        for batch in tqdm(loader, desc='Extracting features', unit='batch', ncols=100):
+        for batch in tqdm(loader, desc='Extracting features', unit='batch', ncols=100, leave=False):
             x = batch['x'].to(self.device, non_blocking=use_pin)
             fmap = self.backbone(x).detach().cpu()
             for i in range(fmap.shape[0]):
@@ -77,7 +77,7 @@ class DenseRetrieval(Task):
         scores = np.full((len(query_positions), n), -np.inf, dtype=np.float32)
         match_cache = {}
         start_time = time.time()
-        with tqdm(total=total_pairs, desc='Dense matching', unit='pair', ncols=100) as pbar:
+        with tqdm(total=total_pairs, desc='Dense matching', unit='pair', ncols=100, mininterval=0.1, leave=False) as pbar:
             for qi, i in enumerate(query_positions):
                 for j in _candidate_positions(records, i, candidate_positions_by_query):
                     if i == j:
@@ -117,7 +117,7 @@ class DenseRetrieval(Task):
         scores = np.full((len(query_positions), n), -np.inf, dtype=np.float32)
         start_time = time.time()
         
-        with tqdm(total=total_pairs, desc='Dense matching (GPU)', unit='pair', ncols=100) as pbar:
+        with tqdm(total=total_pairs, desc='Dense matching (GPU)', unit='pair', ncols=100, mininterval=0.1, leave=False) as pbar:
             for query_row, i in enumerate(query_positions):
                 query_gpu = gpu_records[i]
                 for j in _candidate_positions(records, i, candidate_positions_by_query):
@@ -131,8 +131,7 @@ class DenseRetrieval(Task):
                     scores[query_row, j] = score
                     pbar.update(1)
                     
-                    # Free GPU memory of last used tensors periodically
-                    if j % 100 == 0:
+                    if pbar.n % 100 == 0:
                         torch.cuda.synchronize()
 
         elapsed = time.time() - start_time
@@ -200,15 +199,13 @@ class DenseRetrieval(Task):
             writer.writerow(['query_id', 'rank', 'candidate_id', 'similarity_score'])
             for qi, ranked in enumerate(rankings):
                 i = query_positions[qi]
-                allowed = set(_candidate_positions(records, i, candidate_positions_by_query))
-                rank_out = 1
-                for j in ranked:
+                for rank, j in enumerate(ranked, start=1):
                     if i == j:
                         continue
-                    if candidate_positions_by_query is not None and int(j) not in allowed:
+                    score = scores[qi, j]
+                    if score == float('-inf'):
                         continue
-                    writer.writerow([records[i]['idx'], rank_out, records[j]['idx'], float(scores[qi, j])])
-                    rank_out += 1
+                    writer.writerow([records[i]['idx'], rank, records[j]['idx'], float(score)])
 
     def _save_metrics(self, metrics):
         path = os.path.join(self.output_dir, 'metrics.json')
