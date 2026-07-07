@@ -42,6 +42,75 @@ def write_topk_log(
                 f.write(f"{col}\t{rank}\t{fname}\t{score:.6f}\n")
 
 
+def write_token_match_log(log_path: str | Path, rows: List[Tuple[str, dict]]) -> None:
+    """Write per-WBM-token top-K WDM token evidence rows."""
+    if not log_path:
+        return
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    header = [
+        "file",
+        "wbm_token_id",
+        "rank",
+        "wdm_token_id",
+        "score",
+        "shape_sim",
+        "position_affinity",
+        "scale_affinity",
+        "type_affinity",
+        "wbm_area",
+        "wdm_area",
+        "wbm_mass",
+        "wdm_mass",
+        "wbm_type",
+        "wdm_type",
+        "wbm_centroid_row",
+        "wbm_centroid_col",
+        "wdm_centroid_row",
+        "wdm_centroid_col",
+    ]
+    with open(log_path, "w") as f:
+        f.write("\t".join(header) + "\n")
+        for fname, res in rows:
+            for token_matches in res.get("_token_topk_matches", []):
+                for match in token_matches:
+                    f.write("\t".join(_match_row(fname, match, per_token=True)) + "\n")
+
+
+def write_map_match_log(log_path: str | Path, rows: List[Tuple[str, dict]]) -> None:
+    """Write highest-scoring token pairs per WDM map, independent of final aggregation."""
+    if not log_path:
+        return
+    log_path = Path(log_path)
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    header = [
+        "file",
+        "rank",
+        "wbm_token_id",
+        "wdm_token_id",
+        "score",
+        "shape_sim",
+        "position_affinity",
+        "scale_affinity",
+        "type_affinity",
+        "wbm_area",
+        "wdm_area",
+        "wbm_mass",
+        "wdm_mass",
+        "wbm_type",
+        "wdm_type",
+        "wbm_centroid_row",
+        "wbm_centroid_col",
+        "wdm_centroid_row",
+        "wdm_centroid_col",
+    ]
+    with open(log_path, "w") as f:
+        f.write("\t".join(header) + "\n")
+        for fname, res in rows:
+            for match in res.get("_map_topk_matches", []):
+                f.write("\t".join(_match_row(fname, match, per_token=False)) + "\n")
+
+
 def collect_numeric_scores(rows: List[Tuple[str, dict]], column: str) -> list[tuple[str, float]]:
     scored: list[tuple[str, float]] = []
     for fname, res in rows:
@@ -64,3 +133,37 @@ def format_score(val) -> str:
         return val
     return str(val)
 
+
+def _match_row(fname: str, match: dict, per_token: bool) -> list[str]:
+    query = match.get("query_token", {})
+    candidate = match.get("candidate_token", {})
+    common = [
+        fname,
+        str(match.get("query_token_id", "")),
+        str(match.get("rank", "")),
+        str(match.get("candidate_token_id", "")),
+        _fmt_float(match.get("score", "")),
+        _fmt_float(match.get("shape_sim", "")),
+        _fmt_float(match.get("position_affinity", "")),
+        _fmt_float(match.get("scale_affinity", "")),
+        _fmt_float(match.get("type_affinity", "")),
+        str(query.get("area", "")),
+        str(candidate.get("area", "")),
+        _fmt_float(query.get("mass", "")),
+        _fmt_float(candidate.get("mass", "")),
+        str(query.get("geometry_type", "")),
+        str(candidate.get("geometry_type", "")),
+        _fmt_float(query.get("centroid_row", "")),
+        _fmt_float(query.get("centroid_col", "")),
+        _fmt_float(candidate.get("centroid_row", "")),
+        _fmt_float(candidate.get("centroid_col", "")),
+    ]
+    if per_token:
+        return common
+    return [common[0], common[2], common[1], *common[3:]]
+
+
+def _fmt_float(value) -> str:
+    if isinstance(value, (float, int)):
+        return f"{float(value):.6f}"
+    return str(value)

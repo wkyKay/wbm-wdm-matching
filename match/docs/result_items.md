@@ -19,6 +19,8 @@ classnumber_review_*/
 
 - `batch_results.tsv`: 每个 KLARF 文件一行，记录整图指标、count-partial 指标、classnumber 指标和映射成功数。
 - `batch_topk.tsv`: 对每个可排序指标分别列出 Top-K 文件。
+- `token_match_topk.tsv`: 对每个 KLARF 文件、每个 WBM token，列出 Top-K 个 WDM token 匹配证据。
+- `map_match_topk.tsv`: 对每个 KLARF 文件，列出整张 map 上最高分的 Top-K token pair 证据。
 - `count_partial_review/topN_count_partial.png`: count-partial 排名前 N 的候选可视化。
 - `count_partial_review/proposal_steps/rankXX_*.png`: 单个候选的 token 生成和匹配过程图。
 - `classnumber_review_*/<file>_classnumber_splits.png`: 只为全局 Top-K classnumber 分图涉及的文件生成 split map；同一文件只生成一张。
@@ -66,7 +68,8 @@ WDM count_map > 0 inside WBM valid_mask
  -> WDM proposal tokens
 
 每个 WBM token 和所有 WDM token 计算 pair score
- -> 每个 WBM token 选择最高分 WDM token
+ -> 每个 WBM token 保存 Top-K WDM 候选
+ -> 全部 token pair 按 score 从高到低做一对一贪心匹配
  -> 按 sqrt(WBM token area) 加权平均
  -> count-partial
 ```
@@ -205,6 +208,37 @@ step 图使用 cluster 上色显示 token。`WBM tokens` 和 `WDM tokens` 面板
 TopK 对比图仍以 WDM heatmap 为主，只保留 token 轮廓、编号和连线作为辅助标记，避免色块遮挡候选 count 强度。
 
 注意：当前不是 Hungarian 一对一匹配。多个 WBM token 可以连到同一个 WDM token。
+
+## 6.3 token_match_topk.tsv 与 map_match_topk.tsv
+
+`token_match_topk.tsv` 是 token-level evidence 表。它按 `file + wbm_token_id + rank`
+展开，每个 WBM token 会保留若干个 WDM token 候选。该表用于诊断和解释，不表示这些
+候选都会计入总分。
+
+`map_match_topk.tsv` 是 map-level evidence 表。它对单个 WDM map 内所有 WBM/WDM token
+pair 按 `score` 排序，保留最高的若干个 pair，用于快速查看整张 map 上最强的局部匹配证据。
+
+两张表共享主要字段：
+
+| 列名 | 含义 |
+|---|---|
+| `file` | 来源 KLARF 文件。 |
+| `rank` | 当前分组内的匹配排名。`token_match_topk.tsv` 中是同一 WBM token 内排名；`map_match_topk.tsv` 中是整张 map 内排名。 |
+| `wbm_token_id` | WBM proposal token 编号。 |
+| `wdm_token_id` | WDM proposal token 编号。 |
+| `score` | 当前 token pair 的综合分。 |
+| `shape_sim` | 形状相似度分量。 |
+| `position_affinity` | 位置亲和度分量。 |
+| `scale_affinity` | 尺度亲和度分量。 |
+| `type_affinity` | 类型亲和度分量。 |
+| `wbm_area`, `wdm_area` | token 支撑面积。 |
+| `wbm_mass`, `wdm_mass` | token 权重质量。WDM count 模式下 `wdm_mass` 反映 count 权重。 |
+| `wbm_type`, `wdm_type` | token 几何类型。 |
+| `*_centroid_row`, `*_centroid_col` | token 质心位置。 |
+
+总分计算时，使用一对一贪心匹配：每个 WBM token 最多贡献一次，每个 WDM token 也最多使用一次。
+因此明细表中同一个 WBM token 的多个候选可以同时出现，但只有不冲突且被贪心匹配接受的 pair
+会计入 `count-partial`。
 
 ## 7. classnumber 图片上方分数
 

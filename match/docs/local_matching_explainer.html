@@ -1,0 +1,1098 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WBM-WDM Local Matching Explainer</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --ink: #1f2933;
+      --muted: #617083;
+      --line: #d8dee8;
+      --accent: #16697a;
+      --accent-2: #2f7d32;
+      --warn: #9a5b13;
+      --code: #111827;
+      --chip: #eef4f6;
+      --shadow: 0 10px 28px rgba(31, 41, 51, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.58;
+    }
+
+    .shell {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 28px 22px 64px;
+    }
+
+    header {
+      padding: 24px 0 22px;
+      border-bottom: 1px solid var(--line);
+      margin-bottom: 24px;
+    }
+
+    .eyebrow {
+      margin: 0 0 8px;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 5vw, 52px);
+      line-height: 1.05;
+      letter-spacing: 0;
+    }
+
+    .lead {
+      max-width: 880px;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 18px;
+    }
+
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .nav a,
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel);
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    section {
+      margin-top: 28px;
+    }
+
+    h2 {
+      margin: 0 0 14px;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+      letter-spacing: 0;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 16px;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      padding: 18px;
+    }
+
+    .span-4 {
+      grid-column: span 4;
+    }
+
+    .span-6 {
+      grid-column: span 6;
+    }
+
+    .span-8 {
+      grid-column: span 8;
+    }
+
+    .span-12 {
+      grid-column: span 12;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .stage {
+      position: relative;
+      min-height: 172px;
+    }
+
+    .stage .index {
+      width: 34px;
+      height: 34px;
+      display: inline-grid;
+      place-items: center;
+      border-radius: 50%;
+      background: var(--accent);
+      color: white;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .stage ul,
+    .plain-list {
+      margin: 10px 0 0;
+      padding-left: 18px;
+    }
+
+    .stage li,
+    .plain-list li {
+      margin: 5px 0;
+    }
+
+    code,
+    pre {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+
+    code {
+      background: #eef1f5;
+      border-radius: 4px;
+      padding: 1px 5px;
+      color: var(--code);
+    }
+
+    pre {
+      margin: 12px 0 0;
+      overflow: auto;
+      padding: 14px 16px;
+      background: #f8fafc;
+      color: #243244;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      font-size: 13px;
+      line-height: 1.48;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85);
+    }
+
+    pre code {
+      display: block;
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      border-radius: 0;
+    }
+
+    .code-comment {
+      color: #2f7d32;
+      font-weight: 650;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .flow-node {
+      border: 1px solid var(--line);
+      background: #fbfcfd;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 110px;
+      position: relative;
+    }
+
+    .flow-node:not(:last-child)::after {
+      content: ">";
+      position: absolute;
+      right: -10px;
+      top: 42%;
+      color: var(--accent);
+      font-weight: 900;
+    }
+
+    .flow-node strong {
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .flow-node span {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .wafer-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+      align-items: center;
+    }
+
+    .mini-map {
+      display: grid;
+      grid-template-columns: repeat(7, 22px);
+      grid-template-rows: repeat(9, 22px);
+      gap: 3px;
+      width: max-content;
+      padding: 10px;
+      border-radius: 8px;
+      background: #222832;
+      border: 1px solid #353f4d;
+    }
+
+    .cell {
+      width: 22px;
+      height: 22px;
+      border-radius: 4px;
+      background: #4b5563;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .cell.bg {
+      background: #111827;
+    }
+
+    .cell.fail {
+      background: #f8fafc;
+    }
+
+    .cell.defect {
+      background: #d3422f;
+    }
+
+    .cell.soft {
+      background: #e58c2d;
+    }
+
+    .token-demo {
+      display: grid;
+      grid-template-columns: repeat(9, 18px);
+      grid-template-rows: repeat(7, 18px);
+      gap: 3px;
+      width: max-content;
+      padding: 10px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      border: 1px solid var(--line);
+    }
+
+    .token-demo .t {
+      width: 18px;
+      height: 18px;
+      border-radius: 4px;
+      background: white;
+      border: 1px solid #d7dde6;
+    }
+
+    .token-demo .a {
+      background: #16697a;
+    }
+
+    .token-demo .b {
+      background: #2f7d32;
+    }
+
+    .token-demo .c {
+      background: #9a5b13;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      vertical-align: top;
+      padding: 10px 9px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0;
+      background: #f8fafc;
+    }
+
+    .formula {
+      display: grid;
+      gap: 10px;
+    }
+
+    .formula-row {
+      padding: 12px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #fbfcfd;
+    }
+
+    .formula-row strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--accent);
+    }
+
+    .callout {
+      border-left: 4px solid var(--accent-2);
+      background: #f2f8f3;
+      padding: 14px 16px;
+      border-radius: 6px;
+    }
+
+    .warn {
+      border-left-color: var(--warn);
+      background: #fff8ed;
+    }
+
+    .example-figure {
+      margin: 14px 0 0;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #f8fafc;
+    }
+
+    .example-figure img {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .evidence-diagram {
+      margin: 14px 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfd;
+      overflow: hidden;
+    }
+
+    .evidence-diagram svg {
+      display: block;
+      width: 100%;
+      height: auto;
+    }
+
+    .evidence-title {
+      fill: var(--ink);
+      font-size: 15px;
+      font-weight: 750;
+    }
+
+    .evidence-label {
+      fill: var(--muted);
+      font-size: 12px;
+      font-weight: 650;
+    }
+
+    .evidence-small {
+      fill: var(--muted);
+      font-size: 11px;
+    }
+
+    .figure-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    .footer {
+      margin-top: 34px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 860px) {
+      .grid,
+      .flow,
+      .wafer-row {
+        grid-template-columns: 1fr;
+      }
+
+      .span-4,
+      .span-6,
+      .span-8,
+      .span-12 {
+        grid-column: auto;
+      }
+
+      .flow-node:not(:last-child)::after {
+        content: "v";
+        right: 16px;
+        top: auto;
+        bottom: -18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <p class="eyebrow">WBM-WDM Matching</p>
+      <h1>Proposal 到 Match 的局部形态匹配方案</h1>
+      <p class="lead">
+        本页面解释当前 <code>count-partial</code> / <code>binary partial</code> 的完整设计：
+        将 WBM 与映射后的 WDM 转成同尺寸 GridMap，提取局部 token，用连续形状 descriptor、位置和尺度生成 token-level 匹配证据，并用每个 WBM token 的最佳匹配计算摘要分数。
+      </p>
+      <nav class="nav">
+        <a href="#overview">总览</a>
+        <a href="#io">输入</a>
+        <a href="#proposal">Proposal</a>
+        <a href="#descriptor">Descriptor</a>
+        <a href="#scoring">Scoring</a>
+        <a href="#improvements">改进方法</a>
+        <a href="#small-map">MxN 策略</a>
+        <a href="#pseudocode">伪代码</a>
+      </nav>
+    </header>
+
+    <section id="overview" class="panel">
+      <h2>总览</h2>
+      <div class="flow">
+        <div class="flow-node">
+          <strong>GridMap 对齐</strong>
+          <span>WBM 直接读取；WDM KLARF 映射到 WBM 的 HxW 尺寸。</span>
+        </div>
+        <div class="flow-node">
+          <strong>Proposal</strong>
+          <span>在有效 wafer 区域内做 8 连通聚类，得到候选局部区域。</span>
+        </div>
+        <div class="flow-node">
+          <strong>Token Stats</strong>
+          <span>为每个区域计算面积、质心、bbox、PCA、紧致度、径向和角向特征。</span>
+        </div>
+        <div class="flow-node">
+          <strong>Descriptor</strong>
+          <span>把 token 的连续形状特征归一化成向量，作为唯一形状相似度来源。</span>
+        </div>
+        <div class="flow-node">
+          <strong>Match</strong>
+          <span>按 shape、position、scale 计算 pair score；保存 Top-K evidence，计分时用一对一贪心匹配。</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>图片案例</h2>
+      <p class="muted">
+        下面三张图对应当前算法的主要阶段：GridMap 对齐、proposal token 提取、pair scoring 与 token-level evidence。
+      </p>
+      <div class="figure-grid">
+        <figure class="example-figure">
+          <img src="assets/gridmap_alignment_example.svg" alt="WBM and WDM are aligned to the same 9 by 7 GridMap.">
+        </figure>
+        <figure class="example-figure">
+          <img src="assets/proposal_tokens_example.svg" alt="Defect masks are grouped into proposal tokens with token statistics.">
+        </figure>
+        <figure class="example-figure">
+          <img src="assets/pair_matching_example.svg" alt="WBM tokens and WDM tokens are scored into token-level evidence.">
+        </figure>
+      </div>
+    </section>
+
+    <section id="io" class="grid">
+      <div class="panel span-6">
+        <h2>输入和语义</h2>
+        <p>
+          WBM 是参考目标，PNG 被读成 <code>GridMaps</code>。白色表示 fail die，
+          灰色表示 wafer 内无 fail die，黑色表示背景。局部匹配只在 WBM 的有效区域内计算。
+        </p>
+        <p>
+          WDM 是候选 KLARF 缺陷点。它先通过 mapper 聚合到目标 WBM 的同尺寸网格，
+          得到 <code>count_map</code> 和 <code>binary_map</code>。
+        </p>
+        <div class="wafer-row">
+          <div>
+            <h3>WBM MxN 示例</h3>
+            <div class="mini-map" aria-label="9 by 7 WBM map">
+              <span class="cell bg"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell bg"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell fail"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell fail"></span><span class="cell fail"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell fail"></span><span class="cell fail"></span><span class="cell fail"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell fail"></span><span class="cell fail"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell bg"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell bg"></span>
+            </div>
+          </div>
+          <div>
+            <h3>WDM 映射后</h3>
+            <div class="mini-map" aria-label="9 by 7 WDM map">
+              <span class="cell bg"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell bg"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell defect"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell defect"></span><span class="cell defect"></span><span class="cell soft"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell defect"></span><span class="cell soft"></span><span class="cell defect"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell defect"></span><span class="cell defect"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span>
+              <span class="cell bg"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell"></span><span class="cell bg"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel span-6">
+        <h2>两种局部匹配入口</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>入口</th>
+              <th>WBM token</th>
+              <th>WDM token</th>
+              <th>权重</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>count-partial</code></td>
+              <td><code>status_map == VALID_HAS_DEFECT</code></td>
+              <td><code>candidate.count_map &gt; 0</code></td>
+              <td>WDM 使用 cell 内 defect count</td>
+            </tr>
+            <tr>
+              <td><code>binary partial</code></td>
+              <td><code>status_map == VALID_HAS_DEFECT</code></td>
+              <td><code>candidate.binary_map &gt; 0</code></td>
+              <td>WDM 每个 active cell 权重为 1</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout">
+          <strong>当前设计重点</strong>
+          <p>
+            基础 8 个全图 similarity 是像素级指标；本页解释的是局部 token matching。
+            它更适合描述“候选 WDM 是否能解释 WBM 的局部失效区域形态”。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="proposal" class="grid">
+      <div class="panel span-12">
+        <h2>Proposal：从 map 到局部 token</h2>
+        <div class="grid">
+          <div class="stage span-4">
+            <span class="index">1</span>
+            <h3>有效区域裁剪</h3>
+            <p class="muted">
+              只保留 WBM 有意义区域：<code>VALID_NO_DEFECT</code> 与 <code>VALID_HAS_DEFECT</code>。
+              背景和未检测区域不参与 token 提取。
+            </p>
+          </div>
+          <div class="stage span-4">
+            <span class="index">2</span>
+            <h3>8 连通组件</h3>
+            <p class="muted">
+              所有 mode 统一使用 <code>connectivity=8</code>。对 MxN 小图，斜向相邻 cell
+              更可能属于同一个真实区域，8 连通能减少碎片化。
+            </p>
+          </div>
+          <div class="stage span-4">
+            <span class="index">3</span>
+            <h3>区域过滤和排序</h3>
+            <p class="muted">
+              小于 <code>min_area</code> 的区域被过滤。token 之后按 mass、area 和解释标签优先级排序，
+              保留 top-k 个候选区域。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel span-6">
+        <h2><code>cc</code> 模式</h2>
+        <p>
+          <code>cc</code> 是最直接的 proposal：对输入 mask 做 8 连通聚类，每个连通区域就是一个 token。
+          它适合作为简单、稳定、可复现实验基线。
+        </p>
+        <pre><code>mask -> connected_components(connectivity=8)
+     -> filter by min_area
+     -> token_stats
+     -> sort by importance
+     -> top_k</code></pre>
+      </div>
+
+      <div class="panel span-6">
+        <h2><code>compact</code> 模式</h2>
+        <p>
+          <code>compact</code> 在 8 连通组件基础上加入更强的区域整理逻辑，用于处理断裂、
+          环边缘和碎片化 pattern。
+        </p>
+        <ul class="plain-list">
+          <li><code>gap grouping</code>：对小间隙区域做保守闭运算聚合。</li>
+          <li><code>ring aware</code>：识别边缘环状分布，单独形成 ring token。</li>
+          <li><code>geometry merge</code>：合并相近且形态兼容的碎片。</li>
+          <li><code>diverse topK</code>：按解释标签保留更多不同形态的 token。</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="grid">
+      <div class="panel span-12">
+        <h2>Token 示例</h2>
+        <p class="muted">
+          每个颜色块代表一个 proposal token。token 不只是像素集合，还带有一组统计特征。
+        </p>
+        <div class="token-demo" aria-label="token proposal demo">
+          <span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span>
+          <span class="t"></span><span class="t a"></span><span class="t a"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t c"></span><span class="t"></span><span class="t"></span>
+          <span class="t"></span><span class="t a"></span><span class="t a"></span><span class="t"></span><span class="t b"></span><span class="t"></span><span class="t c"></span><span class="t c"></span><span class="t"></span>
+          <span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t b"></span><span class="t b"></span><span class="t"></span><span class="t c"></span><span class="t"></span>
+          <span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t b"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span>
+          <span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span>
+          <span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span><span class="t"></span>
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <h2>Token Stats</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>字段</th>
+              <th>含义</th>
+              <th>计算方法</th>
+              <th>用途</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>area / mass</code></td>
+              <td>区域 cell 数量 / count 权重总和</td>
+              <td><code>area = len(pixels)</code><br><code>mass = sum(weight_map[pixels])</code></td>
+              <td>排序、尺度相似度、WBM token 加权</td>
+            </tr>
+            <tr>
+              <td><code>centroid</code></td>
+              <td>加权质心位置</td>
+              <td><code>sum(row * weight) / mass</code><br><code>sum(col * weight) / mass</code></td>
+              <td>位置相似度</td>
+            </tr>
+            <tr>
+              <td><code>bbox</code></td>
+              <td>最小外接矩形</td>
+              <td><code>min/max(rows)</code> 与 <code>min/max(cols)</code></td>
+              <td>宽高比、fill ratio、fragment merge</td>
+            </tr>
+            <tr>
+              <td><code>PCA</code></td>
+              <td>主方向和主轴方差</td>
+              <td>对质心归一后的坐标计算加权协方差，再做 <code>eigh</code></td>
+              <td>elongation、orientation</td>
+            </tr>
+            <tr>
+              <td><code>radial / angular</code></td>
+              <td>相对 wafer 中心的半径、角覆盖和径向离散程度</td>
+              <td>以 wafer 中心为原点计算 <code>radius</code>、<code>atan2</code> 和角度 bin 覆盖率</td>
+              <td>边缘环、中心型、形状 profile</td>
+            </tr>
+            <tr>
+              <td><code>geometry_type</code></td>
+              <td>人工解释标签：blob、line、edge_ring、central、irregular</td>
+              <td>由 <code>radial_distance</code>、<code>angular_coverage</code>、<code>fill_ratio</code>、<code>elongation</code> 等阈值规则得到</td>
+              <td>仅用于解释和 diverse topK，不参与最终 score</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="descriptor" class="grid">
+      <div class="panel span-12">
+        <h2>Descriptor：连续形状向量</h2>
+        <p>
+          当前最终打分不再使用离散 <code>geometry_type</code> 惩罚。形状相似性只由 descriptor 的连续特征决定，
+          这样可以避免硬阈值分类造成分数突变。对于当前 MxN map，实际使用的是
+          <code>coarse</code> descriptor。
+        </p>
+      </div>
+
+      <div class="panel span-12">
+        <h2><code>coarse</code> descriptor</h2>
+        <p>
+          用于 <code>short_side &lt;= 12</code> 的小尺寸 map，例如 MxN。它不使用方向，
+          并采用 4-bin profile，减少低分辨率下的抖动。最终 descriptor 会做 L2 归一化，
+          pair scoring 中的 <code>shape_sim</code> 由两个 descriptor 的点积得到。
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>组成部分</th>
+              <th>计算方法</th>
+              <th>作用</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>fill_ratio</code></td>
+              <td><code>area / (bbox_height * bbox_width)</code></td>
+              <td>描述区域是否饱满；可区分实心块状区域和稀疏断裂区域。</td>
+            </tr>
+            <tr>
+              <td><code>log_aspect</code></td>
+              <td><code>log1p(max(h/w, w/h)) / log(16)</code></td>
+              <td>描述外接框长宽比例；用于识别横向或纵向拉长的 pattern。</td>
+            </tr>
+            <tr>
+              <td><code>log_elongation</code></td>
+              <td><code>log1p(pca_lambda1 / pca_lambda2) / log(64)</code></td>
+              <td>描述主轴拉伸程度；比 bbox aspect 更关注像素实际分布。</td>
+            </tr>
+            <tr>
+              <td><code>compactness</code></td>
+              <td><code>min((perimeter / area) / 4, 1)</code></td>
+              <td>描述边界复杂度；紧致区域和破碎/细长区域会得到不同响应。</td>
+            </tr>
+            <tr>
+              <td><code>radial_distance_norm</code></td>
+              <td><code>distance(centroid, wafer_center) / wafer_radius</code></td>
+              <td>描述 token 位于中心还是边缘；补足原先 <code>central</code> / <code>edge_ring</code> 标签中的位置信息。</td>
+            </tr>
+            <tr>
+              <td><code>angular_coverage</code></td>
+              <td>统计 token pixels 覆盖的角度 bin 数量，占全部角度 bin 的比例</td>
+              <td>描述区域沿圆周展开的范围；边缘弧状或环状 pattern 通常更高。</td>
+            </tr>
+            <tr>
+              <td><code>radial_std</code></td>
+              <td>计算 token pixels 到 wafer 中心归一化半径的标准差</td>
+              <td>描述区域是否集中在同一半径带；环边缘 pattern 通常更低。</td>
+            </tr>
+            <tr>
+              <td><code>radial_profile_4_bins</code></td>
+              <td>以 token 质心为原点，统计像素半径分布的 4-bin 直方图</td>
+              <td>描述 token 内部从中心到边界的填充分布。</td>
+            </tr>
+            <tr>
+              <td><code>angular_profile_4_bins</code></td>
+              <td>以 token 质心为原点，统计像素角度分布的 4-bin 直方图</td>
+              <td>描述 token 内部朝向分布；小图下使用低 bins 降低抖动。</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="muted">总维度：7 个标量特征 + 4-bin radial profile + 4-bin angular profile = 15。</p>
+      </div>
+    </section>
+
+    <section id="scoring" class="grid">
+      <div class="panel span-12">
+        <h2>Pair Scoring</h2>
+        <div class="formula">
+          <div class="formula-row">
+            <strong>Shape similarity</strong>
+            <code>shape_sim = max(dot(desc_wbm, desc_wdm), 0)</code>
+            <p class="muted">descriptor 已归一化，点积等价于 cosine-like shape similarity。</p>
+          </div>
+          <div class="formula-row">
+            <strong>Position affinity</strong>
+            <code>exp(-||pos_wbm - pos_wdm||^2 / sigma_pos^2)</code>
+            <p class="muted">区域质心越接近，得分越高。</p>
+          </div>
+          <div class="formula-row">
+            <strong>Scale affinity</strong>
+            <code>exp(-abs(log(area_ratio_wbm / area_ratio_wdm)) / sigma_scale)</code>
+            <p class="muted">区域相对面积越接近，得分越高。</p>
+          </div>
+          <div class="formula-row">
+            <strong>Final pair score</strong>
+            <code>score = shape_sim^2 * position_affinity * scale_affinity</code>
+            <p class="muted">
+              若 <code>shape_sim &lt; 0.45</code>，pair score 直接置 0。<code>geometry_type</code> 不再参与乘法打分。
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel span-12">
+        <h2>Token Evidence 与 Summary Score</h2>
+        <p>
+          系统先枚举所有 WBM token 与 WDM token 的 pair score。每个 WBM token 会保留
+          Top-K 个 WDM token 候选作为局部证据；整张 WDM map 也会保留全局最高分的
+          Top-K 个 token pair，便于查看最强局部匹配。
+        </p>
+        <div class="evidence-diagram" role="img" aria-label="Token evidence keeps top-k candidates per WBM token, while summary score uses one-to-one greedy accepted pairs.">
+          <svg viewBox="0 0 980 390" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrow-evidence" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+                <path d="M0,0 L10,4 L0,8 Z" fill="#16697a"/>
+              </marker>
+            </defs>
+
+            <text x="34" y="34" class="evidence-title">1. WBM token 逐个查询</text>
+            <text x="348" y="34" class="evidence-title">2. 保存每个 token 的 Top-K 候选</text>
+            <text x="718" y="34" class="evidence-title">3. 总分用一对一贪心</text>
+
+            <rect x="34" y="62" width="205" height="260" rx="8" fill="#f8fafc" stroke="#d8dee8"/>
+            <circle cx="86" cy="118" r="25" fill="#16697a"/>
+            <circle cx="86" cy="190" r="25" fill="#2f7d32"/>
+            <circle cx="86" cy="262" r="25" fill="#9a5b13"/>
+            <text x="78" y="123" fill="#fff" font-size="14" font-weight="800">W0</text>
+            <text x="78" y="195" fill="#fff" font-size="14" font-weight="800">W1</text>
+            <text x="78" y="267" fill="#fff" font-size="14" font-weight="800">W2</text>
+            <text x="126" y="122" class="evidence-label">fail blob</text>
+            <text x="126" y="194" class="evidence-label">edge arc</text>
+            <text x="126" y="266" class="evidence-label">small line</text>
+            <text x="56" y="350" class="evidence-small">WBM token 是计分单位</text>
+
+            <line x1="250" y1="118" x2="320" y2="118" stroke="#16697a" stroke-width="2" marker-end="url(#arrow-evidence)"/>
+            <line x1="250" y1="190" x2="320" y2="190" stroke="#16697a" stroke-width="2" marker-end="url(#arrow-evidence)"/>
+            <line x1="250" y1="262" x2="320" y2="262" stroke="#16697a" stroke-width="2" marker-end="url(#arrow-evidence)"/>
+
+            <rect x="330" y="62" width="315" height="260" rx="8" fill="#f8fafc" stroke="#d8dee8"/>
+
+            <rect x="356" y="88" width="250" height="52" rx="7" fill="#eef4f6" stroke="#b8c8d2"/>
+            <text x="374" y="110" class="evidence-label">W0 candidates</text>
+            <text x="374" y="130" class="evidence-small">rank1 D3 score .91   rank2 D1 score .77</text>
+
+            <rect x="356" y="164" width="250" height="52" rx="7" fill="#eef4f6" stroke="#b8c8d2"/>
+            <text x="374" y="186" class="evidence-label">W1 candidates</text>
+            <text x="374" y="206" class="evidence-small">rank1 D0 score .86   rank2 D3 score .72</text>
+
+            <rect x="356" y="240" width="250" height="52" rx="7" fill="#eef4f6" stroke="#b8c8d2"/>
+            <text x="374" y="262" class="evidence-label">W2 candidates</text>
+            <text x="374" y="282" class="evidence-small">rank1 D4 score .68   rank2 D2 score .51</text>
+
+            <text x="364" y="350" class="evidence-small">写入 token_match_topk.tsv：展示多个候选，不直接累加</text>
+
+            <line x1="655" y1="118" x2="710" y2="118" stroke="#16697a" stroke-width="2" marker-end="url(#arrow-evidence)"/>
+            <line x1="655" y1="190" x2="710" y2="190" stroke="#16697a" stroke-width="2" marker-end="url(#arrow-evidence)"/>
+            <line x1="655" y1="262" x2="710" y2="262" stroke="#16697a" stroke-width="2" marker-end="url(#arrow-evidence)"/>
+
+            <rect x="720" y="62" width="226" height="260" rx="8" fill="#f8fafc" stroke="#d8dee8"/>
+            <rect x="746" y="90" width="172" height="42" rx="7" fill="#f2f8f3" stroke="#9fc4a1"/>
+            <text x="764" y="116" class="evidence-label">accept W0 -> D3  .91</text>
+            <rect x="746" y="158" width="172" height="42" rx="7" fill="#f2f8f3" stroke="#9fc4a1"/>
+            <text x="764" y="184" class="evidence-label">accept W1 -> D0  .86</text>
+            <rect x="746" y="226" width="172" height="42" rx="7" fill="#f2f8f3" stroke="#9fc4a1"/>
+            <text x="764" y="252" class="evidence-label">accept W2 -> D4  .68</text>
+            <text x="746" y="294" class="evidence-small">final = weighted_mean(accepted)</text>
+
+            <path d="M356 336 H606" stroke="#9a5b13" stroke-width="2" stroke-dasharray="6 5"/>
+            <path d="M608 336 C682 336 695 336 744 314" fill="none" stroke="#9a5b13" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow-evidence)"/>
+            <text x="640" y="350" class="evidence-small">map_match_topk.tsv 另存整张 map 的最高分 pair</text>
+          </svg>
+        </div>
+        <pre><code>pairs = all positive token-pair scores
+sort pairs by score desc
+
+token_topk_matches =
+  for each wbm_token:
+    take top_k WDM candidates by pair score
+
+map_topk_matches =
+  take top_k token pairs over the whole WDM map
+
+accepted =
+  greedy_one_to_one(pairs sorted by score desc)
+
+final = weighted_mean(
+  greedy_accepted_score_for_each_wbm_token,
+  weight = sqrt(wbm_token.area)
+)</code></pre>
+        <p class="muted">
+          明细表中同一个 WBM token 可以出现多个 WDM 候选，但计算该 WDM map 的总分时，
+          会按 pair score 从高到低做一对一贪心匹配；每个 WBM token 和每个 WDM token 都最多使用一次。
+          没有被接受匹配的 WBM token 贡献 0 分。
+        </p>
+      </div>
+    </section>
+
+    <section id="improvements" class="grid">
+
+      <div class="panel span-12">
+        <h2>改进方向汇总</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>模块</th>
+              <th>当前问题</th>
+              <th>改进方向</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Proposal</td>
+              <td>过度依赖连通性，难以表达断裂、稀疏或人工关注的区域。</td>
+              <td>支持非连通 token、手动区域 proposal，以及面向 pattern 语义的区域生成。</td>
+            </tr>
+            <tr>
+              <td>Shape Descriptor</td>
+              <td>统计特征可解释但表达力有限，对旋转、稀疏点集和多片段关系不够稳定。</td>
+              <td>引入点集分布、组件关系、多尺度形状描述，增强对非连通 pattern 的表达。</td>
+            </tr>
+            <tr>
+              <td>Similarity</td>
+              <td>固定组合方式不能适配所有产品、分辨率和 pattern 类型。</td>
+              <td>让各分量影响可调整，并保留清晰的分项解释，便于分析排序变化。</td>
+            </tr>
+            <tr>
+              <td>Review</td>
+              <td>只看总分难以判断错误来自 proposal、descriptor 还是 similarity。</td>
+              <td>在可视化和日志中呈现 token 来源、形状描述、分项相似度和失败原因。</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="callout">
+          <strong>设计原则</strong>
+          <p>
+            Proposal 应尽量生成语义完整的 token；descriptor 负责描述 token 内部和片段间结构；
+            similarity 负责比较 token，而不是补救 proposal 阶段没有表达出来的模式。
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section id="small-map" class="grid">
+      <div class="panel span-12">
+        <h2>MxN 小图策略</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>配置项</th>
+              <th>MxN 实际值</th>
+              <th>原因</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>short_side</code></td>
+              <td><code>7</code></td>
+              <td>触发小尺寸分支。</td>
+            </tr>
+            <tr>
+              <td><code>min_area</code></td>
+              <td><code>min(user_min_area, 2)</code></td>
+              <td>小图中真实区域可能只有少量 cell，不能沿用大图面积阈值。</td>
+            </tr>
+            <tr>
+              <td><code>top_k</code></td>
+              <td><code>min(user_top_k, 4)</code></td>
+              <td>避免低分辨率图产生过多碎片 token。</td>
+            </tr>
+            <tr>
+              <td><code>connectivity</code></td>
+              <td><code>8</code></td>
+              <td>斜向相邻在小图中通常应视为同一区域。</td>
+            </tr>
+            <tr>
+              <td><code>descriptor_mode</code></td>
+              <td><code>coarse</code></td>
+              <td>去掉不稳定方向项，使用更粗 profile。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pseudocode" class="grid">
+      <div class="panel span-12">
+        <h2>端到端伪代码</h2>
+        <pre><code><span class="code-comment"># 1. 逐个处理候选 WDM KLARF 文件</span>
+for each KLARF candidate:
+
+  <span class="code-comment"># 2. 文件级过滤：缺陷总数太少时不做后续匹配</span>
+  if defect_count &lt; defect_threshold:
+    skip candidate
+
+  <span class="code-comment"># 3. 坐标映射：把 KLARF 缺陷点聚合到目标 WBM 的 MxN grid</span>
+  wdm_grid = map_klarf_to_grid(
+    shape = wbm.shape,
+    mapper = args.mapper,
+    representation = args.representation
+  )
+
+  <span class="code-comment"># 4. 构造参与 proposal 的 mask</span>
+  <span class="code-comment"># valid_mask: 只保留 WBM 晶圆内有效区域</span>
+  <span class="code-comment"># wbm_mask: 目标失效区域</span>
+  <span class="code-comment"># wdm_mask: 候选 WDM 映射后的有缺陷 cell</span>
+  valid_mask = wbm.status in {VALID_NO_DEFECT, VALID_HAS_DEFECT}
+  wbm_mask = wbm.status == VALID_HAS_DEFECT
+  wdm_mask = wdm_grid.count_map &gt; 0       <span class="code-comment"># count-partial</span>
+
+  <span class="code-comment"># 5. proposal 配置：MxN 会使用 coarse descriptor、top_k=4、min_area=2、connectivity=8</span>
+  config = proposal_config(
+    shape = wbm.shape,
+    connectivity = 8,
+    mode = cc or compact
+  )
+
+  <span class="code-comment"># 6. 提取 WBM / WDM token</span>
+  <span class="code-comment"># cc: 8 连通组件直接作为 token</span>
+  <span class="code-comment"># compact: 在 8 连通组件上做 gap grouping、ring-aware、fragment merge</span>
+  wbm_tokens = propose_tokens(wbm_mask, valid_mask, config)
+  wdm_tokens = propose_tokens(wdm_mask, valid_mask, config)
+
+  <span class="code-comment"># 7. 为每个 token 计算统计特征，并生成 coarse descriptor</span>
+  for each token:
+    stats = area + centroid + bbox + pca + radial/angular features
+    descriptor = normalize(continuous_shape_features)
+
+  <span class="code-comment"># 8. 枚举 WBM token 与 WDM token 的 pair score</span>
+  <span class="code-comment"># shape: descriptor 点积</span>
+  <span class="code-comment"># position: token 质心接近程度</span>
+  <span class="code-comment"># scale: token 相对面积接近程度</span>
+  pairs = []
+  for q in wbm_tokens:
+    for c in wdm_tokens:
+      shape = dot(q.descriptor, c.descriptor)
+      position = exp(-distance(q.pos, c.pos)^2 / sigma_pos^2)
+      scale = exp(-abs(log(q.area_ratio / c.area_ratio)) / sigma_scale)
+      pair_score = shape^2 * position * scale
+      pairs.append(pair_score)
+
+  <span class="code-comment"># 9. 保存 token-level evidence</span>
+  <span class="code-comment"># token_match_topk.tsv: 每个 WBM token 的 Top-K WDM 候选</span>
+  token_topk_matches = {}
+  for q in wbm_tokens:
+    token_topk_matches[q] = top_k(pairs where pair.wbm_token == q)
+
+  <span class="code-comment"># map_match_topk.tsv: 单张 WDM map 内最高分的 Top-K token pair</span>
+  map_topk_matches = top_k(pairs)
+
+  <span class="code-comment"># 10. 聚合总分：按 score 降序做一对一贪心，未匹配 WBM token 计 0 分</span>
+  accepted = []
+  used_wbm = set()
+  used_wdm = set()
+  for pair in sort_desc(pairs):
+    if pair.wbm_token not in used_wbm and pair.wdm_token not in used_wdm:
+      accepted.append(pair)
+      used_wbm.add(pair.wbm_token)
+      used_wdm.add(pair.wdm_token)
+  final_score = weighted_mean(accepted, weight=sqrt(wbm_token.area))</code></pre>
+      </div>
+    </section>
+
+    <p class="footer">
+      Source alignment: <code>match/core/local_matching/proposal.py</code>,
+      <code>descriptors.py</code>, and <code>scoring.py</code>.
+    </p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Tuple
+
+import numpy as np
+
+from ..core.pipeline import map_klarf_to_grid
+from ..data.fileio import load_defect_tables, save_grid_maps
+from ..core.similarity import compute_similarity
+from ..core.local_matching import explain_count_partial_match
+from ..core.classnumber_matching import classnumber_scores_dict, compute_classnumber_matches
+from .cli_args import SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, CLASSNUMBER_COLUMNS
+
+
+def process_one(
+    klarf_path: Path,
+    args,
+    shape: Tuple[int, int],
+    ref_gm: "GridMaps",
+) -> dict:
+    result: dict = {}
+
+    skip_reason = _check_defect_threshold(klarf_path, args)
+    if skip_reason is not None:
+        return skip_reason
+
+    grid_maps_or_error = _map_klarf_file(klarf_path, args, shape)
+    if "_status" in grid_maps_or_error:
+        return grid_maps_or_error
+    grid_maps = grid_maps_or_error["_grid_maps"]
+
+    result.update(_compute_similarity_scores(ref_gm, grid_maps))
+    result.update(_compute_count_partial_scores(ref_gm, grid_maps, args))
+    result.update(_compute_classnumber_scores(klarf_path, ref_gm, shape, args))
+    result.update(_attach_metadata(grid_maps, args))
+    result["_status"] = "OK"
+    return result
+
+
+def _check_defect_threshold(klarf_path: Path, args) -> dict | None:
+    if args.defect_threshold <= 0:
+        return None
+    try:
+        tables = load_defect_tables(klarf_path)
+        idx = args.defect_table_index
+        if idx >= len(tables) or len(tables[idx].rows) < args.defect_threshold:
+            actual = len(tables[idx].rows) if idx < len(tables) else 0
+            return {
+                "_status": "SKIPPED",
+                "_reason": f"defect count {actual} < {args.defect_threshold}",
+            }
+    except Exception as e:
+        return {"_status": "ERROR", "_reason": f"count check failed: {e}"}
+    return None
+
+
+def _map_klarf_file(klarf_path: Path, args, shape: Tuple[int, int]) -> dict:
+    try:
+        grid_maps = map_klarf_to_grid(
+            klarf_path,
+            shape=shape,
+            mapper_name=args.mapper,
+            representation_name=args.representation,
+            defect_table_index=args.defect_table_index,
+            die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
+            die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
+            die_defect_threshold=args.die_defect_threshold,
+        )
+    except ValueError as e:
+        msg = str(e)
+        if "Single-die wafer" in msg or "not supported" in msg:
+            return {"_status": "SKIPPED", "_reason": msg.split("\n")[0]}
+        return {"_status": "ERROR", "_reason": msg}
+    except Exception as e:
+        return {"_status": "ERROR", "_reason": f"{type(e).__name__}: {e}"}
+
+    if args.output_dir:
+        out_path = Path(args.output_dir) / f"{klarf_path.stem}.npz"
+        save_grid_maps(out_path, grid_maps)
+    return {"_grid_maps": grid_maps}
+
+
+def _compute_similarity_scores(ref_gm: "GridMaps", grid_maps: "GridMaps") -> dict:
+    result: dict = {}
+    for method in SIMILARITY_COLUMNS:
+        try:
+            result[method] = compute_similarity(
+                ref_gm.representation_map,
+                grid_maps.representation_map,
+                method=method,
+                reference_status=ref_gm.status_map,
+                candidate_status=grid_maps.status_map,
+            )
+        except Exception as e:
+            result[method] = f"ERR:{e}"
+    return result
+
+
+def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", args) -> dict:
+    try:
+        explanation = explain_count_partial_match(
+            ref_gm,
+            grid_maps,
+            min_area=args.count_partial_min_area,
+            top_k=args.count_partial_top_k_proposals,
+            token_match_top_k=args.count_partial_token_match_top_k,
+            map_match_top_k=args.count_partial_map_match_top_k,
+            proposal_mode=args.count_partial_proposal_mode,
+            rotation_tolerance=args.count_partial_rotation_tolerance,
+        )
+        partial = explanation["result"]
+        return {
+            "count-partial": partial.score,
+            "count-partial-shape": partial.mean_shape,
+            "count-partial-position": partial.mean_position,
+            "count-partial-scale": partial.mean_scale,
+            "count-partial-type": partial.mean_type,
+            "count-partial-tokens": partial,
+            "_token_topk_matches": explanation.get("token_topk_matches", []),
+            "_map_topk_matches": explanation.get("map_topk_matches", []),
+        }
+    except Exception as e:
+        return {col: f"ERR:{e}" for col in PARTIAL_MATCH_COLUMNS}
+
+
+def _compute_classnumber_scores(
+    klarf_path: Path,
+    ref_gm: "GridMaps",
+    shape: Tuple[int, int],
+    args,
+) -> dict:
+    if not args.use_classnumber:
+        return {}
+    try:
+        class_result = compute_classnumber_matches(
+            klarf_path,
+            reference=ref_gm,
+            shape=shape,
+            mapper_name=args.mapper,
+            representation_name=args.representation,
+            defect_table_index=args.defect_table_index,
+            die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
+            die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
+            min_area=args.count_partial_min_area,
+            top_k=args.count_partial_top_k_proposals,
+            match_mode=args.classnumber_match_mode,
+            rank_by=args.classnumber_rank_by,
+            binary_dilation=args.classnumber_binary_dilation,
+            binary_beta=args.classnumber_binary_beta,
+            die_defect_threshold=args.die_defect_threshold,
+            proposal_mode=args.count_partial_proposal_mode,
+            rotation_tolerance=args.count_partial_rotation_tolerance,
+        )
+        result = classnumber_scores_dict(class_result)
+        if args.save_classnumber_figures:
+            result["_classnumber_result"] = class_result
+        return result
+    except Exception as e:
+        return {col: f"ERR:{e}" for col in CLASSNUMBER_COLUMNS}
+
+
+def _attach_metadata(grid_maps: "GridMaps", args) -> dict:
+    result = {
+        "_mapped": grid_maps.metadata.get("mapped_defects", 0),
+        "_input": grid_maps.metadata.get("input_defects", 0),
+        "_die_defect_threshold": grid_maps.metadata.get("die_defect_threshold", args.die_defect_threshold),
+    }
+    if args.save_count_partial_figures or args.save_classnumber_figures:
+        result["_grid_maps"] = grid_maps
+    return result

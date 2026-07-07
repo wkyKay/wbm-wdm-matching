@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="430" viewBox="0 0 1080 430" role="img" aria-labelledby="title desc">
+  <title id="title">Pair scoring and one-to-one matching example</title>
+  <desc id="desc">WBM tokens and WDM tokens are scored by shape, position, and scale, then selected by one-to-one greedy matching.</desc>
+  <style>
+    .bg{fill:#f8fafc}.panel{fill:#fff;stroke:#d8dee8;stroke-width:1.2}.box{fill:#fbfcfd;stroke:#d8dee8;stroke-width:1.2}.pill{fill:#fff;stroke:#d8dee8;stroke-width:1}.title{font:700 22px Inter,Arial,sans-serif;fill:#1f2933}.label{font:700 15px Inter,Arial,sans-serif;fill:#1f2933}.small{font:500 12px Inter,Arial,sans-serif;fill:#617083}.formula{font:600 14px Inter,Arial,sans-serif;fill:#16697a}.tokenA{fill:#16697a}.tokenB{fill:#2f7d32}.tokenC{fill:#9a5b13}.tokenD{fill:#d3422f}.line{stroke:#9ca3af;stroke-width:2;fill:none}.match{stroke:#2f7d32;stroke-width:4;fill:none;opacity:.72}.reject{stroke:#d3422f;stroke-width:2;stroke-dasharray:5 5;fill:none;opacity:.72}.score{font:700 13px Inter,Arial,sans-serif;fill:#1f2933}
+  </style>
+  <rect class="bg" width="1080" height="430"/>
+  <rect class="panel" x="28" y="28" width="1024" height="374" rx="10"/>
+  <text class="title" x="54" y="70">Step 3 · Pair scoring 与 one-to-one match</text>
+  <rect class="box" x="64" y="110" width="230" height="230" rx="10"/>
+  <rect class="box" x="786" y="110" width="230" height="230" rx="10"/>
+  <text class="label" x="92" y="142">WBM tokens</text>
+  <text class="label" x="814" y="142">WDM tokens</text>
+  <circle class="tokenA" cx="132" cy="202" r="30"/><text class="score" x="124" y="207" fill="#fff">Q1</text>
+  <rect class="tokenB" x="170" y="260" width="58" height="38" rx="10"/><text class="score" x="190" y="284" fill="#fff">Q2</text>
+  <circle class="tokenA" cx="860" cy="198" r="28"/><text class="score" x="852" y="203" fill="#fff">C1</text>
+  <rect class="tokenB" x="890" y="258" width="62" height="40" rx="10"/><text class="score" x="912" y="283" fill="#fff">C2</text>
+  <rect class="tokenD" x="835" y="270" width="32" height="32" rx="8"/><text class="score" x="844" y="291" fill="#fff">C3</text>
+  <path class="match" d="M162 202 C390 128 610 128 832 198"/>
+  <path class="match" d="M228 279 C410 338 650 338 890 278"/>
+  <path class="reject" d="M132 232 C370 310 620 316 835 286"/>
+  <rect class="pill" x="462" y="111" width="116" height="24" rx="12"/>
+  <text class="score" x="480" y="128">Q1-C1: 0.91</text>
+  <rect class="pill" x="462" y="272" width="216" height="24" rx="12"/>
+  <text class="small" x="478" y="289">Q1-C3 rejected: Q1 already used</text>
+  <rect class="pill" x="462" y="371" width="116" height="24" rx="12"/>
+  <text class="score" x="480" y="388">Q2-C2: 0.82</text>
+  <rect class="box" x="365" y="168" width="350" height="100" rx="10"/>
+  <text class="formula" x="392" y="204">pair_score = shape² × position × scale</text>
+  <text class="small" x="392" y="232">shape = descriptor dot product</text>
+  <text class="small" x="392" y="252">position = centroid affinity, scale = area-ratio affinity</text>
+  <rect class="box" x="365" y="296" width="350" height="72" rx="10"/>
+  <text class="formula" x="392" y="323">final = weighted mean over WBM tokens</text>
+  <text class="small" x="392" y="344">weight = sqrt(WBM token area)</text>
+  <text class="small" x="392" y="360">unmatched WBM token contributes 0</text>
+</svg>

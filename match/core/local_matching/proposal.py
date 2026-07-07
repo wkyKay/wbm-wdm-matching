@@ -1,251 +1,12 @@
-# Local partial matching between WBM failure tokens and WDM count-map evidence tokens.
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, List
 
 import numpy as np
 
-from .models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
-
-
-GEOMETRY_TYPES = ["blob", "line", "edge_ring", "central", "irregular"]
-MIN_SHAPE_SIM_FOR_MATCH = 0.45
-SHAPE_SCORE_POWER = 2.0
-
-
-@dataclass(frozen=True)
-class LocalMatchResult:
-    score: float
-    mean_shape: float
-    mean_position: float
-    mean_scale: float
-    mean_type: float
-    matched_tokens: int
-    wbm_tokens: int
-    wdm_tokens: int
-
-
-@dataclass(frozen=True)
-class ProposalConfig:
-    min_area: int
-    top_k: int
-    connectivity: int
-    descriptor_mode: str
-    proposal_mode: str
-    rotation_tolerance: bool
-
-
-def compute_count_partial_match(
-    reference: GridMaps,
-    candidate: GridMaps,
-    min_area: int = 5,
-    top_k: int = 6,
-    sigma_pos: float = 0.35,
-    sigma_scale: float = 1.5,
-    proposal_mode: str = "cc",
-    rotation_tolerance: bool = False,
-) -> LocalMatchResult:
-    """Score how well a WDM count map explains local WBM failure tokens.
-
-    WBM tokens are extracted from the reference status map. WDM tokens are
-    extracted from candidate.count_map and keep count values as weights.
-    """
-    explanation = explain_count_partial_match(
-        reference,
-        candidate,
-        min_area=min_area,
-        top_k=top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
-    )
-    return explanation["result"]
-
-
-def compute_binary_partial_match(
-    reference: GridMaps,
-    candidate: GridMaps,
-    min_area: int = 5,
-    top_k: int = 6,
-    sigma_pos: float = 0.35,
-    sigma_scale: float = 1.5,
-    proposal_mode: str = "cc",
-    rotation_tolerance: bool = False,
-) -> LocalMatchResult:
-    """Score a WDM binary map with the same token logic as count-partial.
-
-    WDM tokens are extracted from candidate.binary_map and use unit weights,
-    so shape, position, scale, and type matching are shared with count-partial
-    without count-intensity weighting.
-    """
-    explanation = explain_binary_partial_match(
-        reference,
-        candidate,
-        min_area=min_area,
-        top_k=top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
-    )
-    return explanation["result"]
-
-
-def explain_count_partial_match(
-    reference: GridMaps,
-    candidate: GridMaps,
-    min_area: int = 5,
-    top_k: int = 6,
-    sigma_pos: float = 0.35,
-    sigma_scale: float = 1.5,
-    proposal_mode: str = "cc",
-    rotation_tolerance: bool = False,
-) -> Dict:
-    """Return local matching score plus tokens and best token-pair details."""
-    valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
-    wbm_mask = reference.status_map == VALID_HAS_DEFECT
-    wdm_count = np.where(valid_mask, candidate.count_map, 0).astype(np.float32)
-    wdm_mask = wdm_count > 0
-
-    return _explain_local_partial_match(
-        reference=reference,
-        wbm_mask=wbm_mask & valid_mask,
-        wdm_mask=wdm_mask & valid_mask,
-        wdm_weight_map=wdm_count,
-        valid_mask=valid_mask,
-        min_area=min_area,
-        top_k=top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
-    )
-
-
-def explain_binary_partial_match(
-    reference: GridMaps,
-    candidate: GridMaps,
-    min_area: int = 5,
-    top_k: int = 6,
-    sigma_pos: float = 0.35,
-    sigma_scale: float = 1.5,
-    proposal_mode: str = "cc",
-    rotation_tolerance: bool = False,
-) -> Dict:
-    """Return binary-map token matching score plus token-pair details."""
-    valid_mask = (reference.status_map == VALID_NO_DEFECT) | (reference.status_map == VALID_HAS_DEFECT)
-    wbm_mask = reference.status_map == VALID_HAS_DEFECT
-    wdm_mask = (candidate.binary_map > 0) & valid_mask
-    wdm_weight_map = wdm_mask.astype(np.float32)
-
-    return _explain_local_partial_match(
-        reference=reference,
-        wbm_mask=wbm_mask & valid_mask,
-        wdm_mask=wdm_mask,
-        wdm_weight_map=wdm_weight_map,
-        valid_mask=valid_mask,
-        min_area=min_area,
-        top_k=top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
-    )
-
-
-def _explain_local_partial_match(
-    reference: GridMaps,
-    wbm_mask: np.ndarray,
-    wdm_mask: np.ndarray,
-    wdm_weight_map: np.ndarray,
-    valid_mask: np.ndarray,
-    min_area: int,
-    top_k: int,
-    sigma_pos: float,
-    sigma_scale: float,
-    proposal_mode: str,
-    rotation_tolerance: bool,
-) -> Dict:
-    proposal_config = _proposal_config(
-        reference.status_map.shape,
-        int(valid_mask.sum()),
-        min_area,
-        top_k,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
-    )
-    wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
-    wdm_tokens = _tokens_from_weighted_mask(
-        wdm_mask & valid_mask,
-        valid_mask,
-        wdm_weight_map.astype(np.float32),
-        proposal_config=proposal_config,
-    )
-
-    if not wbm_tokens or not wdm_tokens:
-        return {
-            "result": LocalMatchResult(
-                score=0.0,
-                mean_shape=0.0,
-                mean_position=0.0,
-                mean_scale=0.0,
-                mean_type=0.0,
-                matched_tokens=0,
-                wbm_tokens=len(wbm_tokens),
-                wdm_tokens=len(wdm_tokens),
-            ),
-            "wbm_tokens": wbm_tokens,
-            "wdm_tokens": wdm_tokens,
-            "matches": [],
-        }
-
-    weighted_scores = []
-    weights = []
-    best_components = []
-    matches = []
-    for query_id, qt in enumerate(wbm_tokens):
-        pairs = []
-        for candidate_id, ct in enumerate(wdm_tokens):
-            comp = _token_match_components(qt, ct, sigma_pos=sigma_pos, sigma_scale=sigma_scale)
-            pairs.append((candidate_id, ct, comp))
-        candidate_id, ct, best = max(pairs, key=lambda item: item[2]["score"])
-        weight = float(np.sqrt(max(qt["area"], 1.0)))
-        weighted_scores.append(best["score"] * weight)
-        weights.append(weight)
-        best_components.append(best)
-        matches.append({
-            "query_token_id": query_id,
-            "candidate_token_id": candidate_id,
-            "query_token": qt,
-            "candidate_token": ct,
-            **best,
-        })
-
-    score = float(np.sum(weighted_scores) / max(np.sum(weights), 1e-6))
-    comp_weights = np.asarray(weights, dtype=np.float32)
-
-    def _weighted_mean(name: str) -> float:
-        vals = np.asarray([c[name] for c in best_components], dtype=np.float32)
-        return float((vals * comp_weights).sum() / max(comp_weights.sum(), 1e-6))
-
-    result = LocalMatchResult(
-        score=score,
-        mean_shape=_weighted_mean("shape_sim"),
-        mean_position=_weighted_mean("position_affinity"),
-        mean_scale=_weighted_mean("scale_affinity"),
-        mean_type=_weighted_mean("type_affinity"),
-        matched_tokens=len(best_components),
-        wbm_tokens=len(wbm_tokens),
-        wdm_tokens=len(wdm_tokens),
-    )
-    return {
-        "result": result,
-        "wbm_tokens": wbm_tokens,
-        "wdm_tokens": wdm_tokens,
-        "matches": matches,
-    }
+from .models import ProposalConfig
+from .morphology import (_binary_closing_square, _connected_components, _perimeter,)
+from .descriptors import _classify_token, _shape_descriptor
 
 
 def _tokens_from_mask(mask: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
@@ -386,7 +147,6 @@ def _compact_tokens(
     proposal_config: ProposalConfig,
     source: str,
 ) -> List[Dict]:
-    """Conservative compact proposal for count-partial production maps."""
     if not tokens:
         return tokens
     compacted = list(tokens)
@@ -453,41 +213,6 @@ def _apply_gap_aware_grouping(
         grouped_tokens.append(token)
 
     return grouped_tokens if grouped_tokens else tokens
-
-
-def _binary_closing_square(mask: np.ndarray) -> np.ndarray:
-    dilated = _binary_dilation_square(mask)
-    return _binary_erosion_square(dilated)
-
-
-def _binary_dilation_square(mask: np.ndarray) -> np.ndarray:
-    padded = np.pad(mask, 1, mode="constant", constant_values=False)
-    return (
-        padded[1:-1, 1:-1]
-        | padded[:-2, 1:-1]
-        | padded[2:, 1:-1]
-        | padded[1:-1, :-2]
-        | padded[1:-1, 2:]
-        | padded[:-2, :-2]
-        | padded[:-2, 2:]
-        | padded[2:, :-2]
-        | padded[2:, 2:]
-    )
-
-
-def _binary_erosion_square(mask: np.ndarray) -> np.ndarray:
-    padded = np.pad(mask, 1, mode="constant", constant_values=False)
-    return (
-        padded[1:-1, 1:-1]
-        & padded[:-2, 1:-1]
-        & padded[2:, 1:-1]
-        & padded[1:-1, :-2]
-        & padded[1:-1, 2:]
-        & padded[:-2, :-2]
-        & padded[:-2, 2:]
-        & padded[2:, :-2]
-        & padded[2:, 2:]
-    )
 
 
 def _apply_ring_aware_token(
@@ -727,7 +452,6 @@ def _proposal_config(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
 ) -> ProposalConfig:
-    """Adapt proposal extraction to WBM resolution while honoring stricter caller limits."""
     proposal_mode = proposal_mode.lower().strip()
     if proposal_mode not in {"cc", "compact"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
@@ -737,161 +461,24 @@ def _proposal_config(
     if short_side <= 12:
         adaptive_min_area = 2
         adaptive_top_k = 4
-        connectivity = 4
         descriptor_mode = "coarse"
     elif short_side <= 25:
         adaptive_min_area = max(3, int(round(valid_area * 0.01)))
         adaptive_top_k = 6
-        connectivity = 8
         descriptor_mode = "normal"
     else:
         adaptive_min_area = max(5, int(round(valid_area * 0.005)))
         adaptive_top_k = 8
-        connectivity = 8
         descriptor_mode = "normal"
-
-    if proposal_mode == "cc":
-        connectivity = 8
 
     return ProposalConfig(
         min_area=max(1, min(int(min_area), adaptive_min_area)),
         top_k=max(1, min(int(top_k), adaptive_top_k)),
-        connectivity=connectivity,
+        connectivity=8,
         descriptor_mode=descriptor_mode,
         proposal_mode=proposal_mode,
         rotation_tolerance=bool(rotation_tolerance),
     )
-
-
-def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False) -> np.ndarray:
-    bbox_h = float(token.get("bbox_height", 1))
-    bbox_w = float(token.get("bbox_width", 1))
-    area = float(token.get("area", 0))
-    bbox_area = max(bbox_h * bbox_w, 1.0)
-    fill_ratio = area / bbox_area
-    aspect = max(bbox_h / max(bbox_w, 1.0), bbox_w / max(bbox_h, 1.0))
-    elongation = float(token.get("pca_lambda1", 0.0)) / max(float(token.get("pca_lambda2", 0.0)), 1e-6)
-    compactness = float(token.get("compactness", 0.0))
-    orientation = float(token.get("orientation", 0.0))
-
-    if rotation_tolerance:
-        bins = 4 if mode == "coarse" else 8
-        features = np.array([
-            fill_ratio,
-            np.log1p(aspect) / np.log(16.0),
-            np.log1p(elongation) / np.log(64.0),
-            min(compactness / 4.0, 1.0),
-            float(token.get("angular_coverage", 0.0)),
-            float(token.get("radial_std", 0.0)),
-        ], dtype=np.float32)
-        desc = np.concatenate([features, _radial_profile(token, map_shape, bins=bins)]).astype(np.float32)
-    elif mode == "coarse":
-        features = np.array([
-            fill_ratio,
-            np.log1p(aspect) / np.log(16.0),
-            np.log1p(elongation) / np.log(64.0),
-            min(compactness / 4.0, 1.0),
-            float(token.get("radial_distance_norm", 0.0)),
-            float(token.get("angular_coverage", 0.0)),
-            float(token.get("radial_std", 0.0)),
-        ], dtype=np.float32)
-        desc = np.concatenate([features, _shape_profiles(token, map_shape, bins=4)]).astype(np.float32)
-    else:
-        features = np.array([
-        fill_ratio,
-        np.log1p(aspect) / np.log(16.0),
-        np.log1p(elongation) / np.log(64.0),
-        min(compactness / 4.0, 1.0),
-        np.cos(np.deg2rad(orientation)),
-        np.sin(np.deg2rad(orientation)),
-        float(token.get("angular_coverage", 0.0)),
-        float(token.get("radial_std", 0.0)),
-        ], dtype=np.float32)
-        desc = np.concatenate([features, _shape_profiles(token, map_shape, bins=8)]).astype(np.float32)
-    norm = float(np.linalg.norm(desc))
-    if norm > 1e-8:
-        desc /= norm
-    return desc
-
-
-def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigma_scale: float) -> Dict:
-    shape_sim = max(float(np.dot(query["descriptor"], candidate["descriptor"])), 0.0)
-    pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
-    position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
-    q_scale = max(float(query.get("support_area_ratio", 0.0)), 1e-12)
-    c_scale = max(float(candidate.get("support_area_ratio", 0.0)), 1e-12)
-    scale_affinity = float(np.exp(-abs(np.log(q_scale / c_scale)) / max(sigma_scale, 1e-6)))
-    type_affinity = _type_affinity(query["geometry_type"], candidate["geometry_type"])
-    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH:
-        score = 0.0
-    else:
-        # Small WBM grids make position easy to over-reward, so shape is used as a gate
-        # and then sharpened in the final product. Type remains a soft penalty.
-        score = (shape_sim**SHAPE_SCORE_POWER) * position_affinity * scale_affinity * type_affinity
-    return {
-        "score": float(score),
-        "shape_sim": shape_sim,
-        "position_affinity": position_affinity,
-        "scale_affinity": scale_affinity,
-        "type_affinity": type_affinity,
-    }
-
-
-def _classify_token(token: Dict) -> str:
-    if (
-        token.get("radial_distance_norm", 0.0) >= 0.65
-        and token.get("angular_coverage", 0.0) >= 0.16
-        and token.get("radial_std", 1.0) <= 0.14
-    ):
-        return "edge_ring"
-
-    area = max(token.get("area", 1), 1)
-    bbox_area = max(token.get("bbox_height", 1) * token.get("bbox_width", 1), 1)
-    fill_ratio = area / bbox_area
-    elongation = token.get("pca_lambda1", 0.0) / max(token.get("pca_lambda2", 0.0), 1e-6)
-    aspect = max(
-        token.get("bbox_height", 1) / max(token.get("bbox_width", 1), 1),
-        token.get("bbox_width", 1) / max(token.get("bbox_height", 1), 1),
-    )
-    if elongation >= 6.0 or aspect >= 4.0:
-        return "line"
-    if fill_ratio >= 0.45 and token.get("compactness", 0.0) <= 1.6:
-        return "blob"
-    if token.get("radial_distance_norm", 1.0) <= 0.35:
-        return "central"
-    return "irregular"
-
-
-def _shape_profiles(token: Dict, map_shape, bins: int) -> np.ndarray:
-    pixels = np.asarray(token.get("pixels", []), dtype=np.float32)
-    if len(pixels) == 0:
-        return np.zeros(bins * 2, dtype=np.float32)
-    h, w = map_shape
-    center = np.array([token.get("centroid_row", h / 2.0), token.get("centroid_col", w / 2.0)], dtype=np.float32)
-    rel = pixels - center
-    radius = np.linalg.norm(rel, axis=1)
-    radius = radius / max(float(radius.max()), 1.0)
-    radial_hist, _ = np.histogram(radius, bins=bins, range=(0.0, 1.0))
-    theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
-    theta_hist, _ = np.histogram(theta, bins=bins, range=(0.0, 360.0))
-    profile = np.concatenate([radial_hist, theta_hist]).astype(np.float32)
-    profile /= max(float(profile.sum()), 1.0)
-    return profile
-
-
-def _radial_profile(token: Dict, map_shape, bins: int) -> np.ndarray:
-    pixels = np.asarray(token.get("pixels", []), dtype=np.float32)
-    if len(pixels) == 0:
-        return np.zeros(bins, dtype=np.float32)
-    h, w = map_shape
-    center = np.array([token.get("centroid_row", h / 2.0), token.get("centroid_col", w / 2.0)], dtype=np.float32)
-    rel = pixels - center
-    radius = np.linalg.norm(rel, axis=1)
-    radius = radius / max(float(radius.max()), 1.0)
-    radial_hist, _ = np.histogram(radius, bins=bins, range=(0.0, 1.0))
-    profile = radial_hist.astype(np.float32)
-    profile /= max(float(profile.sum()), 1.0)
-    return profile
 
 
 def _token_importance(token: Dict) -> float:
@@ -905,56 +492,3 @@ def _token_importance(token: Dict) -> float:
         "irregular": 0.8,
     }.get(token.get("geometry_type"), 0.8)
     return float(np.sqrt(max(mass, 0.0)) + 0.25 * np.sqrt(max(area, 0.0)) + type_bonus)
-
-
-def _type_affinity(a: str, b: str) -> float:
-    if a == b:
-        return 1.0
-    compatible = {
-        ("line", "irregular"),
-        ("blob", "irregular"),
-        ("central", "blob"),
-    }
-    if (a, b) in compatible or (b, a) in compatible:
-        return 0.6
-    return 0.25
-
-
-def _perimeter(rows: np.ndarray, cols: np.ndarray) -> int:
-    pixel_set = set((int(r), int(c)) for r, c in zip(rows, cols))
-    perimeter = 0
-    for r, c in pixel_set:
-        for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
-            if (r + dr, c + dc) not in pixel_set:
-                perimeter += 1
-    return perimeter
-
-
-def _connected_components(mask: np.ndarray, connectivity: int = 8) -> List[np.ndarray]:
-    h, w = mask.shape
-    visited = np.zeros_like(mask, dtype=bool)
-    components = []
-    if connectivity == 4:
-        neighbors = [(-1, 0), (0, -1), (0, 1), (1, 0)]
-    elif connectivity == 8:
-        neighbors = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-    else:
-        raise ValueError(f"Unsupported connectivity: {connectivity}")
-
-    for row in range(h):
-        for col in range(w):
-            if not mask[row, col] or visited[row, col]:
-                continue
-            queue = [(row, col)]
-            visited[row, col] = True
-            comp = []
-            while queue:
-                r, c = queue.pop(0)
-                comp.append((r, c))
-                for dr, dc in neighbors:
-                    nr, nc = r + dr, c + dc
-                    if 0 <= nr < h and 0 <= nc < w and mask[nr, nc] and not visited[nr, nc]:
-                        visited[nr, nc] = True
-                        queue.append((nr, nc))
-            components.append(np.asarray(comp, dtype=np.int64))
-    return components
