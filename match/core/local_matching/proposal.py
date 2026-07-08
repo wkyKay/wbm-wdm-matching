@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
 from .models import ProposalConfig
-from .morphology import (_binary_closing_square, _connected_components, _perimeter,)
+from .morphology import (_connected_components, _perimeter,)
 from .descriptors import _classify_token, _shape_descriptor
 
 
@@ -36,6 +36,12 @@ def _tokens_from_components(
     source: str,
 ) -> List[Dict]:
     h, w = mask.shape
+    if proposal_config.proposal_mode == "compact":
+        tokens = _retrieval_compact_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
+        for token in tokens:
+            _finalize_token(token, (h, w), proposal_config)
+        return tokens
+
     tokens = []
     total_mass = float(weight_map[mask].sum())
     for comp in _connected_components(mask, connectivity=proposal_config.connectivity):
@@ -44,15 +50,8 @@ def _tokens_from_components(
         token = _token_stats(comp, weight_map, valid_mask, total_mass=total_mass, source=source)
         tokens.append(token)
 
-    if proposal_config.proposal_mode == "compact":
-        tokens = _compact_tokens(tokens, weight_map, valid_mask, proposal_config, source=source)
-
     tokens.sort(key=_token_importance, reverse=True)
-    tokens = (
-        _select_diverse_tokens(tokens, proposal_config.top_k)
-        if proposal_config.proposal_mode == "compact"
-        else tokens[:proposal_config.top_k]
-    )
+    tokens = tokens[:proposal_config.top_k]
     for token in tokens:
         _finalize_token(token, (h, w), proposal_config)
     return tokens
@@ -140,291 +139,264 @@ def _token_stats(
     return token
 
 
-def _compact_tokens(
-    tokens: List[Dict],
-    weight_map: np.ndarray,
-    valid_mask: np.ndarray,
-    proposal_config: ProposalConfig,
-    source: str,
-) -> List[Dict]:
-    if not tokens:
-        return tokens
-    compacted = list(tokens)
-    compacted = _apply_gap_aware_grouping(compacted, weight_map, valid_mask, proposal_config, source)
-    compacted = _apply_ring_aware_token(compacted, weight_map, valid_mask, proposal_config, source)
-    compacted = _merge_geometry_fragments(compacted, weight_map, valid_mask, proposal_config, source)
-    return compacted
-
-
-def _apply_gap_aware_grouping(
-    tokens: List[Dict],
+def _retrieval_compact_tokens(
+    mask: np.ndarray,
     weight_map: np.ndarray,
     valid_mask: np.ndarray,
     proposal_config: ProposalConfig,
     source: str,
 ) -> List[Dict]:
     h, w = weight_map.shape
-    short_side = min(h, w)
-    if short_side > 25:
-        return tokens
+    original = mask & valid_mask
+    denoised = np.zeros_like(original, dtype=bool)
+    for comp in _connected_components(original, connectivity=proposal_config.connectivity):
+        if len(comp) >= proposal_config.min_area:
+            denoised[comp[:, 0].astype(int), comp[:, 1].astype(int)] = True
 
-    original = (weight_map > 0) & valid_mask
-    if int(original.sum()) < proposal_config.min_area:
-        return tokens
-
-    grouped_mask = _binary_closing_square(original) & valid_mask
-    groups = _connected_components(grouped_mask, connectivity=proposal_config.connectivity)
-    max_virtual_gap_ratio = 0.75 if short_side <= 12 else 0.45
-    total_mass = float(weight_map[original].sum())
-    grouped_tokens = []
-    used_pixels = set()
-
-    for group in groups:
-        group_mask = np.zeros((h, w), dtype=bool)
-        group_mask[group[:, 0], group[:, 1]] = True
-        original_pixels = np.argwhere(original & group_mask).astype(np.int64)
-        if len(original_pixels) < proposal_config.min_area:
-            continue
-        virtual_gap_area = int(group_mask.sum() - len(original_pixels))
-        virtual_gap_ratio = virtual_gap_area / max(len(original_pixels), 1)
-        if virtual_gap_ratio > max_virtual_gap_ratio:
-            continue
-
-        token = _token_stats(
-            original_pixels,
-            weight_map,
-            valid_mask,
-            total_mass=total_mass,
-            source=source,
-        )
-        token.update(
-            proposal_source="compact_gap_grouping",
-            grouping_area=int(group_mask.sum()),
-            virtual_gap_area=virtual_gap_area,
-            virtual_gap_ratio=float(virtual_gap_ratio),
-        )
-        grouped_tokens.append(token)
-        used_pixels.update((int(r), int(c)) for r, c in original_pixels)
-
-    for token in tokens:
-        token_pixels = set((int(r), int(c)) for r, c in token.get("pixels", []))
-        if not token_pixels or token_pixels.issubset(used_pixels):
-            continue
-        grouped_tokens.append(token)
-
-    return grouped_tokens if grouped_tokens else tokens
+    ring_token, ring_mask, _ = _extract_retrieval_ring_token(
+        denoised,
+        weight_map,
+        valid_mask=valid_mask,
+        source=source,
+    )
+    residual = denoised & (~ring_mask)
+    component_tokens = _retrieval_component_tokens(
+        residual,
+        weight_map,
+        valid_mask,
+        min_area=proposal_config.min_area,
+        source=source,
+    )
+    return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k)
 
 
-def _apply_ring_aware_token(
-    tokens: List[Dict],
+def _extract_retrieval_ring_token(
+    mask: np.ndarray,
     weight_map: np.ndarray,
-    valid_mask: np.ndarray,
-    proposal_config: ProposalConfig,
+    valid_mask: Optional[np.ndarray],
     source: str,
-) -> List[Dict]:
-    h, w = weight_map.shape
-    short_side = min(h, w)
-    edge_r_min = 0.50 if short_side <= 12 else 0.65
-    min_edge_fraction = 0.30 if short_side <= 12 else 0.35
-    radial_bins = 4 if short_side <= 12 else (8 if short_side < 26 else 12)
-    angular_bins = 12 if short_side <= 12 else (36 if short_side < 26 else 72)
-    band_width = 0.24 if short_side <= 12 else (0.14 if short_side < 26 else 0.10)
-    max_radial_std = 0.22 if short_side <= 12 else 0.16
-    min_angular_coverage = 0.14 if short_side <= 12 else 0.16
-    min_ring_points = max(proposal_config.min_area, 3 if short_side <= 12 else 6)
-    max_defect_ratio_for_ring = 0.45 if short_side <= 12 else 0.35
-
-    mask = (weight_map > 0) & valid_mask
-    points = np.argwhere(mask)
-    if len(points) < min_ring_points:
-        return tokens
-    defect_ratio = float(len(points) / max(int(valid_mask.sum()), 1))
-    if defect_ratio > max_defect_ratio_for_ring:
-        return tokens
+    min_area: int = 12,
+    edge_r_min: float = 0.65,
+    band_width: float = 0.10,
+    min_angular_coverage: float = 0.16,
+    min_ring_area_ratio: float = 0.12,
+    max_radial_std: float = 0.12,
+    max_defect_ratio: float = 0.45,
+    min_edge_defect_fraction: float = 0.45,
+) -> Tuple[Optional[Dict], np.ndarray, Dict]:
+    h, w = mask.shape
+    ring_mask = np.zeros_like(mask, dtype=bool)
+    points = np.argwhere(mask).astype(np.float32)
+    debug = {"accepted": False, "reason": "no_points", "candidate_area": 0, "angular_coverage": 0.0}
+    if len(points) < min_area:
+        return None, ring_mask, debug
 
     center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
-    valid_points = np.argwhere(valid_mask).astype(np.float32)
-    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else float(np.linalg.norm(center))
+    if valid_mask is not None and valid_mask.any():
+        valid_points = np.argwhere(valid_mask).astype(np.float32)
+        radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max())
+        valid_area = int(valid_mask.sum())
+    else:
+        radius_ref = float(max(np.linalg.norm(points - center, axis=1).max(), 1.0))
+        valid_area = h * w
     if radius_ref <= 1e-6:
-        return tokens
+        debug["reason"] = "bad_radius"
+        return None, ring_mask, debug
 
-    rel = points.astype(np.float32) - center
+    rel = points - center
     radial = np.linalg.norm(rel, axis=1) / radius_ref
+    defect_ratio = float(len(points) / max(valid_area, 1))
     edge_keep = radial >= edge_r_min
     edge_fraction = float(edge_keep.sum() / max(len(points), 1))
-    if edge_fraction < min_edge_fraction:
-        return tokens
+    debug.update(defect_ratio=defect_ratio, edge_fraction=edge_fraction)
+    if defect_ratio > max_defect_ratio:
+        debug["reason"] = "skip_high_defect_ratio"
+        return None, ring_mask, debug
+    if edge_fraction < min_edge_defect_fraction:
+        debug["reason"] = "skip_low_edge_fraction"
+        return None, ring_mask, debug
 
     edge_points = points[edge_keep]
     edge_radial = radial[edge_keep]
-    hist, edges = np.histogram(edge_radial, bins=radial_bins, range=(edge_r_min, 1.05))
-    if hist.max() < min_ring_points:
-        return tokens
+    if len(edge_points) < min_area:
+        debug.update(reason="too_few_edge_points", candidate_area=int(len(edge_points)))
+        return None, ring_mask, debug
 
+    hist, edges = np.histogram(edge_radial, bins=12, range=(edge_r_min, 1.05))
     peak = int(hist.argmax())
     band_center = float((edges[peak] + edges[peak + 1]) / 2.0)
     band_keep = np.abs(edge_radial - band_center) <= band_width
     ring_points = edge_points[band_keep]
-    if len(ring_points) < min_ring_points:
-        return tokens
+    ring_radial = edge_radial[band_keep]
 
     theta = (np.degrees(np.arctan2(ring_points[:, 0] - center[0], ring_points[:, 1] - center[1])) + 360.0) % 360.0
-    occupied = np.unique(np.floor(theta / (360.0 / angular_bins)).astype(np.int64)) if len(theta) else []
+    angular_bins = 72
+    occupied = np.unique(np.floor(theta / (360.0 / angular_bins)).astype(int)) if len(theta) else []
     angular_coverage = float(len(occupied) / angular_bins)
-    radial_std = float(radial[edge_keep][band_keep].std()) if len(ring_points) else 0.0
-    if angular_coverage < min_angular_coverage or radial_std > max_radial_std:
-        return tokens
+    area_ratio = float(len(ring_points) / max(len(points), 1))
+    radial_std = float(ring_radial.std()) if len(ring_points) else 0.0
 
-    ring_set = set((int(r), int(c)) for r, c in ring_points)
-    ring_token = _token_stats(
-        ring_points.astype(np.int64),
+    debug.update(
+        reason="candidate",
+        candidate_area=int(len(ring_points)),
+        angular_coverage=angular_coverage,
+        radial_mean=float(ring_radial.mean()) if len(ring_points) else 0.0,
+        radial_std=radial_std,
+        radial_band_center=band_center,
+        area_ratio=area_ratio,
+    )
+    if len(ring_points) < min_area:
+        debug["reason"] = "too_few_ring_points"
+        return None, ring_mask, debug
+    if angular_coverage < min_angular_coverage:
+        debug["reason"] = "low_angular_coverage"
+        return None, ring_mask, debug
+    if area_ratio < min_ring_area_ratio:
+        debug["reason"] = "low_ring_area_ratio"
+        return None, ring_mask, debug
+    if radial_std > max_radial_std:
+        debug["reason"] = "high_radial_std"
+        return None, ring_mask, debug
+
+    ring_pixels = ring_points.astype(np.int64)
+    ring_mask[ring_pixels[:, 0], ring_pixels[:, 1]] = True
+    token = _token_stats(
+        ring_pixels,
         weight_map,
-        valid_mask,
+        valid_mask if valid_mask is not None else np.ones_like(mask, dtype=bool),
         total_mass=float(weight_map[mask].sum()),
         source=source,
     )
-    ring_token.update(
-        geometry_type="edge_ring",
-        proposal_source="compact_ring_aware",
+    token.update(
+        proposal_source="retrieval_compact",
         proposal_type="ring_band",
+        geometry_type="edge_ring",
+        radial_mean=debug["radial_mean"],
+        radial_std=debug["radial_std"],
         radial_band_center=band_center,
+        angular_coverage=angular_coverage,
     )
-
-    residual_tokens = []
-    for token in tokens:
-        pixels = [pixel for pixel in token.get("pixels", []) if (int(pixel[0]), int(pixel[1])) not in ring_set]
-        if len(pixels) < proposal_config.min_area:
-            continue
-        if len(pixels) == token.get("area", 0):
-            residual_tokens.append(token)
-        else:
-            residual_tokens.append(_token_stats(
-                np.asarray(pixels, dtype=np.int64),
-                weight_map,
-                valid_mask,
-                total_mass=float(weight_map[mask].sum()),
-                source=source,
-            ))
-    return [ring_token] + residual_tokens
+    debug["accepted"] = True
+    debug["reason"] = "accepted"
+    return token, ring_mask, debug
 
 
-def _merge_geometry_fragments(
-    tokens: List[Dict],
+def _retrieval_component_tokens(
+    mask: np.ndarray,
     weight_map: np.ndarray,
     valid_mask: np.ndarray,
-    proposal_config: ProposalConfig,
+    min_area: int,
     source: str,
 ) -> List[Dict]:
-    if len(tokens) <= 1:
-        return tokens
-
-    h, w = weight_map.shape
-    short_side = min(h, w)
-    max_gap = 2 if short_side <= 12 else (3 if short_side <= 25 else 5)
-    mask = (weight_map > 0) & valid_mask
+    tokens = []
     total_mass = float(weight_map[mask].sum())
-    remaining = [dict(token) for token in tokens]
-    changed = True
-    while changed:
-        changed = False
-        best_pair = None
-        best_gap = float("inf")
-        for i in range(len(remaining)):
-            for j in range(i + 1, len(remaining)):
-                if not _merge_compatible(remaining[i], remaining[j]):
-                    continue
-                gap = _bbox_gap(remaining[i], remaining[j])
-                if gap <= max_gap and gap < best_gap:
-                    best_pair = (i, j)
-                    best_gap = gap
-        if best_pair is None:
-            break
-        i, j = best_pair
-        pixels = _unique_pixels(remaining[i].get("pixels", []) + remaining[j].get("pixels", []))
-        merged = _token_stats(
-            np.asarray(pixels, dtype=np.int64),
-            weight_map,
-            valid_mask,
-            total_mass=total_mass,
-            source=source,
-        )
-        merged["proposal_source"] = "compact_geometry_merge"
-        merged["merged_count"] = int(remaining[i].get("merged_count", 1)) + int(remaining[j].get("merged_count", 1))
-        for idx in sorted((i, j), reverse=True):
-            remaining.pop(idx)
-        remaining.append(merged)
-        changed = True
-    return remaining
+    for comp in _connected_components(mask):
+        if len(comp) < min_area:
+            continue
+        token = _token_stats(comp, weight_map, valid_mask, total_mass=total_mass, source=source)
+        token["proposal_source"] = "retrieval_compact"
+        token["proposal_type"] = "component"
+        token["geometry_type"] = _classify_component(token)
+        tokens.append(token)
+    tokens.sort(key=lambda item: item.get("area", 0), reverse=True)
+    return tokens
 
 
-def _merge_compatible(a: Dict, b: Dict) -> bool:
-    ta = a.get("geometry_type", "irregular")
-    tb = b.get("geometry_type", "irregular")
-    if ta == "edge_ring" and tb == "edge_ring":
-        return True
-    if ta == "line" and tb == "line":
-        return _angle_delta(float(a.get("orientation", 0.0)), float(b.get("orientation", 0.0))) <= 25.0
-    if ta in {"blob", "central", "irregular"} and tb in {"blob", "central", "irregular"}:
-        return True
-    return False
+def _classify_component(item: Dict) -> str:
+    area = max(item.get("area", 1), 1)
+    bbox_area = max(item.get("bbox_height", 1) * item.get("bbox_width", 1), 1)
+    fill_ratio = area / bbox_area
+    elongation = item.get("pca_lambda1", 0.0) / max(item.get("pca_lambda2", 0.0), 1e-6)
+    aspect = max(
+        item.get("bbox_height", 1) / max(item.get("bbox_width", 1), 1),
+        item.get("bbox_width", 1) / max(item.get("bbox_height", 1), 1),
+    )
+    if elongation >= 6.0 or aspect >= 4.0:
+        return "line"
+    if fill_ratio >= 0.45 and item.get("compactness", 0.0) <= 1.6:
+        return "blob"
+    if item.get("radial_distance_norm", 1.0) <= 0.35:
+        return "central"
+    return "irregular"
 
 
-def _bbox_gap(a: Dict, b: Dict) -> float:
-    row_gap = max(0, max(a["bbox_row_min"], b["bbox_row_min"]) - min(a["bbox_row_max"], b["bbox_row_max"]) - 1)
-    col_gap = max(0, max(a["bbox_col_min"], b["bbox_col_min"]) - min(a["bbox_col_max"], b["bbox_col_max"]) - 1)
-    return float(np.hypot(row_gap, col_gap))
+def _select_retrieval_tokens(
+    ring_token: Optional[Dict],
+    component_tokens: List[Dict],
+    top_k: int,
+    min_residual_types: int = 3,
+) -> List[Dict]:
+    selected = []
+    if ring_token is not None and top_k > 0:
+        selected.append(ring_token)
 
+    remaining_slots = max(top_k - len(selected), 0)
+    if remaining_slots == 0 or not component_tokens:
+        return selected
 
-def _angle_delta(a: float, b: float) -> float:
-    delta = abs((a - b + 90.0) % 180.0 - 90.0)
-    return float(delta)
-
-
-def _unique_pixels(pixels: List[tuple]) -> List[tuple[int, int]]:
-    return sorted({(int(pixel[0]), int(pixel[1])) for pixel in pixels})
-
-
-def _select_diverse_tokens(tokens: List[Dict], top_k: int) -> List[Dict]:
-    if len(tokens) <= top_k:
-        return tokens[:top_k]
     by_type: Dict[str, List[Dict]] = {}
-    for token in tokens:
+    for token in component_tokens:
         by_type.setdefault(token.get("geometry_type", "irregular"), []).append(token)
     for items in by_type.values():
-        items.sort(key=_token_importance, reverse=True)
+        items.sort(key=_residual_importance, reverse=True)
 
     type_order = sorted(
-        by_type,
-        key=lambda key: _type_priority(key) + 0.01 * _token_importance(by_type[key][0]),
+        by_type.keys(),
+        key=lambda geometry_type: _type_group_priority(geometry_type, by_type[geometry_type][0]),
         reverse=True,
     )
-    selected = []
-    used = set()
+    residual_selected = []
+    used_ids = set()
     for geometry_type in type_order:
-        if len(selected) >= top_k:
+        if len(residual_selected) >= min(remaining_slots, min_residual_types):
             break
         token = by_type[geometry_type][0]
-        selected.append(token)
-        used.add(id(token))
+        residual_selected.append(token)
+        used_ids.add(id(token))
 
-    leftovers = [token for token in tokens if id(token) not in used]
-    leftovers.sort(key=_token_importance, reverse=True)
+    leftovers = [token for token in component_tokens if id(token) not in used_ids]
+    leftovers.sort(key=_residual_importance, reverse=True)
     for token in leftovers:
-        if len(selected) >= top_k:
+        if len(residual_selected) >= remaining_slots:
             break
-        selected.append(token)
-    selected.sort(key=_token_importance, reverse=True)
-    return selected[:top_k]
+        residual_selected.append(token)
+
+    residual_selected.sort(key=_display_order, reverse=True)
+    return selected + residual_selected[:remaining_slots]
 
 
-def _type_priority(geometry_type: str) -> float:
-    return {
-        "edge_ring": 5.0,
-        "central": 4.0,
-        "blob": 3.5,
-        "line": 3.0,
-        "irregular": 2.5,
-    }.get(geometry_type, 2.5)
+def _residual_importance(item: Dict) -> float:
+    area_score = np.sqrt(max(item.get("area", 0), 0))
+    radial = item.get("radial_distance_norm", 0.5)
+    central_bonus = 2.0 if radial <= 0.35 else 0.0
+    fill = item.get("area", 0) / max(item.get("bbox_height", 1) * item.get("bbox_width", 1), 1)
+    structure_bonus = {
+        "central": 2.5,
+        "blob": 1.5,
+        "line": 1.2,
+        "irregular": 0.8,
+    }.get(item.get("geometry_type"), 0.8)
+    return float(area_score + central_bonus + structure_bonus + min(fill, 1.0))
+
+
+def _type_group_priority(geometry_type: str, representative: Dict) -> float:
+    base = {
+        "central": 5.0,
+        "blob": 4.0,
+        "line": 3.5,
+        "irregular": 3.0,
+    }.get(geometry_type, 3.0)
+    return base + 0.01 * _residual_importance(representative)
+
+
+def _display_order(item: Dict) -> float:
+    order = {
+        "central": 5.0,
+        "blob": 4.0,
+        "line": 3.5,
+        "irregular": 3.0,
+    }.get(item.get("geometry_type"), 3.0)
+    return order + 0.01 * item.get("area", 0)
 
 
 def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: ProposalConfig) -> None:

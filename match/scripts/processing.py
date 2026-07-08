@@ -108,6 +108,7 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             map_match_top_k=args.count_partial_map_match_top_k,
             proposal_mode=args.count_partial_proposal_mode,
             rotation_tolerance=args.count_partial_rotation_tolerance,
+            min_token_score=args.count_partial_min_token_score,
         )
         partial = explanation["result"]
         return {
@@ -151,6 +152,7 @@ def _compute_classnumber_scores(
             die_defect_threshold=args.die_defect_threshold,
             proposal_mode=args.count_partial_proposal_mode,
             rotation_tolerance=args.count_partial_rotation_tolerance,
+            min_token_score=args.count_partial_min_token_score,
         )
         result = classnumber_scores_dict(class_result)
         if args.save_classnumber_figures:

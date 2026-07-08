@@ -138,6 +138,7 @@ def plot_classnumber_step(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = 0.10,
     save_path: str | Path | None = None,
 ) -> tuple[plt.Figure, List[plt.Axes]]:
     """Render a classnumber split with its local partial matching steps."""
@@ -154,6 +155,7 @@ def plot_classnumber_step(
         top_k=top_k,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
         save_path=save_path,
         explain_fn=explain_fn,
         map_mode=score_mode,

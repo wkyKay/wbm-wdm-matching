@@ -47,6 +47,7 @@ def compute_classnumber_matches(
     die_defect_threshold: int = 1,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = 0.10,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -70,6 +71,8 @@ def compute_classnumber_matches(
 
     splits: List[ClassSplitMatch] = []
     for classnumber, defect_table in split_tables.items():
+        if classnumber == 0:
+            continue
         gm = map_defect_table_to_grid(
             defect_table,
             shape=shape,
@@ -94,6 +97,7 @@ def compute_classnumber_matches(
                 top_k=top_k,
                 proposal_mode=proposal_mode,
                 rotation_tolerance=rotation_tolerance,
+                min_token_score=min_token_score,
             )
         if match_mode in ("binary", "both"):
             binary = compute_binary_class_score(
@@ -103,6 +107,7 @@ def compute_classnumber_matches(
                 top_k=top_k,
                 proposal_mode=proposal_mode,
                 rotation_tolerance=rotation_tolerance,
+                min_token_score=min_token_score,
             )
 
         rank_score = _rank_score(partial, binary, rank_by)
@@ -168,6 +173,7 @@ def compute_binary_class_score(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = 0.10,
 ) -> LocalMatchResult:
     """Score a classnumber split using binary-token partial matching."""
     return compute_binary_partial_match(
@@ -177,6 +183,7 @@ def compute_binary_class_score(
         top_k=top_k,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
     )
 
 

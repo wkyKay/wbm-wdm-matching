@@ -46,6 +46,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         top_k=args.count_partial_top_k_proposals,
         proposal_mode=args.count_partial_proposal_mode,
         rotation_tolerance=args.count_partial_rotation_tolerance,
+        min_token_score=args.count_partial_min_token_score,
         save_path=topk_path,
     )
     plt.close("all")
@@ -61,6 +62,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
             top_k=args.count_partial_top_k_proposals,
             proposal_mode=args.count_partial_proposal_mode,
             rotation_tolerance=args.count_partial_rotation_tolerance,
+            min_token_score=args.count_partial_min_token_score,
             save_path=step_path,
         )
         plt.close("all")
@@ -185,6 +187,7 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
             top_k=args.count_partial_top_k_proposals,
             proposal_mode=args.count_partial_proposal_mode,
             rotation_tolerance=args.count_partial_rotation_tolerance,
+            min_token_score=args.count_partial_min_token_score,
             save_path=step_path,
         )
         plt.close("all")

@@ -241,6 +241,12 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Number of highest-scoring token pairs saved for each WDM map.",
     )
     parser.add_argument(
+        "--count-partial-min-token-score",
+        type=float,
+        default=0.10,
+        help="Minimum final token-pair score required before a pair can enter count-partial matching.",
+    )
+    parser.add_argument(
         "--token-match-log",
         default="match/output/token_match_topk.tsv",
         help="Path to per-WBM-token top-K WDM token match TSV. Empty string disables it.",

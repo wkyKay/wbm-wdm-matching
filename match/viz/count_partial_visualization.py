@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.colors import BoundaryNorm, ListedColormap, to_rgb
 from matplotlib.colors import LinearSegmentedColormap
 from matplotlib.ticker import MaxNLocator
 
@@ -36,6 +36,7 @@ def plot_count_partial_steps(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = 0.10,
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
@@ -48,44 +49,51 @@ def plot_count_partial_steps(
         top_k=top_k,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
     )
     result = explanation["result"]
     wbm_tokens = explanation["wbm_tokens"]
     wdm_tokens = explanation["wdm_tokens"]
     matches = explanation["matches"]
 
-    wdm_image = _masked_wdm_image(candidate, reference.status_map, map_mode=map_mode)
-    vmax = _heatmap_vmax([wdm_image])
-    label = _wdm_image_label(map_mode)
+    fig = plt.figure(figsize=(15.5, 7.6))
+    gs = fig.add_gridspec(2, 4, height_ratios=[3.2, 1.7], hspace=0.18, wspace=0.08)
+    image_axes = [fig.add_subplot(gs[0, idx]) for idx in range(4)]
+    table_ax = fig.add_subplot(gs[1, :])
 
-    fig, axes = plt.subplots(1, 5, figsize=(18, 4.2))
-    _plot_wbm_defects(axes[0], reference, "WBM defects")
-    _plot_wbm_status(axes[1], reference, "WBM tokens")
-    _draw_tokens(axes[1], wbm_tokens)
-
-    im = _plot_wdm_heatmap(axes[2], wdm_image, f"WDM {map_mode}", vmax=vmax)
-    _plot_wdm_heatmap(axes[3], wdm_image, "WDM tokens", vmax=vmax)
-    _draw_tokens(axes[3], wdm_tokens)
-
-    _plot_wdm_heatmap(axes[4], wdm_image, "Local matches", vmax=vmax)
-    _draw_tokens(axes[4], wbm_tokens, linestyle="--", linewidth=1.2)
-    _draw_tokens(axes[4], wdm_tokens, linewidth=1.8)
-    _draw_matches(axes[4], matches)
+    _plot_wbm_defects(image_axes[0], reference, "WBM original")
+    _plot_cluster_color_map(
+        image_axes[1],
+        reference.status_map,
+        wbm_tokens,
+        title="WBM cluster color map",
+        source="wbm",
+    )
+    _plot_wdm_original(image_axes[2], candidate, reference.status_map, f"WDM original ({map_mode})", map_mode=map_mode)
+    _plot_cluster_color_map(
+        image_axes[3],
+        reference.status_map,
+        wdm_tokens,
+        title="WDM cluster color map",
+        source="wdm",
+        count_map=candidate.count_map,
+        map_mode=map_mode,
+    )
+    _plot_match_evidence_table(table_ax, result, matches)
 
     subtitle = (
         f"count-partial={result.score:.3f}  "
         f"shape={result.mean_shape:.3f} pos={result.mean_position:.3f} "
-        f"scale={result.mean_scale:.3f} type={result.mean_type:.3f}  "
+        f"scale={result.mean_scale:.3f}  "
         f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
     )
     fig.suptitle(f"{title}\n{subtitle}" if title else subtitle, fontsize=11)
-    fig.subplots_adjust(left=0.02, right=0.90, bottom=0.04, top=0.80, wspace=0.12)
-    _add_edge_colorbar(fig, im, label)
+    fig.subplots_adjust(left=0.025, right=0.985, bottom=0.04, top=0.86)
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
         fig.savefig(save_path, dpi=160, bbox_inches="tight")
-    return fig, list(axes)
+    return fig, image_axes + [table_ax]
 
 
 def plot_count_partial_topk(
@@ -96,6 +104,7 @@ def plot_count_partial_topk(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = 0.10,
     save_path: str | Path | None = None,
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render reference WBM tokens against top candidate WDM count heatmaps."""
@@ -110,41 +119,44 @@ def plot_count_partial_topk(
                 top_k=top_k,
                 proposal_mode=proposal_mode,
                 rotation_tolerance=rotation_tolerance,
+                min_token_score=min_token_score,
             ),
         )
         for name, gm in candidates
     ]
-    count_images = [_masked_count(gm.count_map, reference.status_map) for _, gm, _ in explanations]
-    vmax = _heatmap_vmax(count_images)
-
     n = max(len(explanations), 1)
     fig, axes = plt.subplots(n, 2, figsize=(9.5, 3.4 * n))
     axes_arr = np.asarray(axes).reshape(n, 2)
     all_axes: List[plt.Axes] = []
-    last_im = None
 
     for row, (name, gm, explanation) in enumerate(explanations):
         result = explanation["result"]
         wbm_tokens = explanation["wbm_tokens"]
         wdm_tokens = explanation["wdm_tokens"]
-        matches = explanation["matches"]
 
         ax_ref, ax_cnd = axes_arr[row]
-        _plot_wbm_defects(ax_ref, reference, "Reference WBM tokens")
-        _draw_tokens(ax_ref, wbm_tokens)
-
-        count_image = _masked_count(gm.count_map, reference.status_map)
-        last_im = _plot_wdm_heatmap(ax_cnd, count_image, f"{row + 1}. {name}", vmax=vmax)
-        _draw_tokens(ax_cnd, wdm_tokens)
-        _draw_tokens(ax_cnd, wbm_tokens, linestyle="--", linewidth=1.0)
-        _draw_matches(ax_cnd, matches)
+        _plot_cluster_color_map(
+            ax_ref,
+            reference.status_map,
+            wbm_tokens,
+            title="Reference WBM clusters",
+            source="wbm",
+        )
+        _plot_cluster_color_map(
+            ax_cnd,
+            reference.status_map,
+            wdm_tokens,
+            title=f"{row + 1}. {name}",
+            source="wdm",
+            count_map=gm.count_map,
+        )
         ax_cnd.text(
             0.01,
             -0.08,
             (
                 f"score={result.score:.3f}  shape={result.mean_shape:.3f} "
                 f"pos={result.mean_position:.3f} scale={result.mean_scale:.3f} "
-                f"type={result.mean_type:.3f}  tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
+                f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
             ),
             transform=ax_cnd.transAxes,
             fontsize=8,
@@ -152,10 +164,8 @@ def plot_count_partial_topk(
         )
         all_axes.extend([ax_ref, ax_cnd])
 
-    fig.suptitle(title, fontsize=12)
-    fig.subplots_adjust(left=0.04, right=0.88, bottom=0.05, top=0.92, wspace=0.12, hspace=0.35)
-    if last_im is not None:
-        _add_edge_colorbar(fig, last_im, "count")
+    fig.suptitle(title, fontsize=12, y=0.98)
+    fig.subplots_adjust(left=0.04, right=0.96, bottom=0.08, top=0.84, wspace=0.12, hspace=0.35)
 
     if save_path:
         Path(save_path).parent.mkdir(parents=True, exist_ok=True)
@@ -180,6 +190,115 @@ def _plot_wdm_heatmap(ax: plt.Axes, image: np.ndarray, title: str, vmax: float):
     ax.set_title(title, fontsize=10)
     ax.axis("off")
     return im
+
+
+def _plot_wdm_original(ax: plt.Axes, candidate: GridMaps, reference_status: np.ndarray, title: str, map_mode: str) -> None:
+    ax.imshow(_wdm_status_image(candidate, reference_status, map_mode=map_mode), interpolation="nearest")
+    ax.set_title(title, fontsize=10)
+    ax.axis("off")
+
+
+def _plot_cluster_color_map(
+    ax: plt.Axes,
+    reference_status: np.ndarray,
+    tokens: List[Dict],
+    title: str,
+    source: str,
+    count_map: np.ndarray | None = None,
+    map_mode: str = "count",
+) -> None:
+    image = _cluster_color_image(reference_status, tokens, source=source, count_map=count_map, map_mode=map_mode)
+    ax.imshow(image, interpolation="nearest")
+    ax.set_title(title, fontsize=10)
+    ax.axis("off")
+    _draw_token_ids(ax, tokens)
+
+
+def _cluster_color_image(
+    reference_status: np.ndarray,
+    tokens: List[Dict],
+    source: str,
+    count_map: np.ndarray | None = None,
+    map_mode: str = "count",
+) -> np.ndarray:
+    h, w = reference_status.shape
+    image = np.zeros((h, w, 3), dtype=np.float32)
+    valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
+    defects = reference_status == VALID_HAS_DEFECT
+    image[valid] = np.array(to_rgb("#7f7f7f"), dtype=np.float32)
+
+    if source == "wbm":
+        image[defects] = np.array(to_rgb("#f2f2f2"), dtype=np.float32)
+    elif count_map is not None:
+        candidate_defects = (count_map > 0) & valid
+        image[candidate_defects] = np.array(to_rgb("#f2f2f2"), dtype=np.float32)
+
+    for idx, token in enumerate(tokens):
+        color = np.array(to_rgb(TOKEN_COLORS[idx % len(TOKEN_COLORS)]), dtype=np.float32)
+        for r, c in token.get("pixels", []):
+            rr = int(r)
+            cc = int(c)
+            if 0 <= rr < h and 0 <= cc < w:
+                image[rr, cc] = color
+    return image
+
+
+def _wdm_status_image(candidate: GridMaps, reference_status: np.ndarray, map_mode: str = "count") -> np.ndarray:
+    h, w = reference_status.shape
+    image = np.zeros((h, w, 3), dtype=np.float32)
+    valid = (reference_status == VALID_NO_DEFECT) | (reference_status == VALID_HAS_DEFECT)
+    image[valid] = np.array(to_rgb("#7f7f7f"), dtype=np.float32)
+    if map_mode == "binary":
+        defects = (candidate.binary_map > 0) & valid
+    else:
+        defects = (candidate.count_map > 0) & valid
+    image[defects] = np.array(to_rgb("#f2f2f2"), dtype=np.float32)
+    return image
+
+
+def _plot_match_evidence_table(ax: plt.Axes, result, matches: List[Dict]) -> None:
+    rows = []
+    for match in matches:
+        query = match.get("query_token", {})
+        candidate = match.get("candidate_token", {})
+        rows.append([
+            int(match.get("rank", 0)),
+            f"{int(match.get('query_token_id', 0))}->{int(match.get('candidate_token_id', 0))}",
+            f"{match.get('score', 0.0):.3f}",
+            f"{match.get('shape_sim', 0.0):.3f}",
+            f"{match.get('moment_sim', 0.0):.3f}",
+            f"{match.get('geometry_sim', 0.0):.3f}",
+            f"{match.get('position_affinity', 0.0):.3f}",
+            f"{match.get('scale_affinity', 0.0):.3f}",
+            str(query.get("geometry_type", "")),
+            str(candidate.get("geometry_type", "")),
+            f"{float(query.get('area', 0.0)):.0f}",
+            f"{float(candidate.get('area', 0.0)):.0f}",
+        ])
+    if not rows:
+        rows = [["", "no match", "", "", "", "", "", "", "", "", "", ""]]
+
+    columns = ["rank", "pair", "score", "shape", "moment", "geom", "pos", "scale", "q_type", "c_type", "q_area", "c_area"]
+    ax.axis("off")
+    ax.set_title(
+        (
+            f"match evidence  map score={result.score:.3f}  shape={result.mean_shape:.3f}  "
+            f"pos={result.mean_position:.3f}  scale={result.mean_scale:.3f}  "
+            f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
+        ),
+        fontsize=10,
+        pad=8,
+    )
+    table = ax.table(cellText=rows, colLabels=columns, cellLoc="center", loc="center")
+    table.auto_set_font_size(False)
+    table.set_fontsize(7.5)
+    table.scale(1.0, 1.12)
+    for (r, _), cell in table.get_celld().items():
+        if r == 0:
+            cell.set_facecolor("#e5e7eb")
+            cell.set_text_props(weight="bold")
+        else:
+            cell.set_facecolor("#f9fafb" if r % 2 else "#ffffff")
 
 
 def _masked_count(count_map: np.ndarray, reference_status: np.ndarray) -> np.ndarray:
@@ -251,6 +370,21 @@ def _draw_tokens(
             ha="center",
             va="center",
             bbox={"boxstyle": "circle,pad=0.18", "fc": color, "ec": "white", "lw": 0.5, "alpha": 0.9},
+        )
+
+
+def _draw_token_ids(ax: plt.Axes, tokens: List[Dict]) -> None:
+    for idx, token in enumerate(tokens):
+        color = TOKEN_COLORS[idx % len(TOKEN_COLORS)]
+        ax.text(
+            token.get("centroid_col", 0.0),
+            token.get("centroid_row", 0.0),
+            str(idx),
+            color="white",
+            fontsize=8,
+            ha="center",
+            va="center",
+            bbox={"boxstyle": "circle,pad=0.18", "fc": color, "ec": "white", "lw": 0.5, "alpha": 0.95},
         )
 
 

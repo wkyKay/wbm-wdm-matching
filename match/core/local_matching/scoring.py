@@ -9,6 +9,7 @@ from .proposal import (_proposal_config, _tokens_from_mask, _tokens_from_weighte
 
 
 MIN_SHAPE_SIM_FOR_MATCH = 0.45
+MIN_TOKEN_SCORE_FOR_MATCH = 0.10
 SHAPE_SCORE_POWER = 2.0
 
 
@@ -23,6 +24,7 @@ def compute_count_partial_match(
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference,
@@ -35,6 +37,7 @@ def compute_count_partial_match(
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
     )
     return explanation["result"]
 
@@ -50,6 +53,7 @@ def compute_binary_partial_match(
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference,
@@ -62,6 +66,7 @@ def compute_binary_partial_match(
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
     )
     return explanation["result"]
 
@@ -77,6 +82,7 @@ def explain_count_partial_match(
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -97,6 +103,7 @@ def explain_count_partial_match(
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
     )
 
 
@@ -111,6 +118,7 @@ def explain_binary_partial_match(
     sigma_scale: float = 1.5,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -131,6 +139,7 @@ def explain_binary_partial_match(
         sigma_scale=sigma_scale,
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
     )
 
 
@@ -148,6 +157,7 @@ def _explain_local_partial_match(
     sigma_scale: float,
     proposal_mode: str,
     rotation_tolerance: bool,
+    min_token_score: float,
 ) -> Dict:
     proposal_config = _proposal_config(
         reference.status_map.shape,
@@ -185,10 +195,12 @@ def _explain_local_partial_match(
         }
 
     all_pairs = []
+    min_token_score = max(float(min_token_score), 0.0)
     for query_id, qt in enumerate(wbm_tokens):
         for candidate_id, ct in enumerate(wdm_tokens):
             comp = _token_match_components(qt, ct, sigma_pos=sigma_pos, sigma_scale=sigma_scale)
-            if comp["score"] > 0:
+            passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
+            if passes_score_gate:
                 all_pairs.append(_pair_record(query_id, candidate_id, qt, ct, comp))
     all_pairs.sort(key=lambda item: item[0], reverse=True)
 
@@ -241,7 +253,8 @@ def _explain_local_partial_match(
 
 
 def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigma_scale: float) -> Dict:
-    shape_sim = max(float(np.dot(query["descriptor"], candidate["descriptor"])), 0.0)
+    shape_parts = _shape_similarity_components(query, candidate)
+    shape_sim = shape_parts["shape_sim"]
     pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
     position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
     q_scale = max(float(query.get("support_area_ratio", 0.0)), 1e-12)
@@ -256,10 +269,56 @@ def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigm
     return {
         "score": float(score),
         "shape_sim": shape_sim,
+        "moment_sim": shape_parts["moment_sim"],
+        "geometry_sim": shape_parts["geometry_sim"],
         "position_affinity": position_affinity,
         "scale_affinity": scale_affinity,
         "type_affinity": type_affinity,
     }
+
+
+def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:
+    q_parts = query.get("descriptor_parts")
+    c_parts = candidate.get("descriptor_parts")
+    if q_parts and c_parts and q_parts.get("kind") == c_parts.get("kind") == "zernike_geometry":
+        moment_sim = _cosine_sim(q_parts.get("moment"), c_parts.get("moment"))
+        geometry_sim = _geometry_sim(q_parts.get("geometry"), c_parts.get("geometry"))
+        moment_weight = float(q_parts.get("moment_weight", 0.75))
+        geometry_weight = float(q_parts.get("geometry_weight", 0.25))
+        total = max(moment_weight + geometry_weight, 1e-6)
+        shape_sim = (moment_weight * moment_sim + geometry_weight * geometry_sim) / total
+        return {
+            "shape_sim": float(np.clip(shape_sim, 0.0, 1.0)),
+            "moment_sim": float(moment_sim),
+            "geometry_sim": float(geometry_sim),
+        }
+
+    shape_sim = max(float(np.dot(query["descriptor"], candidate["descriptor"])), 0.0)
+    return {
+        "shape_sim": float(np.clip(shape_sim, 0.0, 1.0)),
+        "moment_sim": float(shape_sim),
+        "geometry_sim": 0.0,
+    }
+
+
+def _cosine_sim(a, b) -> float:
+    av = np.asarray(a, dtype=np.float32)
+    bv = np.asarray(b, dtype=np.float32)
+    if av.size == 0 or bv.size == 0 or av.size != bv.size:
+        return 0.0
+    denom = float(np.linalg.norm(av) * np.linalg.norm(bv))
+    if denom <= 1e-8:
+        return 0.0
+    return float(np.clip(np.dot(av, bv) / denom, 0.0, 1.0))
+
+
+def _geometry_sim(a, b) -> float:
+    av = np.asarray(a, dtype=np.float32)
+    bv = np.asarray(b, dtype=np.float32)
+    if av.size == 0 or bv.size == 0 or av.size != bv.size:
+        return 0.0
+    mean_abs_diff = float(np.mean(np.abs(av - bv)))
+    return float(np.exp(-mean_abs_diff / 0.25))
 
 
 def _pair_record(query_id: int, candidate_id: int, query: Dict, candidate: Dict, comp: Dict) -> tuple:
