@@ -167,6 +167,34 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --count-partial-step-max 3
 ```
 
+也可以用 `--config` 从 JSON 文件加载参数，避免每次手敲一长串：
+
+```json
+// config.json
+{
+  "klarf_dir": "/path/to/klarf_files/",
+  "reference": "data/wm811k/000604.png",
+  "mapper": "physical-coordinate",
+  "die_x_range": [-20, 20],
+  "die_y_range": [-20, 20],
+  "representation": "density",
+  "die_defect_threshold": 1,
+  "identifier": "AF00138",
+  "log": "results.tsv",
+  "topk_log": "topk.tsv",
+  "save_count_partial_figures": true,
+  "count_partial_fig_dir": "results",
+  "count_partial_review_top_k": 3,
+  "count_partial_step_max": 3
+}
+```
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main --config config.json
+```
+
+CLI 参数优先级高于配置文件，所以可以在命令行覆盖部分参数：`--config config.json --identifier AF00999`。
+
 会生成：
 - `results/AF00138/count_partial_review/top3_count_partial.png`
 - `results/AF00138/count_partial_review/proposal_steps/rankXX_*.png`

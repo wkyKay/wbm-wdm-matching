@@ -1,0 +1,14 @@
+{
+  "klarf_dir": "/path/to/klarf_files/",
+  "reference": "data/wm811k/000604.png",
+  "mapper": "physical-coordinate",
+  "die_x_range": [-20, 20],
+  "die_y_range": [-20, 20],
+  "representation": "count",
+  "defect_threshold": 5,
+  "die_defect_threshold": 1,
+  "identifier": "AF00138",
+  "use_classnumber": true,
+  "save_classnumber_figures": true,
+  "classnumber_fig_dir": "results"
+}

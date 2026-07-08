@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
-from typing import List
+import json
+import sys
+from pathlib import Path
+from typing import Any, Dict, List
 
 from ..core.mappers import MAPPERS
 from ..core.representations import REPRESENTATIONS
@@ -42,15 +45,54 @@ RESULT_COLUMNS: List[str] = SIMILARITY_COLUMNS + PARTIAL_MATCH_COLUMNS
 
 
 def parse_args() -> argparse.Namespace:
+    # Preliminary parse to detect --config before building the full parser.
+    prelim = argparse.ArgumentParser(add_help=False)
+    prelim.add_argument("--config", default=None, help="JSON file with parameter defaults. CLI args override file values.")
+    prelim_args, remaining = prelim.parse_known_args()
+
     parser = argparse.ArgumentParser(
         description="Batch WBM-WDM matching: process a directory of KLARF files against a reference WBM."
     )
+    _add_config_arg(parser)
     _add_input_args(parser)
     _add_mapping_args(parser)
     _add_output_args(parser)
     _add_count_partial_args(parser)
     _add_classnumber_args(parser)
-    return parser.parse_args()
+
+    if prelim_args.config:
+        config_dict = _load_config_file(prelim_args.config)
+        parser.set_defaults(**config_dict)
+
+    return parser.parse_args(remaining)
+
+
+def _add_config_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--config",
+        default=None,
+        help="Path to a JSON file containing parameter defaults (dest names as keys). CLI args take precedence.",
+    )
+
+
+def _load_config_file(config_path: str) -> Dict[str, Any]:
+    path = Path(config_path)
+    if not path.is_file():
+        print(f"ERROR: --config file not found: {config_path}", file=sys.stderr)
+        sys.exit(1)
+
+    raw = path.read_text(encoding="utf-8")
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: invalid JSON in --config file {config_path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    if not isinstance(data, dict):
+        print(f"ERROR: --config file must contain a JSON object, got {type(data).__name__}", file=sys.stderr)
+        sys.exit(1)
+
+    return data
 
 
 def _add_input_args(parser: argparse.ArgumentParser) -> None:
