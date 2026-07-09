@@ -24,6 +24,15 @@ PARTIAL_MATCH_COLUMNS: List[str] = [
     "count-partial-tokens",
 ]
 
+PARTIAL_MATCH_MO_COLUMNS: List[str] = [
+    "count-partial-mo",
+    "count-partial-mo-shape",
+    "count-partial-mo-position",
+    "count-partial-mo-scale",
+    "count-partial-mo-type",
+    "count-partial-mo-tokens",
+]
+
 CLASSNUMBER_COLUMNS: List[str] = [
     "classnumber-count",
     "best-classnumber",
@@ -39,9 +48,18 @@ CLASSNUMBER_COLUMNS: List[str] = [
     "best-classnumber-binary-leakage",
     "best-classnumber-rank-mode",
     "best-classnumber-rank-score",
+    "best-classnumber-mo-partial",
+    "best-classnumber-mo-tokens",
+    "best-classnumber-mo-binary",
+    "best-classnumber-mo-binary-shape",
+    "best-classnumber-mo-binary-position",
+    "best-classnumber-mo-binary-scale",
+    "best-classnumber-mo-binary-type",
+    "best-classnumber-mo-binary-tokens",
+    "best-classnumber-mo-rank-score",
 ]
 
-RESULT_COLUMNS: List[str] = SIMILARITY_COLUMNS + PARTIAL_MATCH_COLUMNS
+RESULT_COLUMNS: List[str] = SIMILARITY_COLUMNS + PARTIAL_MATCH_COLUMNS + PARTIAL_MATCH_MO_COLUMNS
 
 
 def parse_args() -> argparse.Namespace:

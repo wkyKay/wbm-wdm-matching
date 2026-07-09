@@ -146,6 +146,7 @@ def plot_classnumber_step(
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
     save_path: str | Path | None = None,
+    result_key: str = "result",
 ) -> tuple[plt.Figure, List[plt.Axes]]:
     """Render a classnumber split with its local partial matching steps."""
     from .count_partial_visualization import plot_count_partial_steps
@@ -171,6 +172,7 @@ def plot_classnumber_step(
         save_path=save_path,
         explain_fn=explain_fn,
         map_mode=score_mode,
+        result_key=result_key,
     )
 
 

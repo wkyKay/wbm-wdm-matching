@@ -10,7 +10,7 @@ from ..data.fileio import load_defect_tables, save_grid_maps
 from ..core.similarity import compute_similarity
 from ..core.local_matching import explain_count_partial_match
 from ..core.classnumber_matching import classnumber_scores_dict, compute_classnumber_matches
-from .cli_args import SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, CLASSNUMBER_COLUMNS
+from .cli_args import SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, PARTIAL_MATCH_MO_COLUMNS, CLASSNUMBER_COLUMNS
 
 
 def process_one(
@@ -117,6 +117,7 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             scale_pca_weight=args.count_partial_scale_pca_weight,
         )
         partial = explanation["result"]
+        partial_mo = explanation["result_matched_only"]
         return {
             "count-partial": partial.score,
             "count-partial-shape": partial.mean_shape,
@@ -124,11 +125,17 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             "count-partial-scale": partial.mean_scale,
             "count-partial-type": partial.mean_type,
             "count-partial-tokens": partial,
+            "count-partial-mo": partial_mo.score,
+            "count-partial-mo-shape": partial_mo.mean_shape,
+            "count-partial-mo-position": partial_mo.mean_position,
+            "count-partial-mo-scale": partial_mo.mean_scale,
+            "count-partial-mo-type": partial_mo.mean_type,
+            "count-partial-mo-tokens": partial_mo,
             "_token_topk_matches": explanation.get("token_topk_matches", []),
             "_map_topk_matches": explanation.get("map_topk_matches", []),
         }
     except Exception as e:
-        return {col: f"ERR:{e}" for col in PARTIAL_MATCH_COLUMNS}
+        return {col: f"ERR:{e}" for col in PARTIAL_MATCH_COLUMNS + PARTIAL_MATCH_MO_COLUMNS}
 
 
 def _compute_classnumber_scores(

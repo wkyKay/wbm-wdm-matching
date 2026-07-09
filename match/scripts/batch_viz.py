@@ -30,7 +30,31 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)
-    out_dir = _review_output_dir(args.count_partial_fig_dir, getattr(args, "identifier", ""), "count_partial_review")
+
+    _save_count_partial_figures_for_key(
+        args, ref_gm, scored,
+        result_key="result",
+        review_subdir="count_partial_review",
+        plot_count_partial_topk=plot_count_partial_topk,
+        plot_count_partial_steps=plot_count_partial_steps,
+        close_all=plt.close,
+    )
+
+    _save_count_partial_figures_for_key(
+        args, ref_gm, scored,
+        result_key="result_matched_only",
+        review_subdir="count_partial_review_matched_only",
+        plot_count_partial_topk=plot_count_partial_topk,
+        plot_count_partial_steps=plot_count_partial_steps,
+        close_all=plt.close,
+    )
+
+
+def _save_count_partial_figures_for_key(
+    args, ref_gm, scored, result_key, review_subdir,
+    plot_count_partial_topk, plot_count_partial_steps, close_all,
+) -> None:
+    out_dir = _review_output_dir(args.count_partial_fig_dir, getattr(args, "identifier", ""), review_subdir)
     steps_dir = out_dir / "proposal_steps"
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
@@ -54,9 +78,10 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         scale_area_weight=args.count_partial_scale_area_weight,
         scale_pca_weight=args.count_partial_scale_pca_weight,
         save_path=topk_path,
+        result_key=result_key,
     )
-    plt.close("all")
-    print(f"Count-partial TopK figure saved: {topk_path}")
+    close_all("all")
+    print(f"Count-partial TopK figure saved [{result_key}]: {topk_path}")
 
     for rank, (name, gm, _) in enumerate(scored[: max(args.count_partial_step_max, 0)], start=1):
         step_path = steps_dir / f"rank{rank:02d}_{_safe_name(name)}_steps.png"
@@ -76,9 +101,10 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
             scale_area_weight=args.count_partial_scale_area_weight,
             scale_pca_weight=args.count_partial_scale_pca_weight,
             save_path=step_path,
+            result_key=result_key,
         )
-        plt.close("all")
-        print(f"Count-partial step figure saved: {step_path}")
+        close_all("all")
+        print(f"Count-partial step figure saved [{result_key}]: {step_path}")
 
 
 def save_classnumber_figures(args, ref_gm, rows) -> None:
@@ -211,6 +237,55 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
         plt.close("all")
         print(f"Classnumber TopK step figure saved: {step_path}")
 
+    # --- matched-only classnumber step figures ---
+    mo_review_name = _classnumber_review_name(args).replace("classnumber_review", "classnumber_review_matched_only")
+    mo_out_dir = _review_output_dir(args.classnumber_fig_dir, getattr(args, "identifier", ""), mo_review_name)
+    mo_steps_dir = mo_out_dir / "topk_steps"
+    mo_steps_dir.mkdir(parents=True, exist_ok=True)
+
+    mo_split_records = []
+    for fname, res in rows:
+        class_result = res.get("_classnumber_result")
+        if class_result is None or not class_result.splits:
+            continue
+        file_stem = Path(fname).stem
+        for split in class_result.splits:
+            mo_score = _mo_split_rank_score(split, rank_by)
+            mo_split_records.append({
+                "file": file_stem,
+                "file_name": fname,
+                "classnumber": split.classnumber,
+                "split": split,
+                "grid_maps": split.grid_maps,
+                "mo_score": mo_score,
+            })
+
+    if mo_split_records:
+        mo_split_records.sort(key=lambda item: item["mo_score"], reverse=True)
+        for rank, record in enumerate(mo_split_records[:top_k], start=1):
+            step_path = mo_steps_dir / f"rank{rank:02d}_{_safe_name(record['file'])}_class{record['classnumber']}_mo_steps.png"
+            plot_classnumber_step(
+                ref_gm,
+                record["grid_maps"],
+                score_mode=rank_by,
+                title=f"Rank {rank}: {record['file']} class {record['classnumber']} ({rank_by}, matched-only)",
+                min_area=args.count_partial_min_area,
+                top_k=args.count_partial_top_k_proposals,
+                proposal_mode=args.count_partial_proposal_mode,
+                rotation_tolerance=args.count_partial_rotation_tolerance,
+                min_token_score=args.count_partial_min_token_score,
+                score_shape_weight=args.count_partial_score_shape_weight,
+                score_position_weight=args.count_partial_score_position_weight,
+                score_scale_weight=args.count_partial_score_scale_weight,
+                min_relative_token_area=args.count_partial_min_relative_token_area,
+                scale_area_weight=args.count_partial_scale_area_weight,
+                scale_pca_weight=args.count_partial_scale_pca_weight,
+                save_path=step_path,
+                result_key="result_matched_only",
+            )
+            plt.close("all")
+            print(f"Classnumber matched-only step figure saved: {step_path}")
+
 
 def _save_topk_classnumber_split_maps(
     ref_gm,
@@ -255,6 +330,19 @@ def _classnumber_review_name(args) -> str:
 
 def _safe_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
+
+
+def _mo_split_rank_score(split, rank_by: str) -> float:
+    """Extract matched-only rank score from a ClassSplitMatch for the given rank_by mode."""
+    if rank_by == "count":
+        if split.partial_matched_only is not None:
+            return float(split.partial_matched_only.score)
+        return float(split.partial.score) if split.partial is not None else float("-inf")
+    if rank_by == "binary":
+        if split.binary_matched_only is not None:
+            return float(split.binary_matched_only.score)
+        return float(split.binary.score) if split.binary is not None else float("-inf")
+    return float("-inf")
 
 
 def _review_output_dir(base_dir: str, identifier: str, review_name: str) -> Path:

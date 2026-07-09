@@ -138,9 +138,10 @@ def _result_columns(args) -> List[str]:
 
 
 def _ranking_columns(args) -> List[str]:
-    columns = SIMILARITY_COLUMNS + ["count-partial"]
+    columns = SIMILARITY_COLUMNS + ["count-partial", "count-partial-mo"]
     if args.use_classnumber:
         columns.append("best-classnumber-rank-score")
+        columns.append("best-classnumber-mo-rank-score")
     return columns
 
 

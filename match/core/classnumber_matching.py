@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 from ..data.fileio import load_defect_tables, split_defect_table_by_classnumber
-from .local_matching import LocalMatchResult, compute_binary_partial_match, compute_count_partial_match
+from .local_matching import LocalMatchResult, compute_binary_partial_match, explain_binary_partial_match, explain_count_partial_match
 from .models import GridMaps
 from .pipeline import build_mapper, map_defect_table_to_grid
 
@@ -16,7 +16,9 @@ class ClassSplitMatch:
     classnumber: int
     grid_maps: GridMaps
     partial: LocalMatchResult | None
+    partial_matched_only: LocalMatchResult | None
     binary: LocalMatchResult | None
+    binary_matched_only: LocalMatchResult | None
     rank_score: float
     rank_mode: str
 
@@ -94,9 +96,11 @@ def compute_classnumber_matches(
             die_defect_threshold=die_defect_threshold,
         )
         partial = None
+        partial_matched_only = None
         binary = None
+        binary_matched_only = None
         if match_mode in ("count", "both"):
-            partial = compute_count_partial_match(
+            count_explanation = explain_count_partial_match(
                 reference,
                 gm,
                 min_area=min_area,
@@ -111,8 +115,10 @@ def compute_classnumber_matches(
                 scale_area_weight=scale_area_weight,
                 scale_pca_weight=scale_pca_weight,
             )
+            partial = count_explanation["result"]
+            partial_matched_only = count_explanation["result_matched_only"]
         if match_mode in ("binary", "both"):
-            binary = compute_binary_class_score(
+            binary, binary_matched_only = compute_binary_class_score(
                 reference,
                 gm,
                 min_area=min_area,
@@ -134,7 +140,9 @@ def compute_classnumber_matches(
                 classnumber=classnumber,
                 grid_maps=gm,
                 partial=partial,
+                partial_matched_only=partial_matched_only,
                 binary=binary,
+                binary_matched_only=binary_matched_only,
                 rank_score=rank_score,
                 rank_mode=rank_by,
             )
@@ -162,10 +170,23 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
             "best-classnumber-binary-leakage": "",
             "best-classnumber-rank-mode": result.rank_by,
             "best-classnumber-rank-score": "",
+            "best-classnumber-mo-partial": "",
+            "best-classnumber-mo-tokens": "",
+            "best-classnumber-mo-binary": "",
+            "best-classnumber-mo-binary-shape": "",
+            "best-classnumber-mo-binary-position": "",
+            "best-classnumber-mo-binary-scale": "",
+            "best-classnumber-mo-binary-type": "",
+            "best-classnumber-mo-binary-tokens": "",
+            "best-classnumber-mo-rank-score": "",
         }
     partial_score = result.best.partial.score if result.best.partial is not None else ""
     partial_tokens = result.best.partial if result.best.partial is not None else ""
     binary_score = result.best.binary.score if result.best.binary is not None else ""
+    mo_partial_score = result.best.partial_matched_only.score if result.best.partial_matched_only is not None else ""
+    mo_partial_tokens = result.best.partial_matched_only if result.best.partial_matched_only is not None else ""
+    mo_binary_score = result.best.binary_matched_only.score if result.best.binary_matched_only is not None else ""
+    mo_rank_score = result.best.partial_matched_only.score if result.best.partial_matched_only is not None else ""
     return {
         "classnumber-count": str(len(result.splits)),
         "best-classnumber": str(result.best.classnumber),
@@ -181,6 +202,15 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
         "best-classnumber-binary-leakage": "",
         "best-classnumber-rank-mode": result.rank_by,
         "best-classnumber-rank-score": result.best.rank_score,
+        "best-classnumber-mo-partial": mo_partial_score,
+        "best-classnumber-mo-tokens": mo_partial_tokens,
+        "best-classnumber-mo-binary": mo_binary_score,
+        "best-classnumber-mo-binary-shape": result.best.binary_matched_only.mean_shape if result.best.binary_matched_only is not None else "",
+        "best-classnumber-mo-binary-position": result.best.binary_matched_only.mean_position if result.best.binary_matched_only is not None else "",
+        "best-classnumber-mo-binary-scale": result.best.binary_matched_only.mean_scale if result.best.binary_matched_only is not None else "",
+        "best-classnumber-mo-binary-type": result.best.binary_matched_only.mean_type if result.best.binary_matched_only is not None else "",
+        "best-classnumber-mo-binary-tokens": result.best.binary_matched_only if result.best.binary_matched_only is not None else "",
+        "best-classnumber-mo-rank-score": mo_rank_score,
     }
 
 
@@ -198,9 +228,9 @@ def compute_binary_class_score(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
-) -> LocalMatchResult:
-    """Score a classnumber split using binary-token partial matching."""
-    return compute_binary_partial_match(
+) -> tuple[LocalMatchResult, LocalMatchResult]:
+    """Score a classnumber split using binary-token partial matching. Returns (result, result_matched_only)."""
+    explanation = explain_binary_partial_match(
         reference,
         candidate,
         min_area=min_area,
@@ -215,6 +245,7 @@ def compute_binary_class_score(
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
     )
+    return explanation["result"], explanation["result_matched_only"]
 
 
 def split_score(split: ClassSplitMatch, mode: str) -> float:
