@@ -1,154 +1,6 @@
-# WBM-WDM Matching — 需求与设计文档
+# WBM-WDM Matching
 
-## 1. 项目定位
-
-研究目标：**给定一张目标 WBM（Wafer Bin Map）和一组候选 WDM（Wafer Defect Map），找到能最佳"解释"该 WBM 的 WDM 稀疏子集。**
-
-传统方法比较两张 WBM 是否相似；本项目是**跨数据源匹配**——WDM 来自 KLARF 缺陷扫描，WBM 来自芯片测试分 bin，粒度、来源、语义均不同。
-
----
-
-## 2. 核心流水线（批量模式）
-
-```
-┌─────────────────┐     ┌──────────────────┐
-│ KLARF 目录      │ →   │ 逐文件            │
-│ (n 个 .klarf)   │     │ 1. 坐标映射       │
-└─────────────────┘     │ 2. 网格表达       │
-                        │ 3. 8 种相似度     │
-                        │    (vs. WBM 参考) │
-                        └────────┬─────────┘
-                                 ↓
-                        ┌──────────────────┐
-                        │ TSV Log 文件      │
-                        │ (n × 9 表格)      │
-                        └──────────────────┘
-                                 ↑
-                        ┌────────┴────────┐
-                        │ WBM PNG (参考图) │
-                        └─────────────────┘
-```
-
-- 输入：一个包含 `*.klarf` 文件的目录 + 一张参考 WBM PNG
-- 输出：一个 TSV 文件，每行一个 KLARF 文件，每列一种相似度指标
-
-### 2.1 坐标映射（Mappers）
-
-将 KLARF 缺陷散点映射到 WBM 网格的对应格子。
-
-| Mapper | 逻辑 | 适用场景 |
-|--------|------|---------|
-| `die-index` | XINDEX/YINDEX 线性缩放 | 快速 baseline，WBM 粒度 ≈ die |
-| `relative-coordinate` | XREL/YREL 线性缩放 | die 内部精细位置 |
-| `physical-coordinate` | XINDEX × DiePitch + XREL → 归一化比例映射 | **推荐**，合并两层信息，可跨分辨率 |
-
-**`physical-coordinate` 设计要求**：
-- 必须传入 `--die-x-range` / `--die-y-range`（该产品的 die 网格行列范围）
-- DiePitch 从 KLARF 自动读取
-- 计算：`x_norm = (XINDEX - x_min + XREL / DiePitchX) / wafer_die_cols`
-- (1,1) die 的 wafer 直接报错跳过
-- 生成圆形 mask 区分"晶圆内"与"背景"
-
-### 2.2 网格表达（Representations）
-
-对 count_map 做归一化/平滑/二值化，产出 6 种表示：
-
-| 表达 | 含义 | 特点 |
-|------|------|------|
-| `binary` | 有缺陷=1，无缺陷=0 | 简单，丢密度信息 |
-| `count` | 每个格子的缺陷数量 | 密集区值大，不稳定 |
-| `density` | count 归一化为概率分布 | 推荐默认，跨样本可比 |
-| `soft` | density + 高斯平滑 | 容忍小偏移，σ 可配 |
-| `three-value` | 强证据=1，弱证据=0.5，无=0 | 三值化，可解释性强 |
-| `mountain` | 已废弃（与 soft 等价，待移除） | — |
-
-### 2.3 WBM 三值语义
-
-WBM PNG 使用三值编码（与 WM-811K 数据集一致）：
-
-| 颜色 | 像素值 | 语义 | 状态码 |
-|------|--------|------|--------|
-| 白色 | 255 | 有缺陷 die | `VALID_HAS_DEFECT = 2` |
-| 灰色 | 127 | 无缺陷但晶圆内 | `VALID_NO_DEFECT = 1` |
-| 黑色 | 0 | 背景（晶圆外） | `BACKGROUND = 0` |
-
-**灰色的作用**：
-1. 定义晶圆边界（白色+灰色=有效区域，黑色以外全忽略）
-2. 作为无缺陷参照——WDM 缺陷落在灰色区 = leakage / false positive
-
-### 2.4 相似度计算（Similarity）
-
-所有方法以 **WBM status_map 定义的有效区域** 为 mask 进行计算。
-
-| 方法 | 公式 | 特点 |
-|------|------|------|
-| `dice` | 2|A∩B|/(|A|+|B|) | 二值缺陷重叠，灰色进分母但不进分子 |
-| `iou` | |A∩B|/|A∪B| | 比 dice 更严格 |
-| `ncc` | 归一化互相关 | 只能在有效区域内算，mask 外排除 |
-| `cosine` | 余弦相似度 | 同上 |
-| `coverage` | WBM 缺陷被 WDM 覆盖的比例 | 核心正向指标 |
-| `leakage` | WDM 缺陷在 WBM 无缺陷区的比例 | 核心负向指标 |
-| `coverage-leakage` | coverage − β × leakage | 推荐综合得分 |
-| `chamfer` | 点集倒角距离 | 距离越近≈匹配越好 |
-
-**关键设计**：
-- 维度对齐：WDM 始终以 WBM 尺寸（H×W）生成，逐像素比对
-- Status-aware：黑色(0)区域不参与任何相似度计算
-- 向后兼容：不传 status 时退化为全图计算
-
----
-
-## 3. 代码架构
-
-```text
-match/
-  __init__.py                 # 统一 re-export 公共 API
-  core/
-    models.py                 # DefectTable、GridMaps、状态常量
-    mappers.py                # 3 种坐标映射器 + MAPPERS 注册表
-    representations.py        # 6 种网格表达 + REPRESENTATIONS 注册表
-    pipeline.py               # map_klarf_to_grid 端到端入口
-    similarity.py             # 8 种全图相似度
-    local_matching.py         # count-map partial matching
-  data/
-    fileio.py                 # KLARF 解析、WBM PNG 解码、npz 读写
-  viz/
-    visualization.py          # 通用绘图对比：并排/叠加/多视图
-    count_partial_visualization.py  # partial matching step/topK 图片
-  scripts/
-    batch_io.py               # 批处理结果写入/TopK 排序辅助
-    batch_viz.py              # 批处理可视化辅助
-    main.py                   # 批量处理 CLI 入口
-    plot_ref_cnd.py           # CLI 快速看图脚本
-    plot_count_partial.py     # count-partial 图片生成脚本
-```
-
----
-
-## 4. CLI 使用方式
-
-```bash
-# 批量处理：目录中所有 KLARF vs. 一张 WBM 参考图
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
-  --representation density \
-  --die-defect-threshold 1 \
-  --identifier AF00138 \
-  --log results.tsv
-```
-
-`--die-defect-threshold 1` 是默认值，表示只要某个 die/cell 有至少 1 个 defect，就会在 `binary_map` 中置 1。调大该值只影响 `binary_map` 及基于 binary 的匹配/绘图，不改变 `count_map`。
-
-`--identifier` 用于组织多次实验输出。例如 `--count-partial-fig-dir results --identifier AF00138` 会保存到 `results/AF00138/count_partial_review`。classnumber review 会额外按匹配模式分目录，例如 `results/AF00138/classnumber_review_count`、`results/AF00138/classnumber_review_binary`、`results/AF00138/classnumber_review_both_rank_binary`。不传 `--identifier` 时保持旧行为，直接使用对应的 `*-fig-dir`。
-
-### 4.1 生成 count-partial 图片
-
-结果 TSV 和 review 图片上各分数字段的含义见 [`result_items.md`](result_items.md)。
-
-如果你要看 `count-map partial` 的 top3 和 proposal step 图，直接加这组参数：
+## 1. 运行命令
 
 ```bash
 PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
@@ -157,252 +9,193 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
-  --die-defect-threshold 1 \
-  --identifier AF00138 \
   --log results.tsv \
   --topk-log topk.tsv \
   --save-count-partial-figures \
   --count-partial-fig-dir results \
-  --count-partial-review-top-k 3 \
-  --count-partial-step-max 3
+  --identifier AF00138
+
+
+  --use-classnumber  // 启用按 defect classnumber 拆分的分图匹配
+  --classnumber-match-mode count  // count | binary，分图匹配的计分模式
+  --save-classnumber-figures  // 保存 classnumber 分图 review 图片
+  --classnumber-fig-dir results  // classnumber 图片输出目录
 ```
 
-也可以用 `--config` 从 JSON 文件加载参数，避免每次手敲一长串：
-
-```json
-// config.json
-{
-  "klarf_dir": "/path/to/klarf_files/",
-  "reference": "data/wm811k/000604.png",
-  "mapper": "physical-coordinate",
-  "die_x_range": [-20, 20],
-  "die_y_range": [-20, 20],
-  "representation": "density",
-  "die_defect_threshold": 1,
-  "identifier": "AF00138",
-  "log": "results.tsv",
-  "topk_log": "topk.tsv",
-  "save_count_partial_figures": true,
-  "count_partial_fig_dir": "results",
-  "count_partial_review_top_k": 3,
-  "count_partial_step_max": 3
-}
-```
-
-```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main --config config.json
-```
-
-CLI 参数优先级高于配置文件，所以可以在命令行覆盖部分参数：`--config config.json --identifier AF00999`。
-
-会生成：
-- `results/AF00138/count_partial_review/top3_count_partial.png`
-- `results/AF00138/count_partial_review/proposal_steps/rankXX_*.png`
-
-所有 8 种相似度指标自动计算，结果写入 TSV：
-
-| 列 | 内容 |
-|----|------|
-| `file` | KLARF 文件名 |
-| `dice`, `iou`, `ncc`, `cosine` | 基础相似度 |
-| `coverage`, `leakage`, `coverage-leakage` | Coverage-Leakage 族 |
-| `chamfer` | 点集倒角距离 |
-| `count-partial*` | 基于 WDM count_map 的局部 token 匹配分数与分量 |
-| `classnumber-count`, `best-classnumber*` | 仅 `--use-classnumber` 时输出，表示按 classnumber 拆分后的最佳分图 |
-| `mapped_defects` | 映射成功数/总缺陷数 |
-
-### 4.2 classnumber 分图匹配
-
-classnumber 功能是在整图匹配之外，额外把每个 WDM 按 `classnumber` 拆成多个分图，再做分图匹配和可视化。
-
-```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
-  --representation density \
-  --defect-threshold 5 \
-  --die-defect-threshold 1 \
-  --identifier AF00138 \
-  --use-classnumber \
-  --save-classnumber-figures \
-  --classnumber-fig-dir results
-```
-
-默认是 `count` 模式，也就是沿用 `count-partial` 的 token 匹配结果。若要用
-binary 形态判断，切到：
-
-```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
-  --representation density \
-  --defect-threshold 5 \
-  --die-defect-threshold 2 \
-  --identifier AF00138 \
-  --use-classnumber \
-  --classnumber-match-mode binary \
-  --save-classnumber-figures \
-  --classnumber-fig-dir results
-```
-
-也可以同时算 `count` 和 `binary`，并指定最终排序依据：
-
-```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
-  --representation density \
-  --defect-threshold 5 \
-  --die-defect-threshold 2 \
-  --identifier AF00138 \
-  --use-classnumber \
-  --classnumber-match-mode both \
-  --classnumber-rank-by binary \
-  --save-classnumber-figures \
-  --classnumber-fig-dir results
-```
-
-上面 binary 示例使用 `--die-defect-threshold 2`，表示单个 die/cell 至少有 2 个 defect 才进入 binary proposal。生产数据中如果 binary 图仍然过碎，可以试 `3`；如果担心稀疏真实形状被过滤，则回到 `1`。
-
-这组命令会生成：
-- `results/AF00138/classnumber_review_both_rank_binary/<file>_classnumber_splits.png`（只为全局 TopK classnumber 分图涉及的文件生成；同一文件只生成一张）
-- `results/AF00138/classnumber_review_both_rank_binary/classnumber_topk.tsv`
-- `results/AF00138/classnumber_review_both_rank_binary/classnumber_topK.png`
-- `results/AF00138/classnumber_review_both_rank_binary/topk_steps/rankXX_*.png`
-
-其中：
-- `classnumber_topk.tsv` 记录所有分图的排序结果
-- `classnumber_topK.png` 是全局 topK 分图总览
-- `topk_steps/` 是 topK 分图的 cluster / step 参考图
-
-新增参数：
-
-| 参数 | 默认值 | 含义 |
-|------|--------|------|
-| `--defect-threshold` | `5` | 文件级过滤：KLARF 总 defect 数低于该值则跳过 |
-| `--die-defect-threshold` | `1` | die/cell 级过滤：单个 die/cell 至少包含多少个 defect 才会在 `binary_map` 中置 1 |
-| `--identifier` | 空 | 可选运行标识；设置后 review 图片保存到 `<fig-dir>/<identifier>/<review_name>`，classnumber 会按 count/binary/both_rank_* 自动区分目录 |
-| `--count-partial-proposal-mode {cc,compact}` | `cc` | count-partial/classnumber token 提取模式；`cc` 保持旧连通域逻辑，`compact` 启用保守 ring-aware、fragment merge 和多样性 topK |
-| `--count-partial-rotation-tolerance` | 关闭 | 使用旋转容忍的 shape descriptor；只影响 token shape 相似度，不做全局位置旋转搜索 |
-| `--classnumber-match-mode {count,binary,both}` | `count` | classnumber 分图计算 count、binary 或两者 |
-| `--classnumber-rank-by {count,binary}` | `count` | `both` 模式下 topK 和最佳分图的排序依据 |
-| `--classnumber-binary-dilation` | `1` | 兼容旧命令保留；当前 binary token 匹配不再使用 dilation |
-| `--classnumber-binary-beta` | `0.5` | 兼容旧命令保留；当前 binary token 匹配不再使用 leakage beta |
-
-binary classnumber 分数现在与 count-partial 使用同一套 proposal / descriptor / token 相似度流程：
-- WBM token 仍来自 `status_map == VALID_HAS_DEFECT`
-- WDM token 来自 `binary_map > 0`
-- `binary_map` 由 `count_map >= --die-defect-threshold` 生成，默认 `1` 等价于旧的 `count > 0`
-- WDM token 权重统一为 1，不使用 count 强度
-- 最终分数仍由 shape、position、scale、type 组成；shape 使用硬门槛，type 作为 soft penalty
-
-保存图片时，无论选择 `count`、`binary` 还是 `both`，都会生成上面的三类图。
-`binary` 排序时，step 图展示同一 classnumber 分图的局部结构，方便对照解释路径。
-
-count-partial 和 classnumber review 图片的颜色规则：
-- WBM 面板保持 WM811K 原图风格：背景黑色、晶圆内正常 die 灰色、失效 die 白色。
-- WDM count / binary heatmap 使用晶圆外黑色、晶圆内灰白到红色的热力图；`rank_by=binary` 时底图使用 binary map，`rank_by=count` 时底图使用 count map。
-
-### 4.3 `density` 和 `count` 的区别
-
-这两个选项都不会改变 `count-partial` 的 token 提取逻辑，因为该部分固定使用
-`count_map`。它们的区别主要在整图相似度和保存的候选图底图：
-
-| 选项 | 影响 |
-|------|------|
-| `count` | 用原始缺陷计数做整图比较，强度保留最直接，但不同样本间数值尺度更敏感 |
-| `density` | 把 count 归一化为概率分布，整图相似度更关注空间分布而不是绝对缺陷数 |
-
-如果你的目标是做“候选分布形态”的比较，`density` 更稳；如果你更关心“绝对缺陷强度”，`count` 更直接。对 classnumber 分图和 count-partial 的结构输出来说，主要差异仍体现在整图相似度层，不会改变 WDM 被拆分后的 token 生成方式。
+也可用 `--config config.json` 从 JSON 文件加载参数，CLI 参数优先级高于配置文件。详细参数说明见项目原有文档。
 
 ---
 
-## 5. 可视化对比（visualization.py）
+## 2. 项目定位
 
-提供 4 个绘图函数，核心设计原则：**ref 与 cnd 共用一个 (cmap, vmin, vmax)**，并用 status_map 统一遮蔽 wafer 外区域，确保两张图可直接视觉比较。
+给定一张目标 WBM（Wafer Bin Map，芯片测试分 bin 图）和一组候选 WDM（Wafer Defect Map，KLARF 缺陷扫描数据），找到能最佳「解释」该 WBM 的 WDM 稀疏子集。
 
-### 5.1 vmin / vmax 的作用
+核心挑战是**跨数据源匹配**——WBM 来自电性测试（黑白灰三值，粒度为 die），WDM 来自光学扫描（散点，粒度为亚 die 坐标），两者粒度、来源、语义均不同。
 
-| 无统一 range | 有统一 range |
-|-------------|-------------|
-| 各图用自己的 min/max 映射颜色 | 两图共用同一个 min/max |
-| 值 0.001 在 ref 是中等亮度，在 cnd 可能是最高亮度 | 0.001 在两图中是同一个颜色 |
-| **不可比** | **可直接对比** |
-
-### 5.2 可用函数
-
-| 函数 | 用途 |
-|------|------|
-| `plot_single(gm, ...)` | 绘单张 map |
-| `plot_comparison(ref, cnd, ...)` | 并排对比 ref vs cnd，统一 colormap |
-| `plot_overlay(ref, cnd, ...)` | 差值叠加：蓝=ref独有，红=cnd独有，白=匹配 |
-| `plot_representation_panel(gm, ...)` | 一行展示 binary / count / density 三视图 |
-
-### 5.3 代码示例
-
-```python
-from match.data.fileio import read_wbm_png
-from match.core.pipeline import map_klarf_to_grid
-from match.viz.visualization import plot_comparison, plot_overlay
-
-ref_gm = read_wbm_png("reference.png")
-cnd_gm = map_klarf_to_grid(
-    "data.klarf",
-    shape=ref_gm.count_map.shape,
-    die_defect_threshold=1,
-)
-
-# 并排 density 热力图对比
-plot_comparison(ref_gm, cnd_gm, representation="density", cmap="hot",
-                save_path="cmp_density.png")
-
-# binary 灰度对比
-plot_comparison(ref_gm, cnd_gm, representation="binary", cmap="gray",
-                save_path="cmp_binary.png")
-
-# 差值叠加：一眼看出漏检（蓝）与多报（红）
-plot_overlay(ref_gm, cnd_gm, representation="binary",
-             save_path="cmp_overlay.png")
-```
-
-### 5.4 CLI 快速看图
-
-```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.plot_ref_cnd \
-    --ref ../data/wm811k/000604.png \
-    --klarf ../data/klarf/some_file \
-    --mapper die-index \
-    --representation density \
-    --die-defect-threshold 1 \
-    --output comparison.png
-```
-
-Shape 始终从 `--ref` 的 WBM PNG 自动读取，无需手动指定。
+输出包括：全局相似度排名、count-map 局部 token 匹配分数、可选按 defect classnumber 拆分的分图匹配、以及匹配过程的可视化图表（token 提取、聚类着色、匹配证据表）。
 
 ---
 
-## 6. 待办事项
+## 3. 核心流水线与代码结构
 
-- [x] `--similarity` 模式下一次输出所有相似度指标 — 已实现
-- [ ] 移除或重命名 MountainMap（与 SoftMap 数学等价，功能冗余）
-- [ ] SoftMap σ 配置化（`--soft-sigma` 参数）
-- [ ] 实现组合搜索（Beam Search + Coverage-Leakage）— 第二期
-- [ ] 旋转容错搜索 — 第三期
+### 3.1 数据流
+
+入口 `scripts/main.py` 先加载 WBM 参考图（`scripts/reference_loader.py`），再对 KLARF 目录下每个文件执行 `scripts/processing.py → process_one`，最后汇总写入 TSV 和图表。
+
+```
+                         scripts/main.py
+                    ┌──────────┼──────────┐
+                    ▼          ▼          ▼
+           reference_loader  processing  batch_io / batch_viz
+              (加载WBM)     (逐文件处理)  (TSV + 图表输出)
+```
+
+**`process_one` 对每个 KLARF 依次执行五步：**
+
+```
+KLARF 文件
+  │
+  ├─ ① Defect 阈值检查 ── data/fileio.py → load_defect_tables
+  │    缺陷数 < threshold → SKIPPED
+  │
+  ├─ ② Map: 坐标映射 + 网格表达 ── core/pipeline.py → map_klarf_to_grid
+  │    ├── core/mappers.py       坐标映射 (die-index / relative / physical)
+  │    └── core/representations.py  网格表达 (count / binary / density / soft / three-value)
+  │    输出: GridMaps (与 WBM 同尺寸 H×W)
+  │
+  ├─ ③ Global Similarity (8种) ── core/similarity.py → compute_similarity
+  │    dice | iou | ncc | cosine | coverage | leakage | coverage-leakage | chamfer
+  │
+  ├─ ④ Count-Partial Match ── core/local_matching/scoring.py → explain_count_partial_match
+  │    ├── 4a. Token 提案 ── proposal.py
+  │    │      WBM: _tokens_from_mask (status_map == VALID_HAS_DEFECT)
+  │    │      WDM: _tokens_from_weighted_mask (count_map > 0, count 作为权重)
+  │    │      模式: CC (连通域) 或 Compact (环状提取 + 残差分类)
+  │    ├── 4b. 形状描述符 ── descriptors.py
+  │    │      每个 token → Zernike 矩 (48×48, 8阶) + 几何特征 → 拼接归一化
+  │    ├── 4c. Token 对打分 ── scoring.py → _token_match_components
+  │    │      shape_sim + position_aff + scale_aff → token_score
+  │    ├── 4d. 贪心一对一匹配 ── _greedy_one_to_one_matches
+  │    └── 4e. √area 加权聚合 → result + result_matched_only
+  │         同时输出 token_topk_matches + map_topk_matches (供图表使用)
+  │
+  └─ ⑤ Classnumber Match (可选, --use-classnumber)
+        ├── data/fileio.py → split_defect_table_by_classnumber
+        │     按 defect classnumber 拆分为 N 个子 WDM
+        └── core/classnumber_matching.py → compute_classnumber_matches
+              对每个子 WDM 重新执行 ② Map + ④ Count-Partial Match
+              (+ 可选 binary-partial via explain_binary_partial_match)
+              选 rank_score 最高的 classnumber → best-classnumber
+```
+
+**后处理（`main.py` 汇总后）：**
+
+```
+rows (所有文件的结果)
+  │
+  ├── scripts/batch_io.py
+  │     write_result_log    → batch_results.tsv (每文件一行, 含 similarity + partial + classnumber)
+  │     write_topk_log      → batch_topk.tsv     (各指标 top-K 排名)
+  │     write_token_match_log → token_match_log  (每 WBM token 的 top-K WDM 匹配)
+  │     write_map_match_log   → map_match_log    (每 map 的最高分 token 对)
+  │
+  └── scripts/batch_viz.py (--save-count-partial-figures / --save-classnumber-figures)
+        ├── save_count_partial_figures → count_partial_review/
+        │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
+        │     (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
+        └── save_classnumber_figures → classnumber_review/
+              viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
+              (topk_steps/ 下按排名生成步骤图, 同样 result + result_matched_only 各一套)
+
+### 3.2 代码结构
+
+```text
+match/
+  core/
+    models.py              # GridMaps、DefectTable、状态常量
+    mappers.py             # 3 种坐标映射器（die-index / relative-coordinate / physical-coordinate）
+    representations.py     # 6 种网格表达（binary / count / density / soft / three-value / mountain）
+    pipeline.py            # map_klarf_to_grid 端到端入口
+    similarity.py          # 8 种全图相似度计算
+    local_matching/        # count-partial 局部匹配
+      models.py            # LocalMatchResult、ProposalConfig
+      morphology.py        # 连通域提取、形态学操作
+      proposal.py          # token 提案生成（cc / compact 两种模式）
+      descriptors.py       # shape descriptor（Zernike 矩 + 几何特征）
+      scoring.py           # token 配对打分、贪心匹配、分数聚合
+    classnumber_matching.py # classnumber 分图匹配
+  data/
+    fileio.py              # KLARF 解析、WBM PNG 解码
+  viz/
+    visualization.py              # 通用对比图
+    count_partial_visualization.py # count-partial 步骤图 / TopK 图
+    classnumber_visualization.py  # classnumber 分图可视化
+  scripts/
+    cli_args.py    # CLI 参数定义与列名常量
+    main.py        # 批量处理入口
+    processing.py  # 单文件处理编排
+    batch_io.py    # TSV / TopK / token-match 日志写入
+    batch_viz.py   # 批处理图表生成调度
+```
 
 ---
 
-## 7. 参考论文方向
+## 4. 技术思路
 
-| 方向 | 可借鉴方法 |
-|------|-----------|
-| SIMI Ratio / Morphology | 三值图、spatial filter |
-| Hsu 2020 Mountain Function + WMHD | 密度表面、outlier penalty |
-| Lee 2021 DPGMM + HCM + JSD | 局部 cluster 分解 |
-| Wang 2023 Tensor Voting + WBBS | 结构显著性、partial matching |
-| Kang 2024 Shape/Location/Size | 多分量可解释得分 |
+### 4.1 Map：坐标映射与网格表达
+
+KLARF 中的每个缺陷带有 die 索引（XINDEX/YINDEX）和 die 内相对坐标（XREL/YREL）。Mapper 将缺陷散点映射到与 WBM 同尺寸的 H×W 网格中：`physical-coordinate` 合并 die 索引与 die 内坐标，计算归一化位置后按比例映射到网格格点；`die-index` 和 `relative-coordinate` 分别只用 die 索引或 die 内坐标做线性缩放。
+
+映射后统计每个格点的缺陷数得到 `count_map`，再派生 `binary_map`（count ≥ threshold）、`density_map`（count 归一化为概率分布）等表示。网格始终以 WBM 尺寸为准，确保两张图可逐格点比对。
+
+WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色=无缺陷但晶圆内（`VALID_NO_DEFECT=1`）、黑色=晶圆外背景（`BACKGROUND=0`）。所有后续计算只在有效区域（status ∈ {1,2}）内进行。
+
+### 4.2 Proposal：Token 提取
+
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。支持两种模式：
+
+- **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
+- **Compact**：先提取边缘环状 token（radial histogram 检测环形密集带），再从残差中提取 component token（分类为 blob / line / central / irregular），按类型多样性选取
+
+每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。
+
+### 4.3 Descriptor：形状描述符
+
+每个 token 的形状描述符由两部分拼接并归一化到单位长度：
+
+**Zernike 矩（权重 0.75）**：将 token 的 bbox 裁剪区域最近邻缩放到 48×48，映射到单位圆盘，计算 8 阶 Zernike 矩的幅值向量。Zernike 矩天然旋转不变，对平移和缩放也有良好鲁棒性。
+
+**几何特征（权重 0.25）**：`[fill_ratio, log(aspect), log(elongation), compactness, angular_coverage, radial_std, orientation_cos, orientation_sin]`。
+
+若启用 `rotation_tolerance`，描述符退化为径向轮廓直方图（旧版方式）。
+
+### 4.4 Score：Token 匹配与分数聚合
+
+**Token 对打分**：对每对 (WBM token, WDM token)，计算三个维度的亲和度，组合为 token pair score：
+
+- **Shape similarity**：两个描述符的余弦相似度（或 Zernike 余弦相似度 ×0.75 + 几何特征指数衰减相似度 ×0.25）。低于 `MIN_SHAPE_SIM_FOR_MATCH=0.45` 的直接置零
+- **Position affinity**：`exp(-d² / σ_pos²)`，d 为归一化质心间的欧氏距离
+- **Scale affinity**：`w_area × area_aff + w_pca × pca_aff`
+  - `area_aff = exp(-|log(area_q / area_c)| / σ_scale)`
+  - `pca_aff = exp(-(0.75·|log(long_q/long_c)| + 0.25·|log(short_q/short_c)|) / σ_scale)`
+
+```
+token_score = w_shape × shape_sim + w_position × position_aff + w_scale × scale_aff
+```
+
+默认权重：`w_shape=0.60, w_position=0.25, w_scale=0.15`。
+
+**贪心一对一匹配**：所有 token 对按 score 降序排列，贪心选取不重复使用 token 的配对。
+
+**分数聚合**：以每个 WBM token 的 √area 为权重，对匹配到的 token pair score 做加权平均：
+
+- **result**：所有 scored WBM token 参与加权（未匹配到 WDM 的贡献 0）
+- **result_matched_only**：仅实际匹配到的 WBM token 参与加权
+
+```
+final_score = Σ(matched_score_i × √area_i) / Σ(√area_i)
+```
+
+同时对 shape_sim、position_aff、scale_aff、type_aff 分别做同样的加权平均，输出 `mean_shape`、`mean_position`、`mean_scale`、`mean_type`。
+
+**Classnumber 扩展**：将 KLARF 按 defect classnumber 拆分为多个子 WDM，每个子 WDM 独立做上述 count-partial（及可选 binary-partial）匹配，选出 rank_score 最高的 classnumber 作为 best-classnumber 输出。

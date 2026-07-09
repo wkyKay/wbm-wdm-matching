@@ -35,7 +35,7 @@ def plot_classnumber_splits(
     for split in class_result.splits:
         panels.append((f"class {split.classnumber}", split.grid_maps, split))
 
-    score_mode = class_result.rank_by
+    score_mode = class_result.match_mode
     images = [_masked_wdm_image(gm, reference.status_map, score_mode) for _, gm, split in panels if split is not None or gm is full_candidate]
     vmax = _heatmap_vmax(images)
     n = len(panels)
@@ -57,8 +57,8 @@ def plot_classnumber_splits(
                 ax.set_title("WDM all")
             else:
                 marker = "  BEST" if split.classnumber == best_class else ""
-                score = split_score(split, class_result.rank_by)
-                ax.set_title(f"class {split.classnumber}: {score:.3f} ({class_result.rank_by}){marker}")
+                score = split_score(split, class_result.match_mode)
+                ax.set_title(f"class {split.classnumber}: {score:.3f} ({class_result.match_mode}){marker}")
                 if split.classnumber == best_class:
                     for spine in ax.spines.values():
                         spine.set_visible(True)

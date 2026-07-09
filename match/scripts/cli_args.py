@@ -341,15 +341,9 @@ def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--classnumber-match-mode",
-        choices=("count", "binary", "both"),
-        default="count",
-        help="Scoring mode for classnumber split matching. 'count' keeps the existing count-partial behavior.",
-    )
-    parser.add_argument(
-        "--classnumber-rank-by",
         choices=("count", "binary"),
         default="count",
-        help="Score used to rank classnumber split outputs when --classnumber-match-mode=both.",
+        help="Scoring mode for classnumber split matching: 'count' uses count-partial token matching, 'binary' uses binary-token partial matching.",
     )
     parser.add_argument(
         "--classnumber-binary-dilation",

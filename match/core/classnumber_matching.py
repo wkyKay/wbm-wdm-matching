@@ -28,7 +28,6 @@ class ClassNumberMatchResult:
     splits: List[ClassSplitMatch]
     best: ClassSplitMatch | None
     match_mode: str
-    rank_by: str
 
 
 def compute_classnumber_matches(
@@ -43,7 +42,6 @@ def compute_classnumber_matches(
     min_area: int = 5,
     top_k: int = 6,
     match_mode: str = "count",
-    rank_by: str = "count",
     binary_dilation: int = 1,
     binary_beta: float = 0.5,
     die_defect_threshold: int = 1,
@@ -59,7 +57,6 @@ def compute_classnumber_matches(
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
-    rank_by = _normalize_rank_by(match_mode, rank_by)
     tables = load_defect_tables(klarf_path)
     if defect_table_index < 0 or defect_table_index >= len(tables):
         raise IndexError(
@@ -68,7 +65,7 @@ def compute_classnumber_matches(
 
     split_tables = split_defect_table_by_classnumber(tables[defect_table_index])
     if not split_tables:
-        return ClassNumberMatchResult(splits=[], best=None, match_mode=match_mode, rank_by=rank_by)
+        return ClassNumberMatchResult(splits=[], best=None, match_mode=match_mode)
 
     mapper = build_mapper(
         klarf_path=klarf_path,
@@ -99,7 +96,7 @@ def compute_classnumber_matches(
         partial_matched_only = None
         binary = None
         binary_matched_only = None
-        if match_mode in ("count", "both"):
+        if match_mode == "count":
             count_explanation = explain_count_partial_match(
                 reference,
                 gm,
@@ -117,7 +114,7 @@ def compute_classnumber_matches(
             )
             partial = count_explanation["result"]
             partial_matched_only = count_explanation["result_matched_only"]
-        if match_mode in ("binary", "both"):
+        if match_mode == "binary":
             binary, binary_matched_only = compute_binary_class_score(
                 reference,
                 gm,
@@ -134,7 +131,7 @@ def compute_classnumber_matches(
                 scale_pca_weight=scale_pca_weight,
             )
 
-        rank_score = _rank_score(partial, binary, rank_by)
+        rank_score = _rank_score(partial, binary, match_mode)
         splits.append(
             ClassSplitMatch(
                 classnumber=classnumber,
@@ -144,12 +141,12 @@ def compute_classnumber_matches(
                 binary=binary,
                 binary_matched_only=binary_matched_only,
                 rank_score=rank_score,
-                rank_mode=rank_by,
+                rank_mode=match_mode,
             )
         )
 
     best = max(splits, key=lambda item: item.rank_score) if splits else None
-    return ClassNumberMatchResult(splits=splits, best=best, match_mode=match_mode, rank_by=rank_by)
+    return ClassNumberMatchResult(splits=splits, best=best, match_mode=match_mode)
 
 
 def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]:
@@ -168,7 +165,7 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
             "best-classnumber-binary-tokens": "",
             "best-classnumber-binary-coverage": "",
             "best-classnumber-binary-leakage": "",
-            "best-classnumber-rank-mode": result.rank_by,
+            "best-classnumber-rank-mode": result.match_mode,
             "best-classnumber-rank-score": "",
             "best-classnumber-mo-partial": "",
             "best-classnumber-mo-tokens": "",
@@ -200,7 +197,7 @@ def classnumber_scores_dict(result: ClassNumberMatchResult) -> Dict[str, object]
         "best-classnumber-binary-tokens": result.best.binary if result.best.binary is not None else "",
         "best-classnumber-binary-coverage": "",
         "best-classnumber-binary-leakage": "",
-        "best-classnumber-rank-mode": result.rank_by,
+        "best-classnumber-rank-mode": result.match_mode,
         "best-classnumber-rank-score": result.best.rank_score,
         "best-classnumber-mo-partial": mo_partial_score,
         "best-classnumber-mo-tokens": mo_partial_tokens,
@@ -260,26 +257,15 @@ def split_score(split: ClassSplitMatch, mode: str) -> float:
 def _rank_score(
     partial: LocalMatchResult | None,
     binary: LocalMatchResult | None,
-    rank_by: str,
+    match_mode: str,
 ) -> float:
-    if rank_by == "count":
+    if match_mode == "count":
         return float(partial.score) if partial is not None else float("-inf")
     return float(binary.score) if binary is not None else float("-inf")
 
 
 def _normalize_match_mode(match_mode: str) -> str:
     match_mode = match_mode.lower()
-    if match_mode not in {"count", "binary", "both"}:
+    if match_mode not in {"count", "binary"}:
         raise ValueError(f"Unsupported classnumber match mode: {match_mode}")
     return match_mode
-
-
-def _normalize_rank_by(match_mode: str, rank_by: str) -> str:
-    rank_by = rank_by.lower()
-    if match_mode == "binary":
-        return "binary"
-    if match_mode == "count":
-        return "count"
-    if rank_by not in {"count", "binary"}:
-        raise ValueError(f"Unsupported classnumber rank mode: {rank_by}")
-    return rank_by

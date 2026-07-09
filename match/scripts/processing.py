@@ -159,7 +159,6 @@ def _compute_classnumber_scores(
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
             match_mode=args.classnumber_match_mode,
-            rank_by=args.classnumber_rank_by,
             binary_dilation=args.classnumber_binary_dilation,
             binary_beta=args.classnumber_binary_beta,
             die_defect_threshold=args.die_defect_threshold,

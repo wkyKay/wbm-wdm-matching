@@ -143,14 +143,14 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
                 "partial": split.partial,
                 "binary": split.binary,
                 "rank_score": split.rank_score,
-                "rank_mode": class_result.rank_by,
+                "rank_mode": class_result.match_mode,
             })
 
     if not split_records:
         print("Classnumber figures skipped: no valid classnumber split results available")
         return
 
-    rank_by = _effective_classnumber_rank_by(args)
+    rank_by = args.classnumber_match_mode
     split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
     top_k = max(args.count_partial_review_top_k, 1)
     top_records = split_records[:top_k]
@@ -312,19 +312,8 @@ def _save_topk_classnumber_split_maps(
         print(f"Classnumber split figure saved: {path}")
 
 
-def _effective_classnumber_rank_by(args) -> str:
-    if args.classnumber_match_mode == "binary":
-        return "binary"
-    if args.classnumber_match_mode == "count":
-        return "count"
-    return args.classnumber_rank_by
-
-
 def _classnumber_review_name(args) -> str:
     mode = getattr(args, "classnumber_match_mode", "count")
-    if mode == "both":
-        rank_by = _effective_classnumber_rank_by(args)
-        return f"classnumber_review_both_rank_{_safe_name(rank_by)}"
     return f"classnumber_review_{_safe_name(mode)}"
 
 
@@ -332,13 +321,13 @@ def _safe_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
 
 
-def _mo_split_rank_score(split, rank_by: str) -> float:
-    """Extract matched-only rank score from a ClassSplitMatch for the given rank_by mode."""
-    if rank_by == "count":
+def _mo_split_rank_score(split, match_mode: str) -> float:
+    """Extract matched-only rank score from a ClassSplitMatch for the given match_mode."""
+    if match_mode == "count":
         if split.partial_matched_only is not None:
             return float(split.partial_matched_only.score)
         return float(split.partial.score) if split.partial is not None else float("-inf")
-    if rank_by == "binary":
+    if match_mode == "binary":
         if split.binary_matched_only is not None:
             return float(split.binary_matched_only.score)
         return float(split.binary.score) if split.binary is not None else float("-inf")
