@@ -243,8 +243,26 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--count-partial-min-token-score",
         type=float,
-        default=0.10,
+        default=0.45,
         help="Minimum final token-pair score required before a pair can enter count-partial matching.",
+    )
+    parser.add_argument(
+        "--count-partial-score-shape-weight",
+        type=float,
+        default=0.60,
+        help="Shape similarity weight in count-partial token score.",
+    )
+    parser.add_argument(
+        "--count-partial-score-position-weight",
+        type=float,
+        default=0.25,
+        help="Position affinity weight in count-partial token score.",
+    )
+    parser.add_argument(
+        "--count-partial-score-scale-weight",
+        type=float,
+        default=0.15,
+        help="Scale affinity weight in count-partial token score.",
     )
     parser.add_argument(
         "--token-match-log",

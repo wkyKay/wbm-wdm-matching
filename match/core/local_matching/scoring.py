@@ -9,8 +9,10 @@ from .proposal import (_proposal_config, _tokens_from_mask, _tokens_from_weighte
 
 
 MIN_SHAPE_SIM_FOR_MATCH = 0.45
-MIN_TOKEN_SCORE_FOR_MATCH = 0.10
-SHAPE_SCORE_POWER = 2.0
+MIN_TOKEN_SCORE_FOR_MATCH = 0.45
+DEFAULT_SHAPE_SCORE_WEIGHT = 0.60
+DEFAULT_POSITION_SCORE_WEIGHT = 0.25
+DEFAULT_SCALE_SCORE_WEIGHT = 0.15
 
 
 def compute_count_partial_match(
@@ -25,6 +27,9 @@ def compute_count_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference,
@@ -38,6 +43,9 @@ def compute_count_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
     )
     return explanation["result"]
 
@@ -54,6 +62,9 @@ def compute_binary_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference,
@@ -67,6 +78,9 @@ def compute_binary_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
     )
     return explanation["result"]
 
@@ -83,6 +97,9 @@ def explain_count_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -104,6 +121,9 @@ def explain_count_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
     )
 
 
@@ -119,6 +139,9 @@ def explain_binary_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -140,6 +163,9 @@ def explain_binary_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
     )
 
 
@@ -158,6 +184,9 @@ def _explain_local_partial_match(
     proposal_mode: str,
     rotation_tolerance: bool,
     min_token_score: float,
+    score_shape_weight: float,
+    score_position_weight: float,
+    score_scale_weight: float,
 ) -> Dict:
     proposal_config = _proposal_config(
         reference.status_map.shape,
@@ -198,9 +227,20 @@ def _explain_local_partial_match(
 
     all_pairs = []
     min_token_score = max(float(min_token_score), 0.0)
+    score_weights = _normalized_score_weights(
+        score_shape_weight,
+        score_position_weight,
+        score_scale_weight,
+    )
     for query_id, qt in enumerate(wbm_tokens):
         for candidate_id, ct in enumerate(wdm_tokens):
-            comp = _token_match_components(qt, ct, sigma_pos=sigma_pos, sigma_scale=sigma_scale)
+            comp = _token_match_components(
+                qt,
+                ct,
+                sigma_pos=sigma_pos,
+                sigma_scale=sigma_scale,
+                score_weights=score_weights,
+            )
             passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
             if passes_score_gate:
                 all_pairs.append(_pair_record(query_id, candidate_id, qt, ct, comp))
@@ -288,7 +328,31 @@ def _explain_local_partial_match(
     }
 
 
-def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigma_scale: float) -> Dict:
+def _normalized_score_weights(
+    shape_weight: float,
+    position_weight: float,
+    scale_weight: float,
+) -> tuple[float, float, float]:
+    weights = np.asarray([shape_weight, position_weight, scale_weight], dtype=np.float32)
+    weights = np.maximum(weights, 0.0)
+    total = float(weights.sum())
+    if total <= 1e-8:
+        return (
+            DEFAULT_SHAPE_SCORE_WEIGHT,
+            DEFAULT_POSITION_SCORE_WEIGHT,
+            DEFAULT_SCALE_SCORE_WEIGHT,
+        )
+    weights = weights / total
+    return float(weights[0]), float(weights[1]), float(weights[2])
+
+
+def _token_match_components(
+    query: Dict,
+    candidate: Dict,
+    sigma_pos: float,
+    sigma_scale: float,
+    score_weights: tuple[float, float, float],
+) -> Dict:
     shape_parts = _shape_similarity_components(query, candidate)
     shape_sim = shape_parts["shape_sim"]
     pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
@@ -301,7 +365,8 @@ def _token_match_components(query: Dict, candidate: Dict, sigma_pos: float, sigm
     if shape_sim < MIN_SHAPE_SIM_FOR_MATCH:
         score = 0.0
     else:
-        score = (shape_sim**SHAPE_SCORE_POWER) * position_affinity * scale_affinity
+        w_shape, w_position, w_scale = score_weights
+        score = w_shape * shape_sim + w_position * position_affinity + w_scale * scale_affinity
     return {
         "score": float(score),
         "shape_sim": shape_sim,

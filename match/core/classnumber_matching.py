@@ -47,7 +47,10 @@ def compute_classnumber_matches(
     die_defect_threshold: int = 1,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
-    min_token_score: float = 0.10,
+    min_token_score: float = 0.45,
+    score_shape_weight: float = 0.60,
+    score_position_weight: float = 0.25,
+    score_scale_weight: float = 0.15,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -98,6 +101,9 @@ def compute_classnumber_matches(
                 proposal_mode=proposal_mode,
                 rotation_tolerance=rotation_tolerance,
                 min_token_score=min_token_score,
+                score_shape_weight=score_shape_weight,
+                score_position_weight=score_position_weight,
+                score_scale_weight=score_scale_weight,
             )
         if match_mode in ("binary", "both"):
             binary = compute_binary_class_score(
@@ -108,6 +114,9 @@ def compute_classnumber_matches(
                 proposal_mode=proposal_mode,
                 rotation_tolerance=rotation_tolerance,
                 min_token_score=min_token_score,
+                score_shape_weight=score_shape_weight,
+                score_position_weight=score_position_weight,
+                score_scale_weight=score_scale_weight,
             )
 
         rank_score = _rank_score(partial, binary, rank_by)
@@ -173,7 +182,10 @@ def compute_binary_class_score(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
-    min_token_score: float = 0.10,
+    min_token_score: float = 0.45,
+    score_shape_weight: float = 0.60,
+    score_position_weight: float = 0.25,
+    score_scale_weight: float = 0.15,
 ) -> LocalMatchResult:
     """Score a classnumber split using binary-token partial matching."""
     return compute_binary_partial_match(
@@ -184,6 +196,9 @@ def compute_binary_class_score(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
     )
 
 

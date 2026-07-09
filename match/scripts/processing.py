@@ -109,6 +109,9 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             proposal_mode=args.count_partial_proposal_mode,
             rotation_tolerance=args.count_partial_rotation_tolerance,
             min_token_score=args.count_partial_min_token_score,
+            score_shape_weight=args.count_partial_score_shape_weight,
+            score_position_weight=args.count_partial_score_position_weight,
+            score_scale_weight=args.count_partial_score_scale_weight,
         )
         partial = explanation["result"]
         return {
@@ -153,6 +156,9 @@ def _compute_classnumber_scores(
             proposal_mode=args.count_partial_proposal_mode,
             rotation_tolerance=args.count_partial_rotation_tolerance,
             min_token_score=args.count_partial_min_token_score,
+            score_shape_weight=args.count_partial_score_shape_weight,
+            score_position_weight=args.count_partial_score_position_weight,
+            score_scale_weight=args.count_partial_score_scale_weight,
         )
         result = classnumber_scores_dict(class_result)
         if args.save_classnumber_figures:

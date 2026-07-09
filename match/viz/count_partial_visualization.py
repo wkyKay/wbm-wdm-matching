@@ -36,7 +36,10 @@ def plot_count_partial_steps(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
-    min_token_score: float = 0.10,
+    min_token_score: float = 0.45,
+    score_shape_weight: float = 0.60,
+    score_position_weight: float = 0.25,
+    score_scale_weight: float = 0.15,
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
@@ -51,6 +54,9 @@ def plot_count_partial_steps(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
     )
     result = explanation[result_key]
     wbm_tokens = explanation["wbm_tokens"]
@@ -105,7 +111,10 @@ def plot_count_partial_topk(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
-    min_token_score: float = 0.10,
+    min_token_score: float = 0.45,
+    score_shape_weight: float = 0.60,
+    score_position_weight: float = 0.25,
+    score_scale_weight: float = 0.15,
     save_path: str | Path | None = None,
     result_key: str = "result",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
@@ -122,6 +131,9 @@ def plot_count_partial_topk(
                 proposal_mode=proposal_mode,
                 rotation_tolerance=rotation_tolerance,
                 min_token_score=min_token_score,
+                score_shape_weight=score_shape_weight,
+                score_position_weight=score_position_weight,
+                score_scale_weight=score_scale_weight,
             ),
         )
         for name, gm in candidates
@@ -272,15 +284,13 @@ def _plot_match_evidence_table(ax: plt.Axes, result, matches: List[Dict]) -> Non
             f"{match.get('geometry_sim', 0.0):.3f}",
             f"{match.get('position_affinity', 0.0):.3f}",
             f"{match.get('scale_affinity', 0.0):.3f}",
-            str(query.get("geometry_type", "")),
-            str(candidate.get("geometry_type", "")),
             f"{float(query.get('area', 0.0)):.0f}",
             f"{float(candidate.get('area', 0.0)):.0f}",
         ])
     if not rows:
-        rows = [["", "no match", "", "", "", "", "", "", "", "", "", ""]]
+        rows = [["", "no match", "", "", "", "", "", "", "", ""]]
 
-    columns = ["rank", "pair", "score", "shape", "moment", "geom", "pos", "scale", "q_type", "c_type", "q_area", "c_area"]
+    columns = ["rank", "pair", "score", "shape", "moment", "geom", "pos", "scale", "q_area", "c_area"]
     ax.axis("off")
     ax.set_title(
         (

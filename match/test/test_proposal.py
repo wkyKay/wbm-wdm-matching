@@ -70,7 +70,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--map-match-top-k", type=int, default=20)
     parser.add_argument("--sigma-pos", type=float, default=0.35)
     parser.add_argument("--sigma-scale", type=float, default=1.5)
-    parser.add_argument("--min-token-score", type=float, default=0.10)
+    parser.add_argument("--min-token-score", type=float, default=0.45)
+    parser.add_argument("--score-shape-weight", type=float, default=0.60)
+    parser.add_argument("--score-position-weight", type=float, default=0.25)
+    parser.add_argument("--score-scale-weight", type=float, default=0.15)
     parser.add_argument("--proposal-mode", type=str, default="compact", choices=["cc", "compact"])
     parser.add_argument("--rotation-tolerance", action="store_true")
     parser.add_argument("--save-figures", action=argparse.BooleanOptionalAction, default=True)
@@ -118,6 +121,9 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
             proposal_mode=args.proposal_mode,
             rotation_tolerance=args.rotation_tolerance,
             min_token_score=args.min_token_score,
+            score_shape_weight=args.score_shape_weight,
+            score_position_weight=args.score_position_weight,
+            score_scale_weight=args.score_scale_weight,
         )
         result = explanation["result"]
         result_mo = explanation["result_matched_only"]
@@ -353,6 +359,9 @@ def _save_review_figures(
             proposal_mode=args.proposal_mode,
             rotation_tolerance=args.rotation_tolerance,
             min_token_score=args.min_token_score,
+            score_shape_weight=args.score_shape_weight,
+            score_position_weight=args.score_position_weight,
+            score_scale_weight=args.score_scale_weight,
             save_path=topk_path,
             result_key=result_key,
         )
@@ -376,6 +385,9 @@ def _save_review_figures(
             proposal_mode=args.proposal_mode,
             rotation_tolerance=args.rotation_tolerance,
             min_token_score=args.min_token_score,
+            score_shape_weight=args.score_shape_weight,
+            score_position_weight=args.score_position_weight,
+            score_scale_weight=args.score_scale_weight,
             save_path=step_path,
             result_key=result_key,
         )
@@ -413,6 +425,9 @@ def _write_selection_json(
         "token_match_top_k": int(args.token_match_top_k),
         "map_match_top_k": int(args.map_match_top_k),
         "min_token_score": float(args.min_token_score),
+        "score_shape_weight": float(args.score_shape_weight),
+        "score_position_weight": float(args.score_position_weight),
+        "score_scale_weight": float(args.score_scale_weight),
         "reference": {
             "map_id": int(original_ids[reference_pos]),
             "valid_position": int(reference_pos),
