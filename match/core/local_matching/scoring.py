@@ -175,18 +175,20 @@ def _explain_local_partial_match(
         proposal_config=proposal_config,
     )
 
+    empty_result = LocalMatchResult(
+        score=0.0,
+        mean_shape=0.0,
+        mean_position=0.0,
+        mean_scale=0.0,
+        mean_type=0.0,
+        matched_tokens=0,
+        wbm_tokens=len(wbm_tokens),
+        wdm_tokens=len(wdm_tokens),
+    )
     if not wbm_tokens or not wdm_tokens:
         return {
-            "result": LocalMatchResult(
-                score=0.0,
-                mean_shape=0.0,
-                mean_position=0.0,
-                mean_scale=0.0,
-                mean_type=0.0,
-                matched_tokens=0,
-                wbm_tokens=len(wbm_tokens),
-                wdm_tokens=len(wdm_tokens),
-            ),
+            "result": empty_result,
+            "result_matched_only": empty_result,
             "wbm_tokens": wbm_tokens,
             "wdm_tokens": wdm_tokens,
             "matches": [],
@@ -242,8 +244,42 @@ def _explain_local_partial_match(
         wbm_tokens=len(wbm_tokens),
         wdm_tokens=len(wdm_tokens),
     )
+
+    # --- matched-only scoring: only matched tokens contribute to the weighted average ---
+    matched_weighted_scores = []
+    matched_weights = []
+    matched_components = []
+    for query_id, qt in enumerate(wbm_tokens):
+        weight = float(np.sqrt(max(qt["area"], 1.0)))
+        match = next((m for m in matches if m["query_token_id"] == query_id), None)
+        if match:
+            matched_weighted_scores.append(match["score"] * weight)
+            matched_weights.append(weight)
+            matched_components.append({k: match[k] for k in ("score", "shape_sim", "position_affinity", "scale_affinity", "type_affinity")})
+    mo_total_weight = float(np.sum(matched_weights))
+    score_mo = float(np.sum(matched_weighted_scores) / max(mo_total_weight, 1e-6)) if matched_weights else 0.0
+    mo_weights_arr = np.asarray(matched_weights, dtype=np.float32)
+
+    def _mo_weighted_mean(name: str) -> float:
+        if mo_weights_arr.size == 0:
+            return 0.0
+        vals = np.asarray([c[name] for c in matched_components], dtype=np.float32)
+        return float((vals * mo_weights_arr).sum() / max(mo_weights_arr.sum(), 1e-6))
+
+    result_matched_only = LocalMatchResult(
+        score=score_mo,
+        mean_shape=_mo_weighted_mean("shape_sim"),
+        mean_position=_mo_weighted_mean("position_affinity"),
+        mean_scale=_mo_weighted_mean("scale_affinity"),
+        mean_type=_mo_weighted_mean("type_affinity"),
+        matched_tokens=len(matches),
+        wbm_tokens=len(wbm_tokens),
+        wdm_tokens=len(wdm_tokens),
+    )
+
     return {
         "result": result,
+        "result_matched_only": result_matched_only,
         "wbm_tokens": wbm_tokens,
         "wdm_tokens": wdm_tokens,
         "matches": matches,

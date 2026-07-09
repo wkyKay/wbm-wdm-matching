@@ -101,9 +101,9 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
         })
 
     ranking_rows = []
+    ranking_rows_mo = []
     token_rows = []
     detail_rows = []
-    explanations_by_candidate = {}
     reference_token_rows_written = False
     for candidate in candidate_records:
         explanation = explain_count_partial_match(
@@ -119,8 +119,8 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
             rotation_tolerance=args.rotation_tolerance,
             min_token_score=args.min_token_score,
         )
-        explanations_by_candidate[candidate["map_id"]] = explanation
         result = explanation["result"]
+        result_mo = explanation["result_matched_only"]
         if not reference_token_rows_written:
             token_rows.extend(_token_rows("reference", int(original_ids[reference_pos]), labels[reference_pos], explanation["wbm_tokens"]))
             reference_token_rows_written = True
@@ -138,11 +138,28 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
             "candidate_signature": _signature_text(candidate["label"]),
             "candidate_defect_count": int((candidate["grid"].count_map > 0).sum()),
         })
+        ranking_rows_mo.append({
+            "query_id": int(original_ids[reference_pos]),
+            "candidate_id": candidate["map_id"],
+            "similarity_score": float(result_mo.score),
+            "mean_shape": float(result_mo.mean_shape),
+            "mean_position": float(result_mo.mean_position),
+            "mean_scale": float(result_mo.mean_scale),
+            "matched_tokens": int(result_mo.matched_tokens),
+            "reference_token_count": int(result_mo.wbm_tokens),
+            "candidate_token_count": int(result_mo.wdm_tokens),
+            "candidate_signature": _signature_text(candidate["label"]),
+            "candidate_defect_count": int((candidate["grid"].count_map > 0).sum()),
+        })
         if args.save_match_details:
             detail_rows.extend(_match_detail_rows(int(original_ids[reference_pos]), candidate["map_id"], result.score, explanation["matches"]))
 
     ranking_rows.sort(key=lambda row: row["similarity_score"], reverse=True)
     for rank, row in enumerate(ranking_rows, start=1):
+        row["rank"] = rank
+
+    ranking_rows_mo.sort(key=lambda row: row["similarity_score"], reverse=True)
+    for rank, row in enumerate(ranking_rows_mo, start=1):
         row["rank"] = rank
 
     out_dir = _output_dir(args.out_dir, reference.count_map.shape, target_shape)
@@ -154,11 +171,16 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
         top_ids = {int(row["candidate_id"]) for row in ranking_rows[:max(args.match_detail_top_k, 0)]}
         _write_csv(out_dir / "match_details.csv", [row for row in detail_rows if int(row["candidate_id"]) in top_ids], _detail_fieldnames())
     if args.save_figures:
-        _save_review_figures(out_dir, args, reference, ranking_rows, candidate_records, explanations_by_candidate)
+        _save_review_figures(out_dir, args, reference, ranking_rows, candidate_records)
+        _save_review_figures(out_dir, args, reference, ranking_rows_mo, candidate_records, review_subdir="count_partial_review_matched_only", result_key="result_matched_only")
+
+    # --- matched-only rankings CSV ---
+    _write_csv(out_dir / "rankings_matched_only.csv", ranking_rows_mo, _ranking_fieldnames())
 
     print(f"Reference map_id={int(original_ids[reference_pos])} signature={_signature_text(labels[reference_pos])}")
     print(f"Scored {len(candidate_records)} candidates at shape {reference.count_map.shape[0]}x{reference.count_map.shape[1]}")
     print(f"Saved rankings to {out_dir / 'rankings.csv'}")
+    print(f"Saved matched-only rankings to {out_dir / 'rankings_matched_only.csv'}")
     return {"out_dir": out_dir, "rankings_path": out_dir / "rankings.csv", "tokens_path": out_dir / "tokens.csv"}
 
 
@@ -300,7 +322,8 @@ def _save_review_figures(
     reference: GridMaps,
     ranking_rows: List[Dict],
     candidates: List[Dict],
-    explanations_by_candidate: Dict[int, Dict],
+    review_subdir: str = "count_partial_review",
+    result_key: str = "result",
 ) -> None:
     _ensure_mpl()
     import matplotlib.pyplot as plt
@@ -314,12 +337,10 @@ def _save_review_figures(
         for row in top_rows
         if int(row["candidate_id"]) in candidate_by_id
     ]
-    review_dir = out_dir / "count_partial_review"
+    review_dir = out_dir / review_subdir
     steps_dir = review_dir / "proposal_steps"
-    evidence_dir = review_dir / "match_evidence"
     review_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
-    evidence_dir.mkdir(parents=True, exist_ok=True)
 
     if top_candidates:
         topk_path = review_dir / f"top{len(top_candidates)}_count_partial.png"
@@ -333,6 +354,7 @@ def _save_review_figures(
             rotation_tolerance=args.rotation_tolerance,
             min_token_score=args.min_token_score,
             save_path=topk_path,
+            result_key=result_key,
         )
         plt.close("all")
         print(f"Count-partial TopK figure saved: {topk_path}")
@@ -355,68 +377,10 @@ def _save_review_figures(
             rotation_tolerance=args.rotation_tolerance,
             min_token_score=args.min_token_score,
             save_path=step_path,
+            result_key=result_key,
         )
         plt.close("all")
         print(f"Count-partial step figure saved: {step_path}")
-
-        evidence_path = evidence_dir / f"{stem}_match_evidence.png"
-        _plot_match_evidence(
-            explanations_by_candidate[candidate_id],
-            title=f"Rank {rank}: map {candidate_id} match evidence",
-            save_path=evidence_path,
-        )
-        plt.close("all")
-        print(f"Match evidence figure saved: {evidence_path}")
-
-
-def _plot_match_evidence(explanation: Dict, title: str, save_path: Path) -> None:
-    import matplotlib.pyplot as plt
-
-    result = explanation["result"]
-    matches = explanation.get("matches", [])
-    rows = []
-    for match in matches:
-        query = match.get("query_token", {})
-        candidate = match.get("candidate_token", {})
-        rows.append([
-            int(match.get("rank", 0)),
-            f"{int(match.get('query_token_id', 0))}->{int(match.get('candidate_token_id', 0))}",
-            f"{match.get('score', 0.0):.3f}",
-            f"{match.get('shape_sim', 0.0):.3f}",
-            f"{match.get('moment_sim', 0.0):.3f}",
-            f"{match.get('geometry_sim', 0.0):.3f}",
-            f"{match.get('position_affinity', 0.0):.3f}",
-            f"{match.get('scale_affinity', 0.0):.3f}",
-            str(query.get("geometry_type", "")),
-            str(candidate.get("geometry_type", "")),
-            f"{float(query.get('area', 0.0)):.0f}",
-            f"{float(candidate.get('area', 0.0)):.0f}",
-        ])
-    if not rows:
-        rows = [["", "no match", "", "", "", "", "", "", "", "", "", ""]]
-
-    columns = ["rank", "pair", "score", "shape", "moment", "geom", "pos", "scale", "q_type", "c_type", "q_area", "c_area"]
-    height = max(3.2, 1.2 + 0.36 * len(rows))
-    fig, ax = plt.subplots(figsize=(12.5, height))
-    ax.axis("off")
-    subtitle = (
-        f"map score={result.score:.3f}  shape={result.mean_shape:.3f}  "
-        f"pos={result.mean_position:.3f}  scale={result.mean_scale:.3f}  "
-        f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
-    )
-    ax.set_title(f"{title}\n{subtitle}", fontsize=11, pad=12)
-    table = ax.table(cellText=rows, colLabels=columns, cellLoc="center", loc="center")
-    table.auto_set_font_size(False)
-    table.set_fontsize(8)
-    table.scale(1.0, 1.25)
-    for (r, _), cell in table.get_celld().items():
-        if r == 0:
-            cell.set_facecolor("#e5e7eb")
-            cell.set_text_props(weight="bold")
-        else:
-            cell.set_facecolor("#f9fafb" if r % 2 else "#ffffff")
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(save_path, dpi=160, bbox_inches="tight")
 
 
 def _ensure_mpl() -> None:

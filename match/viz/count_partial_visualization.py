@@ -40,6 +40,7 @@ def plot_count_partial_steps(
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
+    result_key: str = "result",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render one WBM/WDM pair as proposal-to-match steps."""
     explanation = explain_fn(
@@ -51,7 +52,7 @@ def plot_count_partial_steps(
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
     )
-    result = explanation["result"]
+    result = explanation[result_key]
     wbm_tokens = explanation["wbm_tokens"]
     wdm_tokens = explanation["wdm_tokens"]
     matches = explanation["matches"]
@@ -106,6 +107,7 @@ def plot_count_partial_topk(
     rotation_tolerance: bool = False,
     min_token_score: float = 0.10,
     save_path: str | Path | None = None,
+    result_key: str = "result",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
     """Render reference WBM tokens against top candidate WDM count heatmaps."""
     explanations = [
@@ -130,7 +132,7 @@ def plot_count_partial_topk(
     all_axes: List[plt.Axes] = []
 
     for row, (name, gm, explanation) in enumerate(explanations):
-        result = explanation["result"]
+        result = explanation[result_key]
         wbm_tokens = explanation["wbm_tokens"]
         wdm_tokens = explanation["wdm_tokens"]
 
