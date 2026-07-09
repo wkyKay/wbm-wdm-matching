@@ -51,6 +51,9 @@ def compute_classnumber_matches(
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
+    min_relative_token_area: float = 0.10,
+    scale_area_weight: float = 0.50,
+    scale_pca_weight: float = 0.50,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -104,6 +107,9 @@ def compute_classnumber_matches(
                 score_shape_weight=score_shape_weight,
                 score_position_weight=score_position_weight,
                 score_scale_weight=score_scale_weight,
+                min_relative_token_area=min_relative_token_area,
+                scale_area_weight=scale_area_weight,
+                scale_pca_weight=scale_pca_weight,
             )
         if match_mode in ("binary", "both"):
             binary = compute_binary_class_score(
@@ -117,6 +123,9 @@ def compute_classnumber_matches(
                 score_shape_weight=score_shape_weight,
                 score_position_weight=score_position_weight,
                 score_scale_weight=score_scale_weight,
+                min_relative_token_area=min_relative_token_area,
+                scale_area_weight=scale_area_weight,
+                scale_pca_weight=scale_pca_weight,
             )
 
         rank_score = _rank_score(partial, binary, rank_by)
@@ -186,6 +195,9 @@ def compute_binary_class_score(
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
+    min_relative_token_area: float = 0.10,
+    scale_area_weight: float = 0.50,
+    scale_pca_weight: float = 0.50,
 ) -> LocalMatchResult:
     """Score a classnumber split using binary-token partial matching."""
     return compute_binary_partial_match(
@@ -199,6 +211,9 @@ def compute_binary_class_score(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
     )
 
 

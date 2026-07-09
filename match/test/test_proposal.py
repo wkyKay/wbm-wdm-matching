@@ -74,6 +74,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--score-shape-weight", type=float, default=0.60)
     parser.add_argument("--score-position-weight", type=float, default=0.25)
     parser.add_argument("--score-scale-weight", type=float, default=0.15)
+    parser.add_argument("--min-relative-token-area", type=float, default=0.10)
+    parser.add_argument("--scale-area-weight", type=float, default=0.30)
+    parser.add_argument("--scale-pca-weight", type=float, default=0.70)
     parser.add_argument("--proposal-mode", type=str, default="compact", choices=["cc", "compact"])
     parser.add_argument("--rotation-tolerance", action="store_true")
     parser.add_argument("--save-figures", action=argparse.BooleanOptionalAction, default=True)
@@ -124,6 +127,9 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
             score_shape_weight=args.score_shape_weight,
             score_position_weight=args.score_position_weight,
             score_scale_weight=args.score_scale_weight,
+            min_relative_token_area=args.min_relative_token_area,
+            scale_area_weight=args.scale_area_weight,
+            scale_pca_weight=args.scale_pca_weight,
         )
         result = explanation["result"]
         result_mo = explanation["result_matched_only"]
@@ -317,6 +323,8 @@ def _match_detail_rows(query_id: int, candidate_id: int, map_score: float, match
             "geometry_sim": float(match.get("geometry_sim", 0.0)),
             "position_affinity": float(match.get("position_affinity", 0.0)),
             "scale_affinity": float(match.get("scale_affinity", 0.0)),
+            "support_area_affinity": float(match.get("support_area_affinity", 0.0)),
+            "pca_extent_affinity": float(match.get("pca_extent_affinity", 0.0)),
             "type_affinity": float(match.get("type_affinity", 0.0)),
         })
     return rows
@@ -362,6 +370,9 @@ def _save_review_figures(
             score_shape_weight=args.score_shape_weight,
             score_position_weight=args.score_position_weight,
             score_scale_weight=args.score_scale_weight,
+            min_relative_token_area=args.min_relative_token_area,
+            scale_area_weight=args.scale_area_weight,
+            scale_pca_weight=args.scale_pca_weight,
             save_path=topk_path,
             result_key=result_key,
         )
@@ -388,6 +399,9 @@ def _save_review_figures(
             score_shape_weight=args.score_shape_weight,
             score_position_weight=args.score_position_weight,
             score_scale_weight=args.score_scale_weight,
+            min_relative_token_area=args.min_relative_token_area,
+            scale_area_weight=args.scale_area_weight,
+            scale_pca_weight=args.scale_pca_weight,
             save_path=step_path,
             result_key=result_key,
         )
@@ -428,6 +442,9 @@ def _write_selection_json(
         "score_shape_weight": float(args.score_shape_weight),
         "score_position_weight": float(args.score_position_weight),
         "score_scale_weight": float(args.score_scale_weight),
+        "min_relative_token_area": float(args.min_relative_token_area),
+        "scale_area_weight": float(args.scale_area_weight),
+        "scale_pca_weight": float(args.scale_pca_weight),
         "reference": {
             "map_id": int(original_ids[reference_pos]),
             "valid_position": int(reference_pos),
@@ -517,6 +534,8 @@ def _detail_fieldnames() -> List[str]:
         "geometry_sim",
         "position_affinity",
         "scale_affinity",
+        "support_area_affinity",
+        "pca_extent_affinity",
         "type_affinity",
     ]
 

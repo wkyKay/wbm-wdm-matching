@@ -50,6 +50,9 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
         score_shape_weight=args.count_partial_score_shape_weight,
         score_position_weight=args.count_partial_score_position_weight,
         score_scale_weight=args.count_partial_score_scale_weight,
+        min_relative_token_area=args.count_partial_min_relative_token_area,
+        scale_area_weight=args.count_partial_scale_area_weight,
+        scale_pca_weight=args.count_partial_scale_pca_weight,
         save_path=topk_path,
     )
     plt.close("all")
@@ -69,6 +72,9 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
             score_shape_weight=args.count_partial_score_shape_weight,
             score_position_weight=args.count_partial_score_position_weight,
             score_scale_weight=args.count_partial_score_scale_weight,
+            min_relative_token_area=args.count_partial_min_relative_token_area,
+            scale_area_weight=args.count_partial_scale_area_weight,
+            scale_pca_weight=args.count_partial_scale_pca_weight,
             save_path=step_path,
         )
         plt.close("all")
@@ -197,6 +203,9 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
             score_shape_weight=args.count_partial_score_shape_weight,
             score_position_weight=args.count_partial_score_position_weight,
             score_scale_weight=args.count_partial_score_scale_weight,
+            min_relative_token_area=args.count_partial_min_relative_token_area,
+            scale_area_weight=args.count_partial_scale_area_weight,
+            scale_pca_weight=args.count_partial_scale_pca_weight,
             save_path=step_path,
         )
         plt.close("all")

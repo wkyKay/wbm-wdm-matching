@@ -13,6 +13,11 @@ MIN_TOKEN_SCORE_FOR_MATCH = 0.45
 DEFAULT_SHAPE_SCORE_WEIGHT = 0.60
 DEFAULT_POSITION_SCORE_WEIGHT = 0.25
 DEFAULT_SCALE_SCORE_WEIGHT = 0.15
+DEFAULT_MIN_RELATIVE_TOKEN_AREA = 0.10
+DEFAULT_SCALE_AREA_WEIGHT = 0.30
+DEFAULT_SCALE_PCA_WEIGHT = 0.70
+PCA_LONG_EXTENT_WEIGHT = 0.75
+PCA_SHORT_EXTENT_WEIGHT = 0.25
 
 
 def compute_count_partial_match(
@@ -30,6 +35,9 @@ def compute_count_partial_match(
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference,
@@ -46,6 +54,9 @@ def compute_count_partial_match(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
     )
     return explanation["result"]
 
@@ -65,6 +76,9 @@ def compute_binary_partial_match(
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference,
@@ -81,6 +95,9 @@ def compute_binary_partial_match(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
     )
     return explanation["result"]
 
@@ -100,6 +117,9 @@ def explain_count_partial_match(
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -124,6 +144,9 @@ def explain_count_partial_match(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
     )
 
 
@@ -142,6 +165,9 @@ def explain_binary_partial_match(
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -166,6 +192,9 @@ def explain_binary_partial_match(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
     )
 
 
@@ -187,6 +216,9 @@ def _explain_local_partial_match(
     score_shape_weight: float,
     score_position_weight: float,
     score_scale_weight: float,
+    min_relative_token_area: float,
+    scale_area_weight: float,
+    scale_pca_weight: float,
 ) -> Dict:
     proposal_config = _proposal_config(
         reference.status_map.shape,
@@ -227,19 +259,38 @@ def _explain_local_partial_match(
 
     all_pairs = []
     min_token_score = max(float(min_token_score), 0.0)
+    min_relative_token_area = max(float(min_relative_token_area), 0.0)
     score_weights = _normalized_score_weights(
         score_shape_weight,
         score_position_weight,
         score_scale_weight,
     )
+    scale_component_weights = _normalized_pair_weights(
+        scale_area_weight,
+        scale_pca_weight,
+        default_a=DEFAULT_SCALE_AREA_WEIGHT,
+        default_b=DEFAULT_SCALE_PCA_WEIGHT,
+    )
+    wbm_max_area = _max_token_area(wbm_tokens)
+    wdm_max_area = _max_token_area(wdm_tokens)
+    scored_query_ids = {
+        query_id
+        for query_id, token in enumerate(wbm_tokens)
+        if _relative_area(token, wbm_max_area) >= min_relative_token_area
+    }
     for query_id, qt in enumerate(wbm_tokens):
+        if query_id not in scored_query_ids:
+            continue
         for candidate_id, ct in enumerate(wdm_tokens):
+            if _relative_area(ct, wdm_max_area) < min_relative_token_area:
+                continue
             comp = _token_match_components(
                 qt,
                 ct,
                 sigma_pos=sigma_pos,
                 sigma_scale=sigma_scale,
                 score_weights=score_weights,
+                scale_component_weights=scale_component_weights,
             )
             passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
             if passes_score_gate:
@@ -257,6 +308,8 @@ def _explain_local_partial_match(
     weights = []
     best_components = []
     for query_id, qt in enumerate(wbm_tokens):
+        if query_id not in scored_query_ids:
+            continue
         weight = float(np.sqrt(max(qt["area"], 1.0)))
         weights.append(weight)
         match = next((m for m in matches if m["query_token_id"] == query_id), None)
@@ -290,6 +343,8 @@ def _explain_local_partial_match(
     matched_weights = []
     matched_components = []
     for query_id, qt in enumerate(wbm_tokens):
+        if query_id not in scored_query_ids:
+            continue
         weight = float(np.sqrt(max(qt["area"], 1.0)))
         match = next((m for m in matches if m["query_token_id"] == query_id), None)
         if match:
@@ -328,6 +383,18 @@ def _explain_local_partial_match(
     }
 
 
+def _max_token_area(tokens: list[Dict]) -> float:
+    if not tokens:
+        return 0.0
+    return float(max(float(token.get("area", 0.0)) for token in tokens))
+
+
+def _relative_area(token: Dict, max_area: float) -> float:
+    if max_area <= 1e-8:
+        return 0.0
+    return float(token.get("area", 0.0)) / max_area
+
+
 def _normalized_score_weights(
     shape_weight: float,
     position_weight: float,
@@ -346,20 +413,32 @@ def _normalized_score_weights(
     return float(weights[0]), float(weights[1]), float(weights[2])
 
 
+def _normalized_pair_weights(a: float, b: float, default_a: float, default_b: float) -> tuple[float, float]:
+    weights = np.asarray([a, b], dtype=np.float32)
+    weights = np.maximum(weights, 0.0)
+    total = float(weights.sum())
+    if total <= 1e-8:
+        return float(default_a), float(default_b)
+    weights = weights / total
+    return float(weights[0]), float(weights[1])
+
+
 def _token_match_components(
     query: Dict,
     candidate: Dict,
     sigma_pos: float,
     sigma_scale: float,
     score_weights: tuple[float, float, float],
+    scale_component_weights: tuple[float, float],
 ) -> Dict:
     shape_parts = _shape_similarity_components(query, candidate)
     shape_sim = shape_parts["shape_sim"]
     pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
     position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
-    q_scale = max(float(query.get("support_area_ratio", 0.0)), 1e-12)
-    c_scale = max(float(candidate.get("support_area_ratio", 0.0)), 1e-12)
-    scale_affinity = float(np.exp(-abs(np.log(q_scale / c_scale)) / max(sigma_scale, 1e-6)))
+    support_area_affinity = _support_area_affinity(query, candidate, sigma_scale)
+    pca_extent_affinity = _pca_extent_affinity(query, candidate, sigma_scale)
+    area_weight, pca_weight = scale_component_weights
+    scale_affinity = area_weight * support_area_affinity + pca_weight * pca_extent_affinity
     # geometry_type remains an explanation/diversity label; shape matching lives in descriptor space.
     type_affinity = 1.0
     if shape_sim < MIN_SHAPE_SIM_FOR_MATCH:
@@ -374,8 +453,33 @@ def _token_match_components(
         "geometry_sim": shape_parts["geometry_sim"],
         "position_affinity": position_affinity,
         "scale_affinity": scale_affinity,
+        "support_area_affinity": support_area_affinity,
+        "pca_extent_affinity": pca_extent_affinity,
         "type_affinity": type_affinity,
     }
+
+
+def _support_area_affinity(query: Dict, candidate: Dict, sigma_scale: float) -> float:
+    q_scale = max(float(query.get("support_area_ratio", 0.0)), 1e-12)
+    c_scale = max(float(candidate.get("support_area_ratio", 0.0)), 1e-12)
+    return float(np.exp(-abs(np.log(q_scale / c_scale)) / max(sigma_scale, 1e-6)))
+
+
+def _pca_extent_affinity(query: Dict, candidate: Dict, sigma_scale: float) -> float:
+    q_long, q_short = _pca_extents(query)
+    c_long, c_short = _pca_extents(candidate)
+    long_delta = abs(np.log(q_long / c_long))
+    short_delta = abs(np.log(q_short / c_short))
+    weighted_delta = PCA_LONG_EXTENT_WEIGHT * long_delta + PCA_SHORT_EXTENT_WEIGHT * short_delta
+    return float(np.exp(-weighted_delta / max(sigma_scale, 1e-6)))
+
+
+def _pca_extents(token: Dict) -> tuple[float, float]:
+    long_extent = float(np.sqrt(max(float(token.get("pca_lambda1", 0.0)), 0.0) + 1.0))
+    short_extent = float(np.sqrt(max(float(token.get("pca_lambda2", 0.0)), 0.0) + 1.0))
+    if short_extent > long_extent:
+        return short_extent, long_extent
+    return long_extent, short_extent
 
 
 def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:

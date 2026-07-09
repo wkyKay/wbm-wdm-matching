@@ -142,6 +142,9 @@ def plot_classnumber_step(
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
+    min_relative_token_area: float = 0.10,
+    scale_area_weight: float = 0.50,
+    scale_pca_weight: float = 0.50,
     save_path: str | Path | None = None,
 ) -> tuple[plt.Figure, List[plt.Axes]]:
     """Render a classnumber split with its local partial matching steps."""
@@ -162,6 +165,9 @@ def plot_classnumber_step(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
         save_path=save_path,
         explain_fn=explain_fn,
         map_mode=score_mode,

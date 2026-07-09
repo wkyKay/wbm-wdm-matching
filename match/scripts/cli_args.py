@@ -265,6 +265,24 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Scale affinity weight in count-partial token score.",
     )
     parser.add_argument(
+        "--count-partial-min-relative-token-area",
+        type=float,
+        default=0.10,
+        help="Minimum token area relative to the largest same-side token before a token can enter count-partial matching.",
+    )
+    parser.add_argument(
+        "--count-partial-scale-area-weight",
+        type=float,
+        default=0.50,
+        help="Support-area component weight inside count-partial scale affinity.",
+    )
+    parser.add_argument(
+        "--count-partial-scale-pca-weight",
+        type=float,
+        default=0.50,
+        help="PCA-extent component weight inside count-partial scale affinity.",
+    )
+    parser.add_argument(
         "--token-match-log",
         default="match/output/token_match_topk.tsv",
         help="Path to per-WBM-token top-K WDM token match TSV. Empty string disables it.",

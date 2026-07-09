@@ -40,6 +40,9 @@ def plot_count_partial_steps(
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
+    min_relative_token_area: float = 0.10,
+    scale_area_weight: float = 0.50,
+    scale_pca_weight: float = 0.50,
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
@@ -57,6 +60,9 @@ def plot_count_partial_steps(
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight,
+        scale_pca_weight=scale_pca_weight,
     )
     result = explanation[result_key]
     wbm_tokens = explanation["wbm_tokens"]
@@ -115,6 +121,9 @@ def plot_count_partial_topk(
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
+    min_relative_token_area: float = 0.10,
+    scale_area_weight: float = 0.50,
+    scale_pca_weight: float = 0.50,
     save_path: str | Path | None = None,
     result_key: str = "result",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
@@ -134,6 +143,9 @@ def plot_count_partial_topk(
                 score_shape_weight=score_shape_weight,
                 score_position_weight=score_position_weight,
                 score_scale_weight=score_scale_weight,
+                min_relative_token_area=min_relative_token_area,
+                scale_area_weight=scale_area_weight,
+                scale_pca_weight=scale_pca_weight,
             ),
         )
         for name, gm in candidates
@@ -284,13 +296,15 @@ def _plot_match_evidence_table(ax: plt.Axes, result, matches: List[Dict]) -> Non
             f"{match.get('geometry_sim', 0.0):.3f}",
             f"{match.get('position_affinity', 0.0):.3f}",
             f"{match.get('scale_affinity', 0.0):.3f}",
+            f"{match.get('support_area_affinity', 0.0):.3f}",
+            f"{match.get('pca_extent_affinity', 0.0):.3f}",
             f"{float(query.get('area', 0.0)):.0f}",
             f"{float(candidate.get('area', 0.0)):.0f}",
         ])
     if not rows:
-        rows = [["", "no match", "", "", "", "", "", "", "", ""]]
+        rows = [["", "no match", "", "", "", "", "", "", "", "", "", ""]]
 
-    columns = ["rank", "pair", "score", "shape", "moment", "geom", "pos", "scale", "q_area", "c_area"]
+    columns = ["rank", "pair", "score", "shape", "moment", "geom", "pos", "scale", "area_s", "pca_s", "q_area", "c_area"]
     ax.axis("off")
     ax.set_title(
         (
