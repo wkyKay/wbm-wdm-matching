@@ -82,7 +82,9 @@ def parse_args() -> argparse.Namespace:
         config_dict = _load_config_file(prelim_args.config)
         parser.set_defaults(**config_dict)
 
-    return parser.parse_args(remaining)
+    args = parser.parse_args(remaining)
+    _validate_required_args(args)
+    return args
 
 
 def _add_config_arg(parser: argparse.ArgumentParser) -> None:
@@ -116,7 +118,6 @@ def _load_config_file(config_path: str) -> Dict[str, Any]:
 def _add_input_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--klarf-dir",
-        required=True,
         help="Directory containing KLARF files to process.",
     )
     parser.add_argument(
@@ -126,8 +127,7 @@ def _add_input_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--reference",
-        required=True,
-        help="Path to the reference WBM PNG (required).",
+        help="Path to the reference WBM PNG.",
     )
     parser.add_argument(
         "--wbm",
@@ -337,3 +337,14 @@ def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
         default=0.5,
         help="Deprecated compatibility option; binary matching now uses token-descriptor partial matching.",
     )
+
+
+def _validate_required_args(args: argparse.Namespace) -> None:
+    missing = []
+    if not args.klarf_dir:
+        missing.append("--klarf-dir")
+    if not args.reference:
+        missing.append("--reference")
+    if missing:
+        print(f"ERROR: the following arguments are required: {', '.join(missing)}", file=sys.stderr)
+        sys.exit(2)

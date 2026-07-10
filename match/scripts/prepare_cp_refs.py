@@ -12,6 +12,9 @@ from typing import Dict, Iterable, List, Tuple
 import numpy as np
 
 
+import sys
+
+
 BACKGROUND = 0
 VALID_NO_DEFECT = 127
 VALID_HAS_DEFECT = 255
@@ -19,43 +22,50 @@ VALID_HAS_DEFECT = 255
 
 def main() -> None:
     args = parse_args()
-    rows = _read_csv_rows(args.cp_csv)
-    _require_columns(
-        rows,
-        (
-            args.lot_col,
-            args.wafer_col,
-            args.x_col,
-            args.y_col,
-            args.pf_col,
-            args.hardbin_col,
-        ),
-    )
+    csv_paths = _collect_csv_paths(args)
+    if not csv_paths:
+        print("ERROR: no CSV files found. Provide --cp-csv paths or --cp-csv-dir.", file=sys.stderr)
+        sys.exit(1)
 
-    groups = _group_rows(rows, args.lot_col, args.wafer_col)
     out_root = Path(args.out_dir)
     out_root.mkdir(parents=True, exist_ok=True)
+    lot_summaries: Dict[str, List[Dict[str, object]]] = {}
 
-    summary_rows = []
-    for (lot_id, wafer_number), wafer_rows in sorted(groups.items()):
-        record = _write_wafer_outputs(
-            out_root=out_root,
-            lot_id=lot_id,
-            wafer_number=wafer_number,
-            rows=wafer_rows,
-            args=args,
-        )
-        summary_rows.append(record)
+    for csv_path in csv_paths:
+        rows = _read_csv_rows(csv_path)
+        _require_columns(rows, (args.lot_col, args.wafer_col, args.x_col, args.y_col, args.pf_col, args.hardbin_col))
+        groups = _group_rows(rows, args.lot_col, args.wafer_col)
+        count = 0
+        for (lot_id, wafer_number), wafer_rows in sorted(groups.items()):
+            _write_wafer_outputs(
+                out_root=out_root,
+                lot_id=lot_id,
+                wafer_number=wafer_number,
+                rows=wafer_rows,
+                args=args,
+            )
+            count += 1
+            lot_summaries.setdefault(lot_id, []).append({
+                "lot_id": lot_id,
+                "wafer_number": wafer_number,
+                "csv_file": csv_path.name,
+            })
+        print(f"  {csv_path.name}: {count} wafer(s) -> {out_root}")
 
-    _write_summary(out_root / "summary.tsv", summary_rows)
-    print(f"Wrote {len(summary_rows)} wafer reference set(s) under {out_root}")
+    total = 0
+    for lot_id, rows in sorted(lot_summaries.items()):
+        _write_summary(out_root / _safe_path_part(lot_id) / "summary.tsv", rows)
+        total += len(rows)
+    print(f"Total: {total} wafer(s) from {len(csv_paths)} CSV(s) under {out_root}")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Split CP test CSV into per-wafer PF and hardbin reference PNGs."
+        description="Split CP test CSV(s) into per-wafer PF and hardbin reference PNGs."
     )
-    parser.add_argument("--cp-csv", required=True, help="Input CP test CSV file.")
+    parser.add_argument("--cp-csv", nargs="*", default=[], help="Input CP test CSV file(s).")
+    parser.add_argument("--cp-csv-dir", default=None, help="Directory of CP test CSV files to process.")
+    parser.add_argument("--cp-csv-glob", default="*.csv", help="Glob pattern when using --cp-csv-dir (default: *.csv).")
     parser.add_argument("--out-dir", default="match/output/cp_refs", help="Output cp_refs directory.")
     parser.add_argument("--lot-col", default="Lot_Id", help="CSV column used as lot directory name.")
     parser.add_argument("--wafer-col", default="Wafer_Number", help="CSV column used as wafer directory name.")
@@ -65,6 +75,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hardbin-col", default="Hardbin_Number", help="Hardbin number column.")
     parser.add_argument("--hardbin-name-col", default="Hardbin_Name", help="Optional hardbin name column.")
     return parser.parse_args()
+
+
+def _collect_csv_paths(args: argparse.Namespace) -> List[Path]:
+    paths: List[Path] = []
+    for p in args.cp_csv:
+        path = Path(p)
+        if path.is_file():
+            paths.append(path.resolve())
+        else:
+            print(f"WARNING: --cp-csv file not found: {p}", file=sys.stderr)
+    if args.cp_csv_dir:
+        csv_dir = Path(args.cp_csv_dir)
+        if csv_dir.is_dir():
+            for p in sorted(csv_dir.glob(args.cp_csv_glob)):
+                if p.is_file():
+                    paths.append(p.resolve())
+        else:
+            print(f"WARNING: --cp-csv-dir not a directory: {args.cp_csv_dir}", file=sys.stderr)
+    return paths
 
 
 def _read_csv_rows(path: str | Path) -> List[Dict[str, str]]:

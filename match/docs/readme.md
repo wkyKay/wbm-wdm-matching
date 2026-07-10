@@ -21,6 +21,33 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 
 也可用 `--config config.json` 从 JSON 文件加载参数，CLI 参数优先级高于配置文件。详细参数说明见项目原有文档。
 
+### 1.1 CP CSV 参考图预处理
+
+另一类 CP test 输入可先从 CSV 拆分为逐 wafer、逐 hardbin 的 WBM 参考图：
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.prepare_cp_refs \
+  --cp-csv /path/to/cp_result.csv \
+  --out-dir match/output/cp_refs
+```
+
+默认按 `Lot_Id/Wafer_Number` 隔离 wafer，并使用 `Die_X/Die_Y` 生成 PNG。输出结构：
+
+```text
+cp_refs/
+  Lot_Id/
+    Wafer_Number/
+      metadata.json
+      die_results.csv
+      pf.png
+      hardbin/
+        1_PASS.png
+        42_FAIL_A.png
+        hardbin_index.tsv
+```
+
+PNG 仍使用三值编码：黑色=无 die/晶圆外，灰色=有效 die 但非当前类别，白色=当前 PF fail 或 hardbin 命中。`hardbin_index.tsv` 记录每张 hardbin PNG 对应的 `hardbin_number`、`hardbin_name`、命中 die 数和文件名，便于批量调用 `main.py --reference <hardbin_png>` 并追溯结果。
+
 ---
 
 ## 2. 项目定位
@@ -130,6 +157,7 @@ match/
   scripts/
     cli_args.py    # CLI 参数定义与列名常量
     main.py        # 批量处理入口
+    prepare_cp_refs.py # CP CSV → per-wafer/per-hardbin PNG 参考图
     processing.py  # 单文件处理编排
     batch_io.py    # TSV / TopK / token-match 日志写入
     batch_viz.py   # 批处理图表生成调度
