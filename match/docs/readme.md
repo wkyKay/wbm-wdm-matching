@@ -9,12 +9,9 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
-  --log results.tsv \
-  --topk-log topk.tsv \
   --save-count-partial-figures \
   --count-partial-fig-dir results \
   --identifier AF00138
-
 
   --use-classnumber  // 启用按 defect classnumber 拆分的分图匹配
   --classnumber-match-mode count  // count | binary，分图匹配的计分模式

@@ -18,7 +18,7 @@ STATUS_CMAP = ListedColormap(["black", "#7f7f7f", "#f2f2f2", "#444444"])
 STATUS_NORM = BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], STATUS_CMAP.N)
 COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
     "count_partial_counts",
-    ["#7f7f7f", "#fca5a5", "#ef4444", "#991b1b", "#450a0a"],
+    ["#93c5fd", "#60a5fa", "#3b82f6", "#1d4ed8", "#1e3a5f"],
 )
 COUNT_PARTIAL_CMAP.set_bad("black")
 COUNT_PARTIAL_CMAP.set_under("#7f7f7f")
@@ -96,8 +96,9 @@ def plot_count_partial_steps(
 
     subtitle = (
         f"count-partial={result.score:.3f}  "
-        f"shape={result.mean_shape:.3f} pos={result.mean_position:.3f} "
-        f"scale={result.mean_scale:.3f}  "
+        f"\u25b6 shape={result.mean_shape:.3f} "
+        f"pos={result.mean_position:.3f} "
+        f"scale={result.mean_scale:.3f} \u25c0  "
         f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
     )
     fig.suptitle(f"{title}\n{subtitle}" if title else subtitle, fontsize=11)
@@ -180,8 +181,10 @@ def plot_count_partial_topk(
             0.01,
             -0.08,
             (
-                f"score={result.score:.3f}  shape={result.mean_shape:.3f} "
-                f"pos={result.mean_position:.3f} scale={result.mean_scale:.3f} "
+                f"score={result.score:.3f}  "
+                f"\u25b6 shape={result.mean_shape:.3f} "
+                f"pos={result.mean_position:.3f} "
+                f"scale={result.mean_scale:.3f} \u25c0  "
                 f"tokens={result.matched_tokens}/{result.wbm_tokens}/{result.wdm_tokens}"
             ),
             transform=ax_cnd.transAxes,
@@ -219,7 +222,11 @@ def _plot_wdm_heatmap(ax: plt.Axes, image: np.ndarray, title: str, vmax: float):
 
 
 def _plot_wdm_original(ax: plt.Axes, candidate: GridMaps, reference_status: np.ndarray, title: str, map_mode: str) -> None:
-    ax.imshow(_wdm_status_image(candidate, reference_status, map_mode=map_mode), interpolation="nearest")
+    if map_mode == "binary":
+        ax.imshow(_wdm_status_image(candidate, reference_status, map_mode=map_mode), interpolation="nearest")
+    else:
+        image = _masked_count(candidate.count_map, reference_status)
+        ax.imshow(image, cmap=COUNT_PARTIAL_CMAP, vmin=1e-6, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
 
@@ -319,8 +326,15 @@ def _plot_match_evidence_table(ax: plt.Axes, result, matches: List[Dict]) -> Non
     table.auto_set_font_size(False)
     table.set_fontsize(7.5)
     table.scale(1.0, 1.12)
-    for (r, _), cell in table.get_celld().items():
-        if r == 0:
+    _highlight_columns = {3, 6, 7}  # shape, pos, scale
+    for (r, c), cell in table.get_celld().items():
+        if c in _highlight_columns:
+            if r == 0:
+                cell.set_facecolor("#bfdbfe")
+            else:
+                cell.set_facecolor("#eff6ff")
+            cell.set_text_props(weight="bold")
+        elif r == 0:
             cell.set_facecolor("#e5e7eb")
             cell.set_text_props(weight="bold")
         else:

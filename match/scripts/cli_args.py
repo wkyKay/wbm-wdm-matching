@@ -188,11 +188,6 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
         help="Directory for per-file .npz outputs.",
     )
     parser.add_argument(
-        "--log",
-        default="match/output/batch_results.tsv",
-        help="Path to the output TSV log file.",
-    )
-    parser.add_argument(
         "--defect-threshold",
         "--min-defects",
         dest="defect_threshold",
@@ -203,11 +198,6 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--topk", type=int, default=10,
         help="Number of top-K files to show per metric in the ranking log (0 = all).",
-    )
-    parser.add_argument(
-        "--topk-log",
-        default="match/output/batch_topk.tsv",
-        help="Path to the top-K ranking log file.",
     )
 
 
@@ -299,16 +289,6 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         type=float,
         default=0.50,
         help="PCA-extent component weight inside count-partial scale affinity.",
-    )
-    parser.add_argument(
-        "--token-match-log",
-        default="match/output/token_match_topk.tsv",
-        help="Path to per-WBM-token top-K WDM token match TSV. Empty string disables it.",
-    )
-    parser.add_argument(
-        "--map-match-log",
-        default="match/output/map_match_topk.tsv",
-        help="Path to per-map top-K token-pair match TSV. Empty string disables it.",
     )
     parser.add_argument(
         "--count-partial-proposal-mode",

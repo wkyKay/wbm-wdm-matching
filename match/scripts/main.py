@@ -24,10 +24,14 @@ def main() -> None:
     klarf_files = _collect_klarf_files(args)
     ref_gm, shape = _load_reference_context(args)
     rows, summary = _run_batch(args, klarf_files, ref_gm, shape)
-    write_result_log(args.log, rows, _result_columns(args), format_score)
-    write_topk_log(args.topk_log, rows, _ranking_columns(args), args.topk)
-    write_token_match_log(args.token_match_log, rows)
-    write_map_match_log(args.map_match_log, rows)
+
+    log_dir = _resolve_log_dir(args.output_dir, getattr(args, "identifier", ""))
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    write_result_log(log_dir / "results.tsv", rows, _result_columns(args), format_score)
+    write_topk_log(log_dir / "topk.tsv", rows, _ranking_columns(args), args.topk)
+    write_token_match_log(log_dir / "token_match.tsv", rows)
+    write_map_match_log(log_dir / "map_match.tsv", rows)
     _save_requested_figures(args, ref_gm, rows)
     _print_summary_table(args, rows)
     print(
@@ -143,6 +147,18 @@ def _ranking_columns(args) -> List[str]:
         columns.append("best-classnumber-rank-score")
         columns.append("best-classnumber-mo-rank-score")
     return columns
+
+
+def _resolve_log_dir(output_dir: str, identifier: str) -> Path:
+    base = Path(output_dir)
+    run_id = _safe_identifier(str(identifier).strip())
+    if run_id:
+        return base / run_id
+    return base
+
+
+def _safe_identifier(name: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
 
 
 if __name__ == "__main__":
