@@ -57,6 +57,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=2026)
     parser.add_argument("--num-candidates", type=int, default=100)
     parser.add_argument(
+        "--reference-label",
+        type=str,
+        default=None,
+        help="Optional WM38K class name for the reference map, e.g. edge-ring.",
+    )
+    parser.add_argument(
         "--input-size",
         type=int,
         nargs="+",
@@ -90,9 +96,12 @@ def parse_args() -> argparse.Namespace:
 def run_test(args: argparse.Namespace) -> Dict[str, Path]:
     maps, labels, original_ids = _load_valid_wm38k(args.data_file)
     target_shape = _parse_input_size(args.input_size)
-    sample_positions = _sample_positions(len(maps), args.num_candidates + 1, args.seed)
-    reference_pos = int(sample_positions[0])
-    candidate_positions = [int(pos) for pos in sample_positions[1:]]
+    reference_pos, candidate_positions = _sample_reference_and_candidates(
+        labels,
+        args.num_candidates,
+        args.seed,
+        args.reference_label,
+    )
 
     reference_raw = _maybe_resize(maps[reference_pos], target_shape)
     reference = _grid_from_wm38k(reference_raw, "reference", int(original_ids[reference_pos]), labels[reference_pos])
@@ -233,6 +242,42 @@ def _sample_positions(total: int, needed: int, seed: int) -> np.ndarray:
         raise ValueError(f"Need {needed} valid WM38K samples, but only {total} are available.")
     rng = np.random.default_rng(seed)
     return rng.choice(total, size=needed, replace=False)
+
+
+def _sample_reference_and_candidates(
+    labels: np.ndarray,
+    num_candidates: int,
+    seed: int,
+    reference_label: str | None,
+) -> Tuple[int, List[int]]:
+    rng = np.random.default_rng(seed)
+    total = len(labels)
+    if num_candidates + 1 > total:
+        raise ValueError(f"Need {num_candidates + 1} valid WM38K samples, but only {total} are available.")
+
+    if reference_label is None:
+        sample_positions = rng.choice(total, size=num_candidates + 1, replace=False)
+        return int(sample_positions[0]), [int(pos) for pos in sample_positions[1:]]
+
+    class_name = _normalize_class_name(reference_label)
+    class_index = CLASS_NAMES.index(class_name)
+    reference_pool = np.where(labels[:, class_index].astype(np.int32) == 1)[0]
+    if len(reference_pool) == 0:
+        raise ValueError(f"No valid WM38K samples found for reference label: {reference_label}")
+
+    reference_pos = int(rng.choice(reference_pool))
+    candidate_pool = np.asarray([pos for pos in range(total) if pos != reference_pos], dtype=np.int64)
+    if num_candidates > len(candidate_pool):
+        raise ValueError(f"Need {num_candidates} candidates, but only {len(candidate_pool)} are available.")
+    candidate_positions = rng.choice(candidate_pool, size=num_candidates, replace=False)
+    return reference_pos, [int(pos) for pos in candidate_positions]
+
+
+def _normalize_class_name(name: str) -> str:
+    value = name.strip().lower().replace("_", "-")
+    if value not in CLASS_NAMES:
+        raise ValueError(f"Unknown WM38K class label: {name}. Available labels: {', '.join(CLASS_NAMES)}")
+    return value
 
 
 def _parse_input_size(values: Sequence[int] | None) -> Tuple[int, int] | None:

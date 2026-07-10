@@ -5,7 +5,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 from .models import ProposalConfig
-from .morphology import (_connected_components, _perimeter,)
+from .morphology import (_binary_closing_square_constrained, _connected_components, _perimeter,)
 from .descriptors import _classify_token, _shape_descriptor
 
 
@@ -153,8 +153,9 @@ def _retrieval_compact_tokens(
         if len(comp) >= proposal_config.min_area:
             denoised[comp[:, 0].astype(int), comp[:, 1].astype(int)] = True
 
+    ring_input = _small_map_ring_input(denoised, valid_mask, weight_map.shape)
     ring_token, ring_mask, _ = _extract_retrieval_ring_token(
-        denoised,
+        ring_input,
         weight_map,
         valid_mask=valid_mask,
         source=source,
@@ -168,6 +169,12 @@ def _retrieval_compact_tokens(
         source=source,
     )
     return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k)
+
+
+def _small_map_ring_input(mask: np.ndarray, valid_mask: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
+    if min(int(shape[0]), int(shape[1])) > 12:
+        return mask
+    return _binary_closing_square_constrained(mask, valid_mask)
 
 
 def _extract_retrieval_ring_token(

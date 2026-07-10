@@ -50,6 +50,11 @@ def _binary_closing_square(mask: np.ndarray) -> np.ndarray:
     return _binary_erosion_square(dilated)
 
 
+def _binary_closing_square_constrained(mask: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    dilated = _binary_dilation_square(mask) & valid_mask
+    return _binary_erosion_square_constrained(dilated, valid_mask)
+
+
 def _binary_dilation_square(mask: np.ndarray) -> np.ndarray:
     padded = np.pad(mask, 1, mode="constant", constant_values=False)
     return (
@@ -78,3 +83,23 @@ def _binary_erosion_square(mask: np.ndarray) -> np.ndarray:
         & padded[2:, :-2]
         & padded[2:, 2:]
     )
+
+
+def _binary_erosion_square_constrained(mask: np.ndarray, valid_mask: np.ndarray) -> np.ndarray:
+    padded_mask = np.pad(mask, 1, mode="constant", constant_values=False)
+    padded_valid = np.pad(valid_mask, 1, mode="constant", constant_values=False)
+    slices = (
+        (slice(1, -1), slice(1, -1)),
+        (slice(0, -2), slice(1, -1)),
+        (slice(2, None), slice(1, -1)),
+        (slice(1, -1), slice(0, -2)),
+        (slice(1, -1), slice(2, None)),
+        (slice(0, -2), slice(0, -2)),
+        (slice(0, -2), slice(2, None)),
+        (slice(2, None), slice(0, -2)),
+        (slice(2, None), slice(2, None)),
+    )
+    eroded = np.ones_like(mask, dtype=bool)
+    for row_slice, col_slice in slices:
+        eroded &= (~padded_valid[row_slice, col_slice]) | padded_mask[row_slice, col_slice]
+    return eroded & valid_mask
