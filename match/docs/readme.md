@@ -48,6 +48,45 @@ cp_refs/
 
 PNG 仍使用三值编码：黑色=无 die/晶圆外，灰色=有效 die 但非当前类别，白色=当前 PF fail 或 hardbin 命中。`hardbin_index.tsv` 记录每张 hardbin PNG 对应的 `hardbin_number`、`hardbin_name`、命中 die 数和文件名，便于批量调用 `main.py --reference <hardbin_png>` 并追溯结果。
 
+### 1.2 批量对比实验
+
+通过 JSON 定义多条实验，调用 `batch_run` 依次执行：
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.batch_run \
+  --experiments batch.json
+```
+
+JSON 格式 (`batch.json`)：
+
+```json
+{
+  "common": {
+    "mapper": "physical-coordinate",
+    "representation": "density",
+    "die_x_range": [-20, 20],
+    "die_y_range": [-20, 20],
+    "topk": 10,
+    "save_count_partial_figures": true
+  },
+  "experiments": [
+    {
+      "klarf_dir": "/data/klarf_batch1/",
+      "reference": "/data/wm811k/000604.png",
+      "identifier": "batch1_density"
+    },
+    {
+      "klarf_dir": "/data/klarf_batch1/",
+      "reference": "/data/wm811k/000610.png",
+      "identifier": "batch1_count",
+      "representation": "count"
+    }
+  ]
+}
+```
+
+`common` 定义所有实验共享的默认参数（可选），每个实验**必须**提供 `klarf_dir`、`reference`、`identifier`，可按需覆盖 `common` 中任意参数。`identifier` 必须唯一，结果输出到 `<output-dir>/<identifier>/`。
+
 ---
 
 ## 2. 项目定位

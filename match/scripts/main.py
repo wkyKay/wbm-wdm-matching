@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import sys
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from .cli_args import parse_args, SIMILARITY_COLUMNS, RESULT_COLUMNS, CLASSNUMBER_COLUMNS
 from .reference_loader import load_reference, resolve_shape
@@ -19,8 +20,30 @@ from .batch_viz import save_classnumber_figures, save_count_partial_figures
 
 
 def main() -> None:
-    args = parse_args()
+    """CLI 入口，解析命令行参数后调用 run()。"""
+    run(parse_args())
 
+
+def run(args: argparse.Namespace) -> List[Tuple[str, dict]]:
+    """程序化入口，传入 args namespace 执行完整匹配流程，返回 rows。
+
+    调用示例::
+
+        import argparse
+        from match.scripts.main import run
+
+        args = argparse.Namespace(
+            klarf_dir="/data/klarf/",
+            reference="/data/ref.png",
+            mapper="physical-coordinate",
+            representation="density",
+            output_dir="results",
+            identifier="exp1",
+            topk=10,
+            # ... 其他参数见 cli_args.py 中的定义
+        )
+        rows = run(args)
+    """
     klarf_files = _collect_klarf_files(args)
     ref_gm, shape = _load_reference_context(args)
     rows, summary = _run_batch(args, klarf_files, ref_gm, shape)
@@ -38,6 +61,7 @@ def main() -> None:
         f"\nDone in {summary['elapsed']:.1f}s: "
         f"{summary['ok']} OK, {summary['skipped']} skipped, {summary['error']} error"
     )
+    return rows
 
 
 def _collect_klarf_files(args) -> List[Path]:
@@ -159,6 +183,51 @@ def _resolve_log_dir(output_dir: str, identifier: str) -> Path:
 
 def _safe_identifier(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
+
+
+def make_args(**overrides: Any) -> argparse.Namespace:
+    """构造 args namespace，未指定的参数使用 cli_args 中的默认值。
+
+    调用示例::
+
+        from match.scripts.main import make_args, run
+
+        # 基础实验
+        rows = run(make_args(
+            klarf_dir="/data/klarf/",
+            reference="/data/ref.png",
+            identifier="exp1",
+        ))
+
+        # 对比实验：逐个参数覆盖
+        for mapper in ("die-index", "relative-coordinate", "physical-coordinate"):
+            rows = run(make_args(
+                klarf_dir="/data/klarf/",
+                reference="/data/ref.png",
+                mapper=mapper,
+                identifier=f"mapper-{mapper}",
+            ))
+
+        for rep in ("count", "binary", "density"):
+            rows = run(make_args(
+                klarf_dir="/data/klarf/",
+                reference="/data/ref.png",
+                representation=rep,
+                identifier=f"rep-{rep}",
+            ))
+    """
+    defaults = parse_args([], validate=False)  # no CLI args → all defaults
+    for key, value in overrides.items():
+        setattr(defaults, key, value)
+    _validate_experiment_args(defaults)
+    return defaults
+
+
+def _validate_experiment_args(args: argparse.Namespace) -> None:
+    if not args.klarf_dir:
+        raise ValueError("klarf_dir is required")
+    if not args.reference:
+        raise ValueError("reference is required")
 
 
 if __name__ == "__main__":

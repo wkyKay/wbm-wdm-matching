@@ -62,11 +62,11 @@ CLASSNUMBER_COLUMNS: List[str] = [
 RESULT_COLUMNS: List[str] = SIMILARITY_COLUMNS + PARTIAL_MATCH_COLUMNS + PARTIAL_MATCH_MO_COLUMNS
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None, *, validate: bool = True) -> argparse.Namespace:
     # Preliminary parse to detect --config before building the full parser.
     prelim = argparse.ArgumentParser(add_help=False)
     prelim.add_argument("--config", default=None, help="JSON file with parameter defaults. CLI args override file values.")
-    prelim_args, remaining = prelim.parse_known_args()
+    prelim_args, remaining = prelim.parse_known_args(argv)
 
     parser = argparse.ArgumentParser(
         description="Batch WBM-WDM matching: process a directory of KLARF files against a reference WBM."
@@ -83,7 +83,8 @@ def parse_args() -> argparse.Namespace:
         parser.set_defaults(**config_dict)
 
     args = parser.parse_args(remaining)
-    _validate_required_args(args)
+    if validate:
+        _validate_required_args(args)
     return args
 
 
