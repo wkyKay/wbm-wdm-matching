@@ -4,6 +4,7 @@ JSON format::
 
     {
       "common": {
+        "mode": "count-partial",
         "mapper": "physical-coordinate",
         "representation": "density",
         "die_x_range": [-20, 20],

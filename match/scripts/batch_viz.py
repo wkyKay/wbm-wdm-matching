@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple
 
+
 def ensure_mpl() -> None:
     import os
 
@@ -12,7 +13,7 @@ def ensure_mpl() -> None:
     matplotlib.use("Agg")
 
 
-def save_count_partial_figures(args, ref_gm, rows) -> None:
+def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
     ensure_mpl()
     import matplotlib.pyplot as plt
 
@@ -32,7 +33,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
     scored.sort(key=lambda item: item[2], reverse=True)
 
     _save_count_partial_figures_for_key(
-        args, ref_gm, scored,
+        args, ref_gm, scored, log_dir,
         result_key="result",
         review_subdir="count_partial_review",
         plot_count_partial_topk=plot_count_partial_topk,
@@ -41,7 +42,7 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
     )
 
     _save_count_partial_figures_for_key(
-        args, ref_gm, scored,
+        args, ref_gm, scored, log_dir,
         result_key="result_matched_only",
         review_subdir="count_partial_review_matched_only",
         plot_count_partial_topk=plot_count_partial_topk,
@@ -51,10 +52,10 @@ def save_count_partial_figures(args, ref_gm, rows) -> None:
 
 
 def _save_count_partial_figures_for_key(
-    args, ref_gm, scored, result_key, review_subdir,
+    args, ref_gm, scored, log_dir: Path, result_key, review_subdir,
     plot_count_partial_topk, plot_count_partial_steps, close_all,
 ) -> None:
-    out_dir = _review_output_dir(args.count_partial_fig_dir, getattr(args, "identifier", ""), review_subdir)
+    out_dir = log_dir / review_subdir
     steps_dir = out_dir / "proposal_steps"
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
@@ -107,7 +108,7 @@ def _save_count_partial_figures_for_key(
         print(f"Count-partial step figure saved [{result_key}]: {step_path}")
 
 
-def save_classnumber_figures(args, ref_gm, rows) -> None:
+def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
     ensure_mpl()
     import matplotlib.pyplot as plt
 
@@ -119,7 +120,7 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
     )
 
     review_name = _classnumber_review_name(args)
-    out_dir = _review_output_dir(args.classnumber_fig_dir, getattr(args, "identifier", ""), review_name)
+    out_dir = log_dir / review_name
     steps_dir = out_dir / "topk_steps"
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
@@ -238,8 +239,8 @@ def save_classnumber_figures(args, ref_gm, rows) -> None:
         print(f"Classnumber TopK step figure saved: {step_path}")
 
     # --- matched-only classnumber step figures ---
-    mo_review_name = _classnumber_review_name(args).replace("classnumber_review", "classnumber_review_matched_only")
-    mo_out_dir = _review_output_dir(args.classnumber_fig_dir, getattr(args, "identifier", ""), mo_review_name)
+    mo_review_name = review_name.replace("classnumber_review", "classnumber_review_matched_only")
+    mo_out_dir = log_dir / mo_review_name
     mo_steps_dir = mo_out_dir / "topk_steps"
     mo_steps_dir.mkdir(parents=True, exist_ok=True)
 
@@ -322,7 +323,6 @@ def _safe_name(name: str) -> str:
 
 
 def _mo_split_rank_score(split, match_mode: str) -> float:
-    """Extract matched-only rank score from a ClassSplitMatch for the given match_mode."""
     if match_mode == "count":
         if split.partial_matched_only is not None:
             return float(split.partial_matched_only.score)
@@ -332,13 +332,3 @@ def _mo_split_rank_score(split, match_mode: str) -> float:
             return float(split.binary_matched_only.score)
         return float(split.binary.score) if split.binary is not None else float("-inf")
     return float("-inf")
-
-
-def _review_output_dir(base_dir: str, identifier: str, review_name: str) -> Path:
-    base = Path(base_dir)
-    run_id = _safe_name(str(identifier).strip())
-    if not run_id:
-        return base
-    if base.name.startswith(review_name) or base.name.startswith("classnumber_review"):
-        base = base.parent
-    return base / run_id / review_name

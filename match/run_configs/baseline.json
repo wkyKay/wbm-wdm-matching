@@ -4,10 +4,8 @@
   "mapper": "physical-coordinate",
   "die_x_range": [-20, 20],
   "die_y_range": [-20, 20],
-  "representation": "density",
+  "representation": "count",
   "die_defect_threshold": 1,
-  "identifier": "AF00138",
-  "mode": "count-partial",
-  "count_partial_review_top_k": 3,
-  "count_partial_step_max": 3
+  "identifier": "baseline",
+  "mode": "baseline"
 }

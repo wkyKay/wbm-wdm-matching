@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .cli_args import parse_args, SIMILARITY_COLUMNS, RESULT_COLUMNS, CLASSNUMBER_COLUMNS
+from .cli_args import parse_args, MODES, SIMILARITY_COLUMNS, RESULT_COLUMNS, CLASSNUMBER_COLUMNS
 from .reference_loader import load_reference, resolve_shape
 from .processing import process_one
 from .batch_io import (
@@ -29,39 +29,43 @@ def run(args: argparse.Namespace) -> List[Tuple[str, dict]]:
 
     调用示例::
 
-        import argparse
-        from match.scripts.main import run
+        from match.scripts.main import make_args, run
 
-        args = argparse.Namespace(
+        rows = run(make_args(
             klarf_dir="/data/klarf/",
             reference="/data/ref.png",
-            mapper="physical-coordinate",
-            representation="density",
-            output_dir="results",
+            mode="count-partial",
             identifier="exp1",
-            topk=10,
-            # ... 其他参数见 cli_args.py 中的定义
-        )
-        rows = run(args)
+        ))
     """
     klarf_files = _collect_klarf_files(args)
     ref_gm, shape = _load_reference_context(args)
     rows, summary = _run_batch(args, klarf_files, ref_gm, shape)
 
-    log_dir = _resolve_log_dir(args.output_dir, getattr(args, "identifier", ""))
+    log_dir = _resolve_log_dir(args)
     log_dir.mkdir(parents=True, exist_ok=True)
 
     write_result_log(log_dir / "results.tsv", rows, _result_columns(args), format_score)
     write_topk_log(log_dir / "topk.tsv", rows, _ranking_columns(args), args.topk)
-    write_token_match_log(log_dir / "token_match.tsv", rows)
-    write_map_match_log(log_dir / "map_match.tsv", rows)
-    _save_requested_figures(args, ref_gm, rows)
+    if args.mode in ("count-partial", "classnumber"):
+        write_token_match_log(log_dir / "token_match.tsv", rows)
+        write_map_match_log(log_dir / "map_match.tsv", rows)
+    _save_requested_figures(args, ref_gm, rows, log_dir)
     _print_summary_table(args, rows)
     print(
         f"\nDone in {summary['elapsed']:.1f}s: "
         f"{summary['ok']} OK, {summary['skipped']} skipped, {summary['error']} error"
     )
     return rows
+
+
+def _resolve_log_dir(args: argparse.Namespace) -> Path:
+    base = Path(args.output_dir)
+    run_id = _safe_identifier(str(getattr(args, "identifier", "")).strip())
+    mode = _safe_identifier(getattr(args, "mode", "count-partial"))
+    if run_id:
+        return base / run_id / mode
+    return base / mode
 
 
 def _collect_klarf_files(args) -> List[Path]:
@@ -84,7 +88,7 @@ def _load_reference_context(args) -> tuple["GridMaps", Tuple[int, int]]:
     ref_gm = load_reference(args.reference)
     shape = resolve_shape(args)
     print(f"Grid shape: {shape[0]}×{shape[1]}")
-    print(f"Mapper: {args.mapper}, Representation: {args.representation}")
+    print(f"Mode: {args.mode}, Mapper: {args.mapper}, Representation: {args.representation}")
     print()
     return ref_gm, shape
 
@@ -130,11 +134,13 @@ def _run_batch(
     }
 
 
-def _save_requested_figures(args, ref_gm: "GridMaps", rows: List[Tuple[str, dict]]) -> None:
-    if args.save_count_partial_figures:
-        save_count_partial_figures(args, ref_gm, rows)
-    if args.use_classnumber and args.save_classnumber_figures:
-        save_classnumber_figures(args, ref_gm, rows)
+def _save_requested_figures(
+    args, ref_gm: "GridMaps", rows: List[Tuple[str, dict]], log_dir: Path
+) -> None:
+    if args.mode in ("count-partial", "classnumber"):
+        save_count_partial_figures(args, ref_gm, rows, log_dir)
+    if args.mode == "classnumber":
+        save_classnumber_figures(args, ref_gm, rows, log_dir)
 
 
 def _print_summary_table(args, rows: List[Tuple[str, dict]]) -> None:
@@ -159,26 +165,23 @@ def _print_summary_table(args, rows: List[Tuple[str, dict]]) -> None:
 
 
 def _result_columns(args) -> List[str]:
-    columns = list(RESULT_COLUMNS)
-    if args.use_classnumber:
+    mode = getattr(args, "mode", "count-partial")
+    columns = list(SIMILARITY_COLUMNS)
+    if mode in ("count-partial", "classnumber"):
+        columns.extend(RESULT_COLUMNS[len(SIMILARITY_COLUMNS):])  # PARTIAL + PARTIAL_MO
+    if mode == "classnumber":
         columns.extend(CLASSNUMBER_COLUMNS)
     return columns
 
 
 def _ranking_columns(args) -> List[str]:
-    columns = SIMILARITY_COLUMNS + ["count-partial", "count-partial-mo"]
-    if args.use_classnumber:
-        columns.append("best-classnumber-rank-score")
-        columns.append("best-classnumber-mo-rank-score")
+    mode = getattr(args, "mode", "count-partial")
+    columns = SIMILARITY_COLUMNS[:]
+    if mode in ("count-partial", "classnumber"):
+        columns.extend(["count-partial", "count-partial-mo"])
+    if mode == "classnumber":
+        columns.extend(["best-classnumber-rank-score", "best-classnumber-mo-rank-score"])
     return columns
-
-
-def _resolve_log_dir(output_dir: str, identifier: str) -> Path:
-    base = Path(output_dir)
-    run_id = _safe_identifier(str(identifier).strip())
-    if run_id:
-        return base / run_id
-    return base
 
 
 def _safe_identifier(name: str) -> str:
@@ -192,31 +195,15 @@ def make_args(**overrides: Any) -> argparse.Namespace:
 
         from match.scripts.main import make_args, run
 
-        # 基础实验
-        rows = run(make_args(
-            klarf_dir="/data/klarf/",
-            reference="/data/ref.png",
-            identifier="exp1",
-        ))
-
-        # 对比实验：逐个参数覆盖
-        for mapper in ("die-index", "relative-coordinate", "physical-coordinate"):
+        for mode in ("baseline", "count-partial", "classnumber"):
             rows = run(make_args(
                 klarf_dir="/data/klarf/",
                 reference="/data/ref.png",
-                mapper=mapper,
-                identifier=f"mapper-{mapper}",
-            ))
-
-        for rep in ("count", "binary", "density"):
-            rows = run(make_args(
-                klarf_dir="/data/klarf/",
-                reference="/data/ref.png",
-                representation=rep,
-                identifier=f"rep-{rep}",
+                mode=mode,
+                identifier=f"exp_{mode}",
             ))
     """
-    defaults = parse_args([], validate=False)  # no CLI args → all defaults
+    defaults = parse_args([], validate=False)
     for key, value in overrides.items():
         setattr(defaults, key, value)
     _validate_experiment_args(defaults)

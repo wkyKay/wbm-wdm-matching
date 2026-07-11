@@ -2,26 +2,56 @@
 
 ## 1. 运行命令
 
+### 1.1 三种模式
+
+`--mode` 参数控制匹配深度，所有输出（TSV + 图表）自动保存到 `<output-dir>/<identifier>/<mode>/`：
+
+| 模式 | 计算内容 | 自动输出 |
+|---|---|---|
+| `baseline` | 8 种 global similarity | results.tsv, topk.tsv |
+| `count-partial`（默认） | global + count-partial token 匹配 | 同上 + token_match.tsv, map_match.tsv + count_partial_review 图表 |
+| `classnumber` | global + count-partial + classnumber 拆分匹配 | 同上 + classnumber 列 + classnumber_review 图表 |
+
 ```bash
+# baseline — 仅全局相似度
 PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
-  --save-count-partial-figures \
-  --count-partial-fig-dir results \
+  --mode baseline \
+  --identifier baseline_exp
+
+# count-partial — 默认模式，自动保存图表
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation density \
+  --mode count-partial \
   --identifier AF00138
 
-  --use-classnumber  // 启用按 defect classnumber 拆分的分图匹配
-  --classnumber-match-mode count  // count | binary，分图匹配的计分模式
-  --save-classnumber-figures  // 保存 classnumber 分图 review 图片
-  --classnumber-fig-dir results  // classnumber 图片输出目录
+# classnumber — 含分图匹配
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation count \
+  --mode classnumber \
+  --classnumber-match-mode count \
+  --identifier AF00138
+
+# 也可用 --config 加载 JSON 配置
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --config match/run_configs/partial_count.json
 ```
 
-也可用 `--config config.json` 从 JSON 文件加载参数，CLI 参数优先级高于配置文件。详细参数说明见项目原有文档。
+CLI 参数优先级高于配置文件。
 
-### 1.1 CP CSV 参考图预处理
+### 1.2 CP CSV 参考图预处理
 
 另一类 CP test 输入可先从 CSV 拆分为逐 wafer、逐 hardbin 的 WBM 参考图：
 
@@ -48,7 +78,7 @@ cp_refs/
 
 PNG 仍使用三值编码：黑色=无 die/晶圆外，灰色=有效 die 但非当前类别，白色=当前 PF fail 或 hardbin 命中。`hardbin_index.tsv` 记录每张 hardbin PNG 对应的 `hardbin_number`、`hardbin_name`、命中 die 数和文件名，便于批量调用 `main.py --reference <hardbin_png>` 并追溯结果。
 
-### 1.2 批量对比实验
+### 1.3 批量对比实验
 
 通过 JSON 定义多条实验，调用 `batch_run` 依次执行：
 
@@ -62,12 +92,12 @@ JSON 格式 (`batch.json`)：
 ```json
 {
   "common": {
+    "mode": "count-partial",
     "mapper": "physical-coordinate",
     "representation": "density",
     "die_x_range": [-20, 20],
     "die_y_range": [-20, 20],
-    "topk": 10,
-    "save_count_partial_figures": true
+    "topk": 10
   },
   "experiments": [
     {
@@ -142,7 +172,7 @@ KLARF 文件
   │    └── 4e. √area 加权聚合 → result + result_matched_only
   │         同时输出 token_topk_matches + map_topk_matches (供图表使用)
   │
-  └─ ⑤ Classnumber Match (可选, --use-classnumber)
+  └─ ⑤ Classnumber Match (--mode classnumber)
         ├── data/fileio.py → split_defect_table_by_classnumber
         │     按 defect classnumber 拆分为 N 个子 WDM
         └── core/classnumber_matching.py → compute_classnumber_matches
@@ -162,11 +192,11 @@ rows (所有文件的结果)
   │     write_token_match_log → token_match_log  (每 WBM token 的 top-K WDM 匹配)
   │     write_map_match_log   → map_match_log    (每 map 的最高分 token 对)
   │
-  └── scripts/batch_viz.py (--save-count-partial-figures / --save-classnumber-figures)
+  └── scripts/batch_viz.py
         ├── save_count_partial_figures → count_partial_review/
         │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
         │     (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
-        └── save_classnumber_figures → classnumber_review/
+        └── save_classnumber_figures → classnumber_review_count/
               viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
               (topk_steps/ 下按排名生成步骤图, 同样 result + result_matched_only 各一套)
 

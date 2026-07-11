@@ -8,7 +8,6 @@
   "defect_threshold": 5,
   "die_defect_threshold": 1,
   "identifier": "AF00138",
-  "use_classnumber": true,
-  "save_classnumber_figures": true,
-  "classnumber_fig_dir": "results"
+  "mode": "classnumber",
+  "classnumber_match_mode": "count"
 }

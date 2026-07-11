@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 from ..core.mappers import MAPPERS
 from ..core.representations import REPRESENTATIONS
 
+MODES = ("baseline", "count-partial", "classnumber")
 
 SIMILARITY_COLUMNS: List[str] = [
     "dice", "iou", "ncc", "cosine",
@@ -63,7 +64,6 @@ RESULT_COLUMNS: List[str] = SIMILARITY_COLUMNS + PARTIAL_MATCH_COLUMNS + PARTIAL
 
 
 def parse_args(argv: list[str] | None = None, *, validate: bool = True) -> argparse.Namespace:
-    # Preliminary parse to detect --config before building the full parser.
     prelim = argparse.ArgumentParser(add_help=False)
     prelim.add_argument("--config", default=None, help="JSON file with parameter defaults. CLI args override file values.")
     prelim_args, remaining = prelim.parse_known_args(argv)
@@ -101,18 +101,15 @@ def _load_config_file(config_path: str) -> Dict[str, Any]:
     if not path.is_file():
         print(f"ERROR: --config file not found: {config_path}", file=sys.stderr)
         sys.exit(1)
-
     raw = path.read_text(encoding="utf-8")
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         print(f"ERROR: invalid JSON in --config file {config_path}: {exc}", file=sys.stderr)
         sys.exit(1)
-
     if not isinstance(data, dict):
         print(f"ERROR: --config file must contain a JSON object, got {type(data).__name__}", file=sys.stderr)
         sys.exit(1)
-
     return data
 
 
@@ -179,14 +176,20 @@ def _add_mapping_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_output_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
+        "--mode",
+        choices=MODES,
+        default="count-partial",
+        help="Matching mode: baseline (global-similarity only), count-partial (+ token matching), classnumber (+ classnumber splitting).",
+    )
+    parser.add_argument(
         "--identifier",
         default="",
-        help="Optional run identifier. Review figures are saved under <fig-dir>/<identifier>/<review-name> when set.",
+        help="Optional run identifier. All outputs saved under <output-dir>/<identifier>/<mode>/.",
     )
     parser.add_argument(
         "--output-dir",
         default="match/output",
-        help="Directory for per-file .npz outputs.",
+        help="Root output directory. Logs and figures saved under <output-dir>/<identifier>/<mode>/.",
     )
     parser.add_argument(
         "--defect-threshold",
@@ -194,7 +197,7 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
         dest="defect_threshold",
         type=int,
         default=5,
-        help="Skip KLARF files with fewer than this many defects before any similarity or visualization work.",
+        help="Skip KLARF files with fewer than this many defects.",
     )
     parser.add_argument(
         "--topk", type=int, default=10,
@@ -203,16 +206,6 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--save-count-partial-figures",
-        action="store_true",
-        help="Save count-map partial matching TopK and proposal-step review figures.",
-    )
-    parser.add_argument(
-        "--count-partial-fig-dir",
-        default="match/output/count_partial_review",
-        help="Directory for count-partial review figures when --save-count-partial-figures is set.",
-    )
     parser.add_argument(
         "--count-partial-review-top-k",
         type=int,
@@ -253,7 +246,7 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         "--count-partial-min-token-score",
         type=float,
         default=0.45,
-        help="Minimum final token-pair score required before a pair can enter count-partial matching.",
+        help="Minimum final token-pair score for count-partial matching.",
     )
     parser.add_argument(
         "--count-partial-score-shape-weight",
@@ -277,7 +270,7 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         "--count-partial-min-relative-token-area",
         type=float,
         default=0.10,
-        help="Minimum token area relative to the largest same-side token before a token can enter count-partial matching.",
+        help="Minimum token area relative to the largest same-side token.",
     )
     parser.add_argument(
         "--count-partial-scale-area-weight",
@@ -295,48 +288,33 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         "--count-partial-proposal-mode",
         choices=("cc", "compact"),
         default="cc",
-        help="Proposal mode for count-partial/classnumber token extraction. 'cc' preserves legacy connected components.",
+        help="Proposal mode for token extraction. 'cc' preserves legacy connected components.",
     )
     parser.add_argument(
         "--count-partial-rotation-tolerance",
         action="store_true",
-        help="Use a rotation-tolerant shape descriptor for count-partial/classnumber token matching.",
+        help="Use a rotation-tolerant shape descriptor for token matching.",
     )
 
 
 def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--use-classnumber",
-        action="store_true",
-        help="Split each KLARF by classnumber and run additional per-class WDM matching.",
-    )
-    parser.add_argument(
-        "--save-classnumber-figures",
-        action="store_true",
-        help="Save WBM, full WDM, and classnumber-split WDM review figures. Requires --use-classnumber.",
-    )
-    parser.add_argument(
-        "--classnumber-fig-dir",
-        default="match/output/classnumber_review",
-        help="Directory for classnumber split review figures.",
-    )
-    parser.add_argument(
         "--classnumber-match-mode",
         choices=("count", "binary"),
         default="count",
-        help="Scoring mode for classnumber split matching: 'count' uses count-partial token matching, 'binary' uses binary-token partial matching.",
+        help="Scoring mode for classnumber split matching: 'count' uses count-partial token matching.",
     )
     parser.add_argument(
         "--classnumber-binary-dilation",
         type=int,
         default=1,
-        help="Deprecated compatibility option; binary matching now uses token descriptors without dilation.",
+        help="Deprecated compatibility option.",
     )
     parser.add_argument(
         "--classnumber-binary-beta",
         type=float,
         default=0.5,
-        help="Deprecated compatibility option; binary matching now uses token-descriptor partial matching.",
+        help="Deprecated compatibility option.",
     )
 
 

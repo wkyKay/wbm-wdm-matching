@@ -30,10 +30,13 @@ def process_one(
         return grid_maps_or_error
     grid_maps = grid_maps_or_error["_grid_maps"]
 
+    mode = getattr(args, "mode", "count-partial")
     result.update(_compute_similarity_scores(ref_gm, grid_maps))
-    result.update(_compute_count_partial_scores(ref_gm, grid_maps, args))
-    result.update(_compute_classnumber_scores(klarf_path, ref_gm, shape, args))
-    result.update(_attach_metadata(grid_maps, args))
+    if mode in ("count-partial", "classnumber"):
+        result.update(_compute_count_partial_scores(ref_gm, grid_maps, args))
+    if mode == "classnumber":
+        result.update(_compute_classnumber_scores(klarf_path, ref_gm, shape, args))
+    result.update(_attach_metadata(grid_maps, args, mode))
     result["_status"] = "OK"
     return result
 
@@ -144,8 +147,6 @@ def _compute_classnumber_scores(
     shape: Tuple[int, int],
     args,
 ) -> dict:
-    if not args.use_classnumber:
-        return {}
     try:
         class_result = compute_classnumber_matches(
             klarf_path,
@@ -173,19 +174,18 @@ def _compute_classnumber_scores(
             scale_pca_weight=args.count_partial_scale_pca_weight,
         )
         result = classnumber_scores_dict(class_result)
-        if args.save_classnumber_figures:
-            result["_classnumber_result"] = class_result
+        result["_classnumber_result"] = class_result
         return result
     except Exception as e:
         return {col: f"ERR:{e}" for col in CLASSNUMBER_COLUMNS}
 
 
-def _attach_metadata(grid_maps: "GridMaps", args) -> dict:
+def _attach_metadata(grid_maps: "GridMaps", args, mode: str) -> dict:
     result = {
         "_mapped": grid_maps.metadata.get("mapped_defects", 0),
         "_input": grid_maps.metadata.get("input_defects", 0),
         "_die_defect_threshold": grid_maps.metadata.get("die_defect_threshold", args.die_defect_threshold),
     }
-    if args.save_count_partial_figures or args.save_classnumber_figures:
+    if mode in ("count-partial", "classnumber"):
         result["_grid_maps"] = grid_maps
     return result
