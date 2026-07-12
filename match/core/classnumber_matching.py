@@ -54,6 +54,12 @@ def compute_classnumber_matches(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -111,6 +117,12 @@ def compute_classnumber_matches(
                 min_relative_token_area=min_relative_token_area,
                 scale_area_weight=scale_area_weight,
                 scale_pca_weight=scale_pca_weight,
+                density_sigmas=density_sigmas,
+                density_threshold=density_threshold,
+                density_min_raw_points=density_min_raw_points,
+                density_min_raw_mass=density_min_raw_mass,
+                density_merge_iou=density_merge_iou,
+                density_weight_transform=density_weight_transform,
             )
             partial = count_explanation["result"]
             partial_matched_only = count_explanation["result_matched_only"]
@@ -129,6 +141,12 @@ def compute_classnumber_matches(
                 min_relative_token_area=min_relative_token_area,
                 scale_area_weight=scale_area_weight,
                 scale_pca_weight=scale_pca_weight,
+                density_sigmas=density_sigmas,
+                density_threshold=density_threshold,
+                density_min_raw_points=density_min_raw_points,
+                density_min_raw_mass=density_min_raw_mass,
+                density_merge_iou=density_merge_iou,
+                density_weight_transform=density_weight_transform,
             )
 
         rank_score = _rank_score(partial, binary, match_mode)
@@ -225,6 +243,12 @@ def compute_binary_class_score(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> tuple[LocalMatchResult, LocalMatchResult]:
     """Score a classnumber split using binary-token partial matching. Returns (result, result_matched_only)."""
     explanation = explain_binary_partial_match(
@@ -241,6 +265,12 @@ def compute_binary_class_score(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
     return explanation["result"], explanation["result_matched_only"]
 

@@ -1,0 +1,20 @@
+{
+  "klarf_dir": "/path/to/klarf_files/",
+  "reference": "data/wm811k/000604.png",
+  "mapper": "physical-coordinate",
+  "die_x_range": [-20, 20],
+  "die_y_range": [-20, 20],
+  "representation": "density",
+  "die_defect_threshold": 1,
+  "identifier": "AF00138_sparse",
+  "mode": "count-partial",
+  "proposal_mode": "sparse-density",
+  "density_sigmas": [0.8, 1.6, 3.2],
+  "density_threshold": 0.2,
+  "density_min_raw_points": 3,
+  "density_min_raw_mass": 3.0,
+  "density_merge_iou": 0.6,
+  "density_weight_transform": "sqrt",
+  "count_partial_review_top_k": 3,
+  "count_partial_step_max": 3
+}

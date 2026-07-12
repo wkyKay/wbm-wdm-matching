@@ -216,81 +216,119 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Number of top count-partial candidates rendered as proposal-step figures.",
     )
     parser.add_argument(
-        "--count-partial-min-area",
+        "--proposal-min-area",
         type=int,
         default=5,
-        help="Minimum support area for count-partial WBM/WDM tokens.",
+        help="Minimum support area for WBM/WDM tokens.",
     )
     parser.add_argument(
-        "--count-partial-top-k-proposals",
+        "--proposal-top-k",
         type=int,
         default=6,
-        help="Maximum WBM/WDM proposal tokens retained for count-partial matching.",
+        help="Maximum WBM/WDM proposal tokens retained for matching.",
     )
     parser.add_argument(
-        "--count-partial-token-match-top-k",
+        "--token-match-top-k",
         type=int,
         default=3,
         help="Number of WDM token candidates saved for each WBM token.",
     )
     parser.add_argument(
-        "--count-partial-map-match-top-k",
+        "--map-match-top-k",
         type=int,
         default=20,
         help="Number of highest-scoring token pairs saved for each WDM map.",
     )
     parser.add_argument(
-        "--count-partial-min-token-score",
+        "--token-min-score",
         type=float,
         default=0.45,
-        help="Minimum final token-pair score for count-partial matching.",
+        help="Minimum final token-pair score for token matching.",
     )
     parser.add_argument(
-        "--count-partial-score-shape-weight",
+        "--token-score-shape-weight",
         type=float,
         default=0.60,
-        help="Shape similarity weight in count-partial token score.",
+        help="Shape similarity weight in token score.",
     )
     parser.add_argument(
-        "--count-partial-score-position-weight",
+        "--token-score-position-weight",
         type=float,
         default=0.25,
-        help="Position affinity weight in count-partial token score.",
+        help="Position affinity weight in token score.",
     )
     parser.add_argument(
-        "--count-partial-score-scale-weight",
+        "--token-score-scale-weight",
         type=float,
         default=0.15,
-        help="Scale affinity weight in count-partial token score.",
+        help="Scale affinity weight in token score.",
     )
     parser.add_argument(
-        "--count-partial-min-relative-token-area",
+        "--proposal-min-relative-token-area",
         type=float,
         default=0.10,
         help="Minimum token area relative to the largest same-side token.",
     )
     parser.add_argument(
-        "--count-partial-scale-area-weight",
+        "--token-scale-area-weight",
         type=float,
         default=0.50,
-        help="Support-area component weight inside count-partial scale affinity.",
+        help="Support-area component weight inside scale affinity.",
     )
     parser.add_argument(
-        "--count-partial-scale-pca-weight",
+        "--token-scale-pca-weight",
         type=float,
         default=0.50,
-        help="PCA-extent component weight inside count-partial scale affinity.",
+        help="PCA-extent component weight inside scale affinity.",
     )
     parser.add_argument(
-        "--count-partial-proposal-mode",
-        choices=("cc", "compact"),
+        "--proposal-mode",
+        choices=("cc", "compact", "sparse-density", "auto"),
         default="cc",
-        help="Proposal mode for token extraction. 'cc' preserves legacy connected components.",
+        help="Proposal mode for token extraction. 'cc' preserves legacy components; 'sparse-density' forces multi-scale KDE; 'auto' enables it for fragmented sparse pairs.",
     )
     parser.add_argument(
-        "--count-partial-rotation-tolerance",
+        "--proposal-rotation-tolerance",
         action="store_true",
         help="Use a rotation-tolerant shape descriptor for token matching.",
+    )
+    parser.add_argument(
+        "--density-sigmas",
+        nargs="+",
+        type=float,
+        default=(0.8, 1.6, 3.2),
+        metavar="SIGMA",
+        help="Grid-cell Gaussian scales used by sparse-density proposal mode.",
+    )
+    parser.add_argument(
+        "--density-threshold",
+        type=float,
+        default=0.20,
+        help="Relative-to-peak KDE support threshold used by sparse-density proposal mode.",
+    )
+    parser.add_argument(
+        "--density-min-raw-points",
+        type=int,
+        default=3,
+        help="Minimum original occupied grid cells required for one sparse-density token.",
+    )
+    parser.add_argument(
+        "--density-min-raw-mass",
+        type=float,
+        default=3.0,
+        help="Minimum pre-KDE weight mass required for one sparse-density token.",
+    )
+    parser.add_argument(
+        "--density-merge-iou",
+        type=float,
+        default=0.60,
+        help="IoU threshold for deduplicating overlapping sparse-density tokens across scales.",
+    )
+    parser.add_argument(
+        "--density-weight-transform",
+        choices=("count", "sqrt", "log1p"),
+        default="sqrt",
+        help="WDM count transform used as sparse-density KDE point weights.",
     )
 
 

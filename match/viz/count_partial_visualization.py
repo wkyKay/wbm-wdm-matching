@@ -43,6 +43,12 @@ def plot_count_partial_steps(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
@@ -63,6 +69,12 @@ def plot_count_partial_steps(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
     result = explanation[result_key]
     wbm_tokens = explanation["wbm_tokens"]
@@ -125,6 +137,12 @@ def plot_count_partial_topk(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
     save_path: str | Path | None = None,
     result_key: str = "result",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
@@ -147,6 +165,12 @@ def plot_count_partial_topk(
                 min_relative_token_area=min_relative_token_area,
                 scale_area_weight=scale_area_weight,
                 scale_pca_weight=scale_pca_weight,
+                density_sigmas=density_sigmas,
+                density_threshold=density_threshold,
+                density_min_raw_points=density_min_raw_points,
+                density_min_raw_mass=density_min_raw_mass,
+                density_merge_iou=density_merge_iou,
+                density_weight_transform=density_weight_transform,
             ),
         )
         for name, gm in candidates

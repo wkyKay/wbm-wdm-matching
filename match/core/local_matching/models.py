@@ -23,3 +23,9 @@ class ProposalConfig:
     descriptor_mode: str
     proposal_mode: str
     rotation_tolerance: bool
+    density_sigmas: tuple[float, ...]
+    density_threshold: float
+    density_min_raw_points: int
+    density_min_raw_mass: float
+    density_merge_iou: float
+    density_weight_transform: str

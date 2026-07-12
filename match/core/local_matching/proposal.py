@@ -11,6 +11,8 @@ from .descriptors import _classify_token, _shape_descriptor
 
 def _tokens_from_mask(mask: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
     weight_map = mask.astype(np.float32)
+    if proposal_config.proposal_mode == "sparse-density":
+        return _tokens_from_sparse_density(weight_map, valid_mask, proposal_config, source="wbm")
     return _tokens_from_components(mask, valid_mask, weight_map, proposal_config=proposal_config, source="wbm")
 
 
@@ -24,8 +26,138 @@ def _tokens_from_weighted_mask(
     valid_mask: np.ndarray,
     weight_map: np.ndarray,
     proposal_config: ProposalConfig,
+    raw_weight_map: Optional[np.ndarray] = None,
 ) -> List[Dict]:
+    if proposal_config.proposal_mode == "sparse-density":
+        return _tokens_from_sparse_density(
+            weight_map,
+            valid_mask,
+            proposal_config,
+            source="wdm",
+            raw_weight_map=raw_weight_map,
+        )
     return _tokens_from_components(mask, valid_mask, weight_map, proposal_config=proposal_config, source="wdm")
+
+
+def _tokens_from_sparse_density(
+    impulse_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+    raw_weight_map: Optional[np.ndarray] = None,
+) -> List[Dict]:
+    """Create comparable WBM/WDM tokens from a multi-scale sparse density field."""
+    density_weights = np.where(valid_mask, np.maximum(impulse_map, 0.0), 0.0).astype(np.float32)
+    raw_weights = density_weights if raw_weight_map is None else np.where(
+        valid_mask, np.maximum(raw_weight_map, 0.0), 0.0
+    ).astype(np.float32)
+    raw_points = raw_weights > 0
+    total_raw_mass = float(raw_weights.sum())
+    if not raw_points.any() or total_raw_mass <= 0.0:
+        return []
+
+    tokens: List[Dict] = []
+    for sigma in proposal_config.density_sigmas:
+        density = _masked_gaussian_density(density_weights, valid_mask, sigma)
+        support = _density_support_mask(density, valid_mask, proposal_config.density_threshold)
+        total_density_mass = float(density[support].sum())
+        for comp in _connected_components(support, connectivity=proposal_config.connectivity):
+            rows = comp[:, 0].astype(np.int64)
+            cols = comp[:, 1].astype(np.int64)
+            component_raw = raw_weights[rows, cols]
+            raw_point_count = int((component_raw > 0).sum())
+            raw_mass = float(component_raw.sum())
+            if raw_point_count < proposal_config.density_min_raw_points:
+                continue
+            if raw_mass < proposal_config.density_min_raw_mass:
+                continue
+            token = _token_stats(comp, density, valid_mask, total_mass=total_density_mass, source=source)
+            token.update(
+                proposal_source="sparse_density",
+                proposal_type="density_support",
+                proposal_scale=float(sigma),
+                raw_mass=raw_mass,
+                raw_point_count=raw_point_count,
+                raw_pixels=[(int(r), int(c)) for r, c in np.argwhere(raw_points & _component_mask(comp, raw_points.shape))],
+                density_peak=float(density[rows, cols].max()),
+            )
+            tokens.append(token)
+
+    tokens = _deduplicate_density_tokens(tokens, proposal_config.density_merge_iou)
+    tokens.sort(key=_density_token_importance, reverse=True)
+    tokens = tokens[:proposal_config.top_k]
+    for token in tokens:
+        _finalize_token(token, impulse_map.shape, proposal_config)
+    return tokens
+
+
+def _masked_gaussian_density(
+    weights: np.ndarray,
+    valid_mask: np.ndarray,
+    sigma: float,
+) -> np.ndarray:
+    """Add per-point, valid-region-normalized Gaussian kernels without SciPy."""
+    if sigma <= 0.0:
+        raise ValueError("density sigma must be positive")
+    h, w = weights.shape
+    radius = max(1, int(np.ceil(3.0 * sigma)))
+    density = np.zeros_like(weights, dtype=np.float32)
+    for row, col in np.argwhere(weights > 0):
+        r0, r1 = max(0, row - radius), min(h, row + radius + 1)
+        c0, c1 = max(0, col - radius), min(w, col + radius + 1)
+        rr = np.arange(r0, r1, dtype=np.float32) - float(row)
+        cc = np.arange(c0, c1, dtype=np.float32) - float(col)
+        kernel = np.exp(-(rr[:, None] ** 2 + cc[None, :] ** 2) / (2.0 * sigma * sigma)).astype(np.float32)
+        local_valid = valid_mask[r0:r1, c0:c1]
+        kernel *= local_valid
+        kernel_sum = float(kernel.sum())
+        if kernel_sum > 1e-8:
+            density[r0:r1, c0:c1] += float(weights[row, col]) * kernel / kernel_sum
+    return density
+
+
+def _density_support_mask(density: np.ndarray, valid_mask: np.ndarray, threshold: float) -> np.ndarray:
+    peak = float(density[valid_mask].max()) if valid_mask.any() else 0.0
+    if peak <= 0.0:
+        return np.zeros_like(valid_mask, dtype=bool)
+    return valid_mask & (density >= max(float(threshold), 0.0) * peak)
+
+
+def _component_mask(component: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
+    mask = np.zeros(shape, dtype=bool)
+    mask[component[:, 0].astype(np.int64), component[:, 1].astype(np.int64)] = True
+    return mask
+
+
+def _deduplicate_density_tokens(tokens: List[Dict], min_iou: float) -> List[Dict]:
+    selected: List[Dict] = []
+    for token in sorted(tokens, key=_density_token_importance, reverse=True):
+        pixels = set(token.get("pixels", []))
+        raw_pixels = set(token.get("raw_pixels", []))
+        duplicate = False
+        for existing in selected:
+            other = set(existing.get("pixels", []))
+            other_raw = set(existing.get("raw_pixels", []))
+            support_iou = _pixel_iou(pixels, other)
+            raw_iou = _pixel_iou(raw_pixels, other_raw)
+            if support_iou >= min_iou or raw_iou >= min_iou:
+                duplicate = True
+                break
+        if not duplicate:
+            selected.append(token)
+    return selected
+
+
+def _pixel_iou(a: set, b: set) -> float:
+    union = len(a | b)
+    return float(len(a & b) / union) if union else 0.0
+
+
+def _density_token_importance(token: Dict) -> float:
+    raw_mass = float(token.get("raw_mass", 0.0))
+    area = float(token.get("support_area", token.get("area", 0.0)))
+    peak = float(token.get("density_peak", 0.0))
+    return float(np.sqrt(max(raw_mass, 0.0)) + 0.25 * np.sqrt(max(area, 0.0)) + 0.05 * peak)
 
 
 def _tokens_from_components(
@@ -420,6 +552,8 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         "descriptor_mode": proposal_config.descriptor_mode,
         "proposal_mode": proposal_config.proposal_mode,
         "rotation_tolerance": proposal_config.rotation_tolerance,
+        "density_sigmas": proposal_config.density_sigmas,
+        "density_threshold": proposal_config.density_threshold,
     }
 
 
@@ -430,10 +564,21 @@ def _proposal_config(
     top_k: int,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
-    if proposal_mode not in {"cc", "compact"}:
+    if proposal_mode not in {"cc", "compact", "sparse-density"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
+    density_sigmas = tuple(float(sigma) for sigma in density_sigmas)
+    if not density_sigmas or any(sigma <= 0.0 for sigma in density_sigmas):
+        raise ValueError("density_sigmas must contain positive values")
+    if density_weight_transform not in {"count", "sqrt", "log1p"}:
+        raise ValueError(f"Unsupported density weight transform: {density_weight_transform}")
     short_side = min(int(shape[0]), int(shape[1]))
     valid_area = max(int(valid_area), 1)
 
@@ -457,6 +602,12 @@ def _proposal_config(
         descriptor_mode=descriptor_mode,
         proposal_mode=proposal_mode,
         rotation_tolerance=bool(rotation_tolerance),
+        density_sigmas=tuple(sorted(density_sigmas)),
+        density_threshold=max(float(density_threshold), 0.0),
+        density_min_raw_points=max(int(density_min_raw_points), 1),
+        density_min_raw_mass=max(float(density_min_raw_mass), 0.0),
+        density_merge_iou=min(max(float(density_merge_iou), 0.0), 1.0),
+        density_weight_transform=density_weight_transform,
     )
 
 

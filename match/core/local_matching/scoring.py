@@ -38,6 +38,12 @@ def compute_count_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference,
@@ -57,6 +63,12 @@ def compute_count_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
     return explanation["result"]
 
@@ -79,6 +91,12 @@ def compute_binary_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference,
@@ -98,6 +116,12 @@ def compute_binary_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
     return explanation["result"]
 
@@ -120,6 +144,12 @@ def explain_count_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -147,6 +177,12 @@ def explain_count_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
 
 
@@ -168,6 +204,12 @@ def explain_binary_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -195,6 +237,12 @@ def explain_binary_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
 
 
@@ -219,21 +267,50 @@ def _explain_local_partial_match(
     min_relative_token_area: float,
     scale_area_weight: float,
     scale_pca_weight: float,
+    density_sigmas: tuple[float, ...],
+    density_threshold: float,
+    density_min_raw_points: int,
+    density_min_raw_mass: float,
+    density_merge_iou: float,
+    density_weight_transform: str,
 ) -> Dict:
     proposal_config = _proposal_config(
         reference.status_map.shape,
         int(valid_mask.sum()),
         min_area,
         top_k,
-        proposal_mode=proposal_mode,
+        proposal_mode=(
+            "sparse-density"
+            if proposal_mode == "auto" and _should_use_sparse_density(
+                wbm_mask, wdm_mask, valid_mask, density_min_raw_points
+            )
+            else ("cc" if proposal_mode == "auto" else proposal_mode)
+        ),
         rotation_tolerance=rotation_tolerance,
+        density_sigmas=density_sigmas,
+        density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
     )
-    wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
+    if proposal_config.proposal_mode == "sparse-density":
+        wbm_tokens = _tokens_from_weighted_mask(
+            wbm_mask & valid_mask,
+            valid_mask,
+            (wbm_mask & valid_mask).astype(np.float32),
+            proposal_config=proposal_config,
+        )
+        raw_wdm_weight_map = wdm_weight_map
+        wdm_weight_map = _density_weight_map(wdm_weight_map, density_weight_transform)
+    else:
+        wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
     wdm_tokens = _tokens_from_weighted_mask(
         wdm_mask & valid_mask,
         valid_mask,
         wdm_weight_map.astype(np.float32),
         proposal_config=proposal_config,
+        raw_weight_map=raw_wdm_weight_map if proposal_config.proposal_mode == "sparse-density" else None,
     )
 
     empty_result = LocalMatchResult(
@@ -393,6 +470,42 @@ def _relative_area(token: Dict, max_area: float) -> float:
     if max_area <= 1e-8:
         return 0.0
     return float(token.get("area", 0.0)) / max_area
+
+
+def _density_weight_map(weight_map: np.ndarray, transform: str) -> np.ndarray:
+    weights = np.maximum(weight_map.astype(np.float32), 0.0)
+    if transform == "count":
+        return weights
+    if transform == "sqrt":
+        return np.sqrt(weights).astype(np.float32)
+    if transform == "log1p":
+        return np.log1p(weights).astype(np.float32)
+    raise ValueError(f"Unsupported density weight transform: {transform}")
+
+
+def _should_use_sparse_density(
+    wbm_mask: np.ndarray,
+    wdm_mask: np.ndarray,
+    valid_mask: np.ndarray,
+    min_raw_points: int,
+) -> bool:
+    """Select a shared sparse representation when either side is fragmented."""
+    return _is_fragmented_sparse_map(wbm_mask & valid_mask, min_raw_points) or _is_fragmented_sparse_map(
+        wdm_mask & valid_mask, min_raw_points
+    )
+
+
+def _is_fragmented_sparse_map(mask: np.ndarray, min_raw_points: int) -> bool:
+    point_count = int(mask.sum())
+    if point_count < max(int(min_raw_points), 1):
+        return False
+    from .morphology import _connected_components
+
+    components = _connected_components(mask, connectivity=8)
+    if len(components) < 2:
+        return False
+    largest = max(len(component) for component in components)
+    return largest < min_raw_points or largest / point_count <= 0.5
 
 
 def _normalized_score_weights(

@@ -39,6 +39,40 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 
 CLI 参数优先级高于配置文件。
 
+### 1.1.1 稀疏缺陷 proposal
+
+当 WBM 和 WDM 都由分散点构成、普通连通域无法恢复肉眼可见的环、带状或线状模式时，可使用 `sparse-density` proposal。WDM 仍先映射到与 WBM 完全一致的网格；两侧随后都把缺陷格作为 impulse，在同一组 grid-cell 尺度上生成高斯密度场、提取阈值 support，并进行跨尺度 token 去重。原始图不会被改写，token 会保留 `raw_pixels`、`raw_mass`、`raw_point_count` 和 `proposal_scale` 作为证据与追溯信息。该功能同时适用于 `--mode count-partial` 和 `--mode classnumber`。
+
+```bash
+# count-partial 模式（sparse-density proposal）
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation density \
+  --mode count-partial \
+  --proposal-mode sparse-density \
+  --density-sigmas 0.8 1.6 3.2 \
+  --density-threshold 0.20 \
+  --identifier AF00138_sparse
+
+# classnumber 模式（sparse-density proposal，按 classnumber 拆分后每子 WDM 独立提取 token）
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --die-x-range -20 20 --die-y-range -20 20 \
+  --representation count \
+  --mode classnumber \
+  --proposal-mode sparse-density \
+  --density-sigmas 0.8 1.6 3.2 \
+  --density-threshold 0.20 \
+  --identifier AF00138_sparse_class
+```
+
+`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝仅由平滑产生、没有足够原始缺陷证据的候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。若使用 `--proposal-mode auto`，系统会在任一侧由多个小连通域组成且满足最小原始证据时，让 WBM 与该 WDM 同时切换到 sparse-density；它不以图像尺寸作为判断条件。`cc` 仍是默认模式，以保持既有实验可复现。
+
 ### 1.2 CP CSV 参考图预处理
 
 另一类 CP test 输入可先从 CSV 拆分为逐 wafer、逐 hardbin 的 WBM 参考图：
@@ -151,7 +185,7 @@ KLARF 文件
   │    ├── 4a. Token 提案 ── proposal.py
   │    │      WBM: _tokens_from_mask (status_map == VALID_HAS_DEFECT)
   │    │      WDM: _tokens_from_weighted_mask (count_map > 0, count 作为权重)
-  │    │      模式: CC (连通域) 或 Compact (环状提取 + 残差分类)
+  │    │      模式: CC (连通域) 或 Compact (环状提取 + 残差分类) 或 Sparse-density (多尺度 KDE)
   │    ├── 4b. 形状描述符 ── descriptors.py
   │    │      每个 token → Zernike 矩 (48×48, 8阶) + 几何特征 → 拼接归一化
   │    ├── 4c. Token 对打分 ── scoring.py → _token_match_components
@@ -210,7 +244,7 @@ match/
     local_matching/        # count-partial 局部匹配
       models.py            # LocalMatchResult、ProposalConfig
       morphology.py        # 连通域提取、形态学操作
-      proposal.py          # token 提案生成（cc / compact 两种模式）
+      proposal.py          # token 提案生成（cc / compact / sparse-density 三种模式）
       descriptors.py       # shape descriptor（Zernike 矩 + 几何特征）
       scoring.py           # token 配对打分、贪心匹配、分数聚合
     classnumber_matching.py # classnumber 分图匹配
@@ -244,11 +278,12 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 ### 4.2 Proposal：Token 提取
 
-从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。支持两种模式：
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。支持三种模式：
 
 - **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
 - **Compact**：先提取边缘环状 token（radial histogram 检测环形密集带），再从残差中提取 component token（分类为 blob / line / central / irregular），按类型多样性选取
   - 对短边 ≤12 的小图，Compact 在 ring 检测前会对有效区域内的 mask 做一次轻量 closing，用于桥接 1-2 个像素的断裂，提升小图环状 token 的稳定性
+- **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。
 
