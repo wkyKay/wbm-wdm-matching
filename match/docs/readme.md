@@ -8,8 +8,8 @@
 
 | 模式 | 计算内容 | 自动输出 |
 |---|---|---|
-| `count-partial`（默认） | coverage-leakage（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review 图表 |
-| `classnumber` | coverage-leakage（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review 图表 |
+| `count-partial`（默认） | coverage-leakage（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review / wdm_raw_review 图表 |
+| `classnumber` | coverage-leakage（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review / wdm_raw_classnumber_review 图表 |
 
 ```bash
 # count-partial — 默认模式，sum map baseline + count-partial 图表
@@ -184,14 +184,18 @@ rows (所有文件的结果)
         ├── count-partial 模式:
         │     ├── save_baseline_figures → baseline_review/
         │     │     (sum map coverage-leakage top-K, 左 WBM 右 WDM 对比图)
-        │     └── save_count_partial_figures → count_partial_review/
-        │           viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
-        │           (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
+        │     ├── save_count_partial_figures → count_partial_review/
+        │     │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
+        │     │     (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
+        │     └── save_wdm_raw_figures → wdm_raw_review/
+        │           (top-K KLARF 物理坐标 wafer 原图, CLASSNUMBER=0 红色, !=0 蓝色)
         └── classnumber 模式:
               ├── save_classnumber_baseline_figures → baseline_review/
               │     (best split map rank_score top-K, 左 WBM 右 WDM 对比图)
-              └── save_classnumber_figures → classnumber_review/
-                    viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
+              ├── save_classnumber_figures → classnumber_review/
+              │     viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
+              └── save_classnumber_wdm_raw_figures → wdm_raw_classnumber_review/
+                    (top-K classnumber split 物理坐标 wafer 原图, 仅该 classnumber 的缺陷, 蓝色)
 
 ### 3.2 代码结构
 
@@ -216,6 +220,7 @@ match/
     visualization.py              # 通用对比图
     count_partial_visualization.py # count-partial 步骤图 / TopK 图
     classnumber_visualization.py  # classnumber 分图可视化
+    klarfkit.py                   # KLARF 物理坐标 wafer 原图绘制（来自 MichaelHotaling/klarfkit）
   scripts/
     cli_args.py    # CLI 参数定义与列名常量
     main.py        # 批量处理入口

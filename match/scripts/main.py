@@ -16,7 +16,7 @@ from .batch_io import (
     write_topk_log,
     format_score,
 )
-from .batch_viz import save_baseline_figures, save_classnumber_baseline_figures, save_classnumber_figures, save_count_partial_figures
+from .batch_viz import save_baseline_figures, save_classnumber_baseline_figures, save_classnumber_figures, save_count_partial_figures, save_wdm_raw_figures, save_classnumber_wdm_raw_figures
 
 
 def main() -> None:
@@ -139,9 +139,19 @@ def _save_requested_figures(
     if args.mode == "count-partial":
         save_baseline_figures(args, ref_gm, rows, log_dir)
         save_count_partial_figures(args, ref_gm, rows, log_dir)
+        _safe_viz(save_wdm_raw_figures, args, rows, log_dir, "WDM raw")
     elif args.mode == "classnumber":
         save_classnumber_baseline_figures(args, ref_gm, rows, log_dir)
         save_classnumber_figures(args, ref_gm, rows, log_dir)
+        _safe_viz(save_classnumber_wdm_raw_figures, args, rows, log_dir, "classnumber WDM raw")
+
+
+def _safe_viz(fn, *fn_args, label: str, **fn_kwargs) -> None:
+    """安全调用可视化函数，失败时打印错误但不中断流程。"""
+    try:
+        fn(*fn_args, **fn_kwargs)
+    except Exception as e:
+        print(f"WARNING: {label} figure generation failed: {e}")
 
 
 def _print_summary_table(args, rows: List[Tuple[str, dict]]) -> None:

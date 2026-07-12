@@ -485,6 +485,193 @@ def _safe_name(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
 
 
+def save_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
+    """保存 count-partial 模式 top-K 的 WDM 原图：所有缺陷绘制，CLASSNUMBER=0 红色，!=0 蓝色。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+    from ..viz.klarfkit import WaferMap
+
+    scored: list[tuple[str, str, float]] = []
+    for fname, res in rows:
+        score = res.get("count-partial")
+        grid_maps = res.get("_grid_maps")
+        if not (isinstance(score, (float, int)) and grid_maps is not None):
+            continue
+        klarf_path = grid_maps.metadata.get("klarf_path", "")
+        if klarf_path:
+            scored.append((fname, klarf_path, float(score)))
+
+    if not scored:
+        print("WDM raw figures skipped: no valid klarf paths found")
+        return
+
+    scored.sort(key=lambda item: item[2], reverse=True)
+    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_records = scored[:top_k]
+
+    out_dir = log_dir / "wdm_raw_review"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for rank, (fname, klarf_path, score) in enumerate(top_records, start=1):
+        try:
+            wm = WaferMap.read_klarf(klarf_path)
+        except Exception as e:
+            print(f"WDM raw figure skipped [{fname}]: {e}")
+            continue
+
+        df = wm.defect_list
+        cls_col = None
+        for col in df.columns:
+            if col.upper() == "CLASSNUMBER":
+                cls_col = col
+                break
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        _draw_wafer_base(wm, ax)
+
+        x = df["_XACTUAL"].to_numpy()
+        y = df["_YACTUAL"].to_numpy()
+
+        if cls_col is not None:
+            class_vals = df[cls_col].to_numpy()
+            mask_zero = class_vals == 0
+            mask_nonzero = ~mask_zero
+            if mask_zero.any():
+                ax.scatter(x[mask_zero], y[mask_zero], color="red", s=8, zorder=10, label="classnumber=0")
+            if mask_nonzero.any():
+                ax.scatter(x[mask_nonzero], y[mask_nonzero], color="blue", s=8, zorder=10, label="classnumber!=0")
+            ax.legend(loc="lower left", fontsize=8)
+        else:
+            ax.scatter(x, y, color="red", s=8, zorder=10)
+
+        file_stem = Path(fname).stem
+        ax.set_title(f"#{rank}  {file_stem}\ncount-partial={score:.4f}", fontsize=11)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        save_path = out_dir / f"rank{rank:02d}_{_safe_name(file_stem)}_wdm_raw.png"
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"WDM raw figure saved: {save_path}")
+
+
+def save_classnumber_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
+    """保存 classnumber 模式 top-K split 的 WDM 原图：仅绘制最佳 classnumber 的缺陷，蓝色。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+    from ..core.classnumber_matching import split_score
+    from ..viz.klarfkit import WaferMap
+
+    split_records = []
+    for fname, res in rows:
+        grid_maps = res.get("_grid_maps")
+        class_result = res.get("_classnumber_result")
+        if grid_maps is None or class_result is None or not class_result.splits:
+            continue
+        klarf_path = grid_maps.metadata.get("klarf_path", "")
+        if not klarf_path:
+            continue
+        for split in class_result.splits:
+            split_records.append({
+                "file_name": fname,
+                "klarf_path": klarf_path,
+                "classnumber": split.classnumber,
+                "split": split,
+                "rank_score": split.rank_score,
+                "rank_mode": class_result.match_mode,
+            })
+
+    if not split_records:
+        print("Classnumber WDM raw figures skipped: no valid splits")
+        return
+
+    rank_by = getattr(args, "representation", "count")
+    if rank_by not in ("count", "binary"):
+        rank_by = "count"
+    split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
+    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_records = split_records[:top_k]
+
+    out_dir = log_dir / "wdm_raw_classnumber_review"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for rank, record in enumerate(top_records, start=1):
+        try:
+            wm = WaferMap.read_klarf(record["klarf_path"])
+        except Exception as e:
+            print(f"Classnumber WDM raw figure skipped [{record['file_name']}]: {e}")
+            continue
+
+        df = wm.defect_list
+        target_class = record["classnumber"]
+
+        cls_col = None
+        for col in df.columns:
+            if col.upper() == "CLASSNUMBER":
+                cls_col = col
+                break
+
+        if cls_col is not None:
+            mask = df[cls_col].to_numpy() == target_class
+            df_filtered = df[mask]
+        else:
+            df_filtered = df
+
+        fig, ax = plt.subplots(figsize=(8, 8))
+        if not df_filtered.empty:
+            wm_tmp = WaferMap(defect_record=df_filtered.copy(), die_pitch=wm.die_pitch,
+                             sample_center_location=wm.center_location, sample_size=wm.sample_size)
+            _draw_wafer_base(wm_tmp, ax)
+            ax.scatter(
+                wm_tmp.defect_list["_XACTUAL"].to_numpy(),
+                wm_tmp.defect_list["_YACTUAL"].to_numpy(),
+                color="blue", s=8, zorder=10,
+            )
+        else:
+            _draw_wafer_base(wm, ax)
+
+        file_stem = Path(record["file_name"]).stem
+        ax.set_title(f"#{rank}  {file_stem}  class={target_class}\n{rank_by}-score={split_score(record['split'], rank_by):.4f}", fontsize=11)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+        save_path = out_dir / f"rank{rank:02d}_{_safe_name(file_stem)}_class{target_class}_wdm_raw.png"
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"Classnumber WDM raw figure saved: {save_path}")
+
+
+def _draw_wafer_base(wm, ax) -> None:
+    """绘制 wafer 外圆轮廓和 die 网格线。"""
+    import numpy as np
+
+    radius = wm.sample_size / 2
+    theta = np.linspace(0, 2 * np.pi, 200)
+    wafer_x = radius * np.cos(theta)
+    wafer_y = radius * np.sin(theta)
+    ax.plot(wafer_x, wafer_y, color="black", linewidth=0.5)
+
+    die_pitch_x, die_pitch_y = wm.die_pitch
+    cx, cy = wm.center_location
+    n_dice_x = int(wm.sample_size // die_pitch_x) + 2
+    n_dice_y = int(wm.sample_size // die_pitch_y) + 2
+
+    radius_sq = radius ** 2
+    for i in range(-n_dice_x, n_dice_x + 1):
+        line_x = -cx + i * die_pitch_x
+        h_sq = radius_sq - line_x ** 2
+        if h_sq > 0:
+            h = np.sqrt(h_sq)
+            ax.vlines(line_x, -h, h, color="gray", alpha=0.15, linewidth=0.5)
+
+    for i in range(-n_dice_y, n_dice_y + 1):
+        line_y = -cy + i * die_pitch_y
+        w_sq = radius_sq - line_y ** 2
+        if w_sq > 0:
+            w = np.sqrt(w_sq)
+            ax.hlines(line_y, -w, w, color="gray", alpha=0.15, linewidth=0.5)
+
+
 def _mo_split_rank_score(split, match_mode: str) -> float:
     if match_mode == "count":
         if split.partial_matched_only is not None:
