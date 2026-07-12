@@ -8,6 +8,5 @@
   "defect_threshold": 5,
   "die_defect_threshold": 1,
   "identifier": "AF00138",
-  "mode": "classnumber",
-  "classnumber_match_mode": "count"
+  "mode": "classnumber"
 }

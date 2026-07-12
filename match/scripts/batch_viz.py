@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Tuple
 
+from .cli_args import derive_classnumber_match_mode
+
 
 def ensure_mpl() -> None:
     import os
@@ -11,6 +13,167 @@ def ensure_mpl() -> None:
     import matplotlib
 
     matplotlib.use("Agg")
+
+
+def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
+    """保存 baseline 对比图：按 coverage-leakage 排序 top-K，左侧 WBM、右侧 WDM 按 representation 上色。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP
+
+    scored: list[tuple[str, "GridMaps", float]] = []
+    for fname, res in rows:
+        score = res.get("coverage-leakage")
+        grid_maps = res.get("_grid_maps")
+        if isinstance(score, (float, int)) and grid_maps is not None:
+            scored.append((Path(fname).stem, grid_maps, float(score)))
+
+    if not scored:
+        print("Baseline figures skipped: no valid coverage-leakage GridMaps available")
+        return
+
+    scored.sort(key=lambda item: item[2], reverse=True)
+    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_records = scored[:top_k]
+
+    out_dir = log_dir / "baseline_review"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    representation = getattr(args, "representation", "count")
+
+    # 根据 representation 选择 cmap
+    if representation == "count":
+        cmap = COUNT_PARTIAL_CMAP
+    elif representation == "binary":
+        cmap = "gray"
+    else:
+        cmap = "hot"
+
+    # ── 单图多列：第 1 列 WBM reference，后续列 top-K WDM candidates ──
+    n_cols = 1 + len(top_records)
+    fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 6))
+    if n_cols == 1:
+        axes = [axes]
+
+    # 第 1 列：WBM reference
+    wbm_status = ref_gm.status_map.copy()
+    wbm_img = np.zeros((*wbm_status.shape, 3), dtype=np.uint8)
+    wbm_img[wbm_status == BACKGROUND] = [0, 0, 0]
+    valid = wbm_status != BACKGROUND
+    wbm_img[valid] = [127, 127, 127]
+    wbm_img[wbm_status == VALID_HAS_DEFECT] = [255, 255, 255]
+    axes[0].imshow(wbm_img, aspect="equal", interpolation="nearest")
+    axes[0].set_title("WBM Reference", fontsize=12)
+    axes[0].axis("off")
+
+    # 后续列：top-K WDM candidates
+    for idx, (name, gm, score) in enumerate(top_records):
+        ax = axes[idx + 1]
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            masked = _mask_background_for_baseline(rep_map, gm.status_map)
+            if representation == "binary":
+                ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="equal", interpolation="nearest")
+            else:
+                vmax_val = float(masked.max()) if masked.max() > 0 else 1.0
+                ax.imshow(masked, cmap=cmap, vmin=1e-6, vmax=vmax_val, aspect="equal", interpolation="nearest")
+        ax.set_title(f"#{idx + 1}  {_safe_name(name)}\ncl={score:.4f}", fontsize=11)
+        ax.axis("off")
+
+    plt.tight_layout()
+    save_path = out_dir / f"baseline_top{len(top_records)}.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Baseline figure saved: {save_path}")
+
+
+def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
+    """保存 classnumber 模式 baseline 对比图：用各 KLARF 的 best split map 替代 sum map，按 rank_score 排名 top-K。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP
+
+    # 收集每个 KLARF 的最佳 classnumber split
+    scored: list[tuple[str, "GridMaps", float]] = []
+    for fname, res in rows:
+        class_result = res.get("_classnumber_result")
+        if class_result is None or class_result.best is None:
+            continue
+        file_stem = Path(fname).stem
+        scored.append((file_stem, class_result.best.grid_maps, float(class_result.best.rank_score)))
+
+    if not scored:
+        print("Classnumber baseline figures skipped: no valid classnumber split results")
+        return
+
+    scored.sort(key=lambda item: item[2], reverse=True)
+    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_records = scored[:top_k]
+
+    out_dir = log_dir / "baseline_review"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    representation = getattr(args, "representation", "count")
+    if representation == "count":
+        cmap = COUNT_PARTIAL_CMAP
+    elif representation == "binary":
+        cmap = "gray"
+    else:
+        cmap = "hot"
+
+    n_cols = 1 + len(top_records)
+    fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 6))
+    if n_cols == 1:
+        axes = [axes]
+
+    # 第 1 列：WBM reference
+    wbm_status = ref_gm.status_map.copy()
+    wbm_img = np.zeros((*wbm_status.shape, 3), dtype=np.uint8)
+    wbm_img[wbm_status == BACKGROUND] = [0, 0, 0]
+    valid = wbm_status != BACKGROUND
+    wbm_img[valid] = [127, 127, 127]
+    wbm_img[wbm_status == VALID_HAS_DEFECT] = [255, 255, 255]
+    axes[0].imshow(wbm_img, aspect="equal", interpolation="nearest")
+    axes[0].set_title("WBM Reference", fontsize=12)
+    axes[0].axis("off")
+
+    # 后续列：top-K best split maps
+    for idx, (name, gm, score) in enumerate(top_records):
+        ax = axes[idx + 1]
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            masked = _mask_background_for_baseline(rep_map, gm.status_map)
+            if representation == "binary":
+                ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="equal", interpolation="nearest")
+            else:
+                vmax_val = float(masked.max()) if masked.max() > 0 else 1.0
+                ax.imshow(masked, cmap=cmap, vmin=1e-6, vmax=vmax_val, aspect="equal", interpolation="nearest")
+        ax.set_title(f"#{idx + 1}  {_safe_name(name)}\nsplit rank={score:.4f}", fontsize=11)
+        ax.axis("off")
+
+    plt.tight_layout()
+    save_path = out_dir / f"baseline_top{len(top_records)}.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Classnumber baseline figure saved: {save_path}")
+
+
+def _mask_background_for_baseline(map_data, status_map: "np.ndarray") -> "np.ndarray":
+    """将背景区域置零，WDM 晶圆外与 WBM 晶圆外一致。"""
+    import numpy as np
+
+    from ..core.models import BACKGROUND, UNINSPECTED
+
+    masked = map_data.astype(np.float32).copy()
+    invalid = (status_map == BACKGROUND) | (status_map == UNINSPECTED)
+    masked[invalid] = 0.0
+    return masked
 
 
 def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
@@ -151,7 +314,7 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
         print("Classnumber figures skipped: no valid classnumber split results available")
         return
 
-    rank_by = args.classnumber_match_mode
+    rank_by = derive_classnumber_match_mode(args.representation)
     split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
     top_k = max(args.count_partial_review_top_k, 1)
     top_records = split_records[:top_k]
@@ -314,7 +477,7 @@ def _save_topk_classnumber_split_maps(
 
 
 def _classnumber_review_name(args) -> str:
-    mode = getattr(args, "classnumber_match_mode", "count")
+    mode = derive_classnumber_match_mode(getattr(args, "representation", "count"))
     return f"classnumber_review_{_safe_name(mode)}"
 
 

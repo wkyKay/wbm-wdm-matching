@@ -2,28 +2,17 @@
 
 ## 1. 运行命令
 
-### 1.1 三种模式
+### 1.1 两种模式
 
 `--mode` 参数控制匹配深度，所有输出（TSV + 图表）自动保存到 `<output-dir>/<identifier>/<mode>/`：
 
 | 模式 | 计算内容 | 自动输出 |
 |---|---|---|
-| `baseline` | 8 种 global similarity | results.tsv, topk.tsv |
-| `count-partial`（默认） | global + count-partial token 匹配 | 同上 + token_match.tsv, map_match.tsv + count_partial_review 图表 |
-| `classnumber` | global + count-partial + classnumber 拆分匹配 | 同上 + classnumber 列 + classnumber_review 图表 |
+| `count-partial`（默认） | coverage-leakage（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review 图表 |
+| `classnumber` | coverage-leakage（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review 图表 |
 
 ```bash
-# baseline — 仅全局相似度
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
-  --representation density \
-  --mode baseline \
-  --identifier baseline_exp
-
-# count-partial — 默认模式，自动保存图表
+# count-partial — 默认模式，sum map baseline + count-partial 图表
 PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
@@ -33,7 +22,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mode count-partial \
   --identifier AF00138
 
-# classnumber — 含分图匹配
+# classnumber — split map baseline + classnumber 拆分图表，match mode 自动由 --representation 推导
 PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
@@ -41,7 +30,6 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --die-x-range -20 20 --die-y-range -20 20 \
   --representation count \
   --mode classnumber \
-  --classnumber-match-mode count \
   --identifier AF00138
 
 # 也可用 --config 加载 JSON 配置
@@ -156,8 +144,8 @@ KLARF 文件
   │    └── core/representations.py  网格表达 (count / binary / density / soft / three-value)
   │    输出: GridMaps (与 WBM 同尺寸 H×W)
   │
-  ├─ ③ Global Similarity (8种) ── core/similarity.py → compute_similarity
-  │    dice | iou | ncc | cosine | coverage | leakage | coverage-leakage | chamfer
+  ├─ ③ Global Similarity ── core/similarity.py → compute_similarity (method="coverage-leakage")
+  │    coverage-leakage 作为 baseline 指标
   │
   ├─ ④ Count-Partial Match ── core/local_matching/scoring.py → explain_count_partial_match
   │    ├── 4a. Token 提案 ── proposal.py
@@ -172,7 +160,7 @@ KLARF 文件
   │    └── 4e. √area 加权聚合 → result + result_matched_only
   │         同时输出 token_topk_matches + map_topk_matches (供图表使用)
   │
-  └─ ⑤ Classnumber Match (--mode classnumber)
+  └─ ⑤ Classnumber Match (可选, --mode classnumber)
         ├── data/fileio.py → split_defect_table_by_classnumber
         │     按 defect classnumber 拆分为 N 个子 WDM
         └── core/classnumber_matching.py → compute_classnumber_matches
@@ -187,18 +175,23 @@ KLARF 文件
 rows (所有文件的结果)
   │
   ├── scripts/batch_io.py
-  │     write_result_log    → batch_results.tsv (每文件一行, 含 similarity + partial + classnumber)
-  │     write_topk_log      → batch_topk.tsv     (各指标 top-K 排名)
-  │     write_token_match_log → token_match_log  (每 WBM token 的 top-K WDM 匹配)
-  │     write_map_match_log   → map_match_log    (每 map 的最高分 token 对)
+  │     write_result_log    → results.tsv (每文件一行, 含 coverage-leakage + partial + classnumber)
+  │     write_topk_log      → topk.tsv     (各指标 top-K 排名)
+  │     write_token_match_log → token_match.tsv  (每 WBM token 的 top-K WDM 匹配)
+  │     write_map_match_log   → map_match.tsv    (每 map 的最高分 token 对)
   │
-  └── scripts/batch_viz.py
-        ├── save_count_partial_figures → count_partial_review/
-        │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
-        │     (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
-        └── save_classnumber_figures → classnumber_review_count/
-              viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
-              (topk_steps/ 下按排名生成步骤图, 同样 result + result_matched_only 各一套)
+  └── scripts/batch_viz.py（按 mode 分支）
+        ├── count-partial 模式:
+        │     ├── save_baseline_figures → baseline_review/
+        │     │     (sum map coverage-leakage top-K, 左 WBM 右 WDM 对比图)
+        │     └── save_count_partial_figures → count_partial_review/
+        │           viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
+        │           (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
+        └── classnumber 模式:
+              ├── save_classnumber_baseline_figures → baseline_review/
+              │     (best split map rank_score top-K, 左 WBM 右 WDM 对比图)
+              └── save_classnumber_figures → classnumber_review/
+                    viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
 
 ### 3.2 代码结构
 

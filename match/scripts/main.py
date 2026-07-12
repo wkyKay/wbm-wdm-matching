@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .cli_args import parse_args, MODES, SIMILARITY_COLUMNS, RESULT_COLUMNS, CLASSNUMBER_COLUMNS
+from .cli_args import parse_args, SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, PARTIAL_MATCH_MO_COLUMNS, RESULT_COLUMNS, CLASSNUMBER_COLUMNS
 from .reference_loader import load_reference, resolve_shape
 from .processing import process_one
 from .batch_io import (
@@ -16,7 +16,7 @@ from .batch_io import (
     write_topk_log,
     format_score,
 )
-from .batch_viz import save_classnumber_figures, save_count_partial_figures
+from .batch_viz import save_baseline_figures, save_classnumber_baseline_figures, save_classnumber_figures, save_count_partial_figures
 
 
 def main() -> None:
@@ -47,9 +47,8 @@ def run(args: argparse.Namespace) -> List[Tuple[str, dict]]:
 
     write_result_log(log_dir / "results.tsv", rows, _result_columns(args), format_score)
     write_topk_log(log_dir / "topk.tsv", rows, _ranking_columns(args), args.topk)
-    if args.mode in ("count-partial", "classnumber"):
-        write_token_match_log(log_dir / "token_match.tsv", rows)
-        write_map_match_log(log_dir / "map_match.tsv", rows)
+    write_token_match_log(log_dir / "token_match.tsv", rows)
+    write_map_match_log(log_dir / "map_match.tsv", rows)
     _save_requested_figures(args, ref_gm, rows, log_dir)
     _print_summary_table(args, rows)
     print(
@@ -137,9 +136,11 @@ def _run_batch(
 def _save_requested_figures(
     args, ref_gm: "GridMaps", rows: List[Tuple[str, dict]], log_dir: Path
 ) -> None:
-    if args.mode in ("count-partial", "classnumber"):
+    if args.mode == "count-partial":
+        save_baseline_figures(args, ref_gm, rows, log_dir)
         save_count_partial_figures(args, ref_gm, rows, log_dir)
-    if args.mode == "classnumber":
+    elif args.mode == "classnumber":
+        save_classnumber_baseline_figures(args, ref_gm, rows, log_dir)
         save_classnumber_figures(args, ref_gm, rows, log_dir)
 
 
@@ -165,21 +166,15 @@ def _print_summary_table(args, rows: List[Tuple[str, dict]]) -> None:
 
 
 def _result_columns(args) -> List[str]:
-    mode = getattr(args, "mode", "count-partial")
-    columns = list(SIMILARITY_COLUMNS)
-    if mode in ("count-partial", "classnumber"):
-        columns.extend(RESULT_COLUMNS[len(SIMILARITY_COLUMNS):])  # PARTIAL + PARTIAL_MO
-    if mode == "classnumber":
+    columns = list(SIMILARITY_COLUMNS) + PARTIAL_MATCH_COLUMNS + PARTIAL_MATCH_MO_COLUMNS
+    if args.mode == "classnumber":
         columns.extend(CLASSNUMBER_COLUMNS)
     return columns
 
 
 def _ranking_columns(args) -> List[str]:
-    mode = getattr(args, "mode", "count-partial")
-    columns = SIMILARITY_COLUMNS[:]
-    if mode in ("count-partial", "classnumber"):
-        columns.extend(["count-partial", "count-partial-mo"])
-    if mode == "classnumber":
+    columns = SIMILARITY_COLUMNS + ["count-partial", "count-partial-mo"]
+    if args.mode == "classnumber":
         columns.extend(["best-classnumber-rank-score", "best-classnumber-mo-rank-score"])
     return columns
 
@@ -195,7 +190,7 @@ def make_args(**overrides: Any) -> argparse.Namespace:
 
         from match.scripts.main import make_args, run
 
-        for mode in ("baseline", "count-partial", "classnumber"):
+        for mode in ("count-partial", "classnumber"):
             rows = run(make_args(
                 klarf_dir="/data/klarf/",
                 reference="/data/ref.png",

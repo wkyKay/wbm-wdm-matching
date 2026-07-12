@@ -11,17 +11,14 @@
   },
   "experiments": [
     {
-      "mode": "baseline",
-      "identifier": "baseline"
-    },
-    {
+      "_comment": "sum map coverage-leakage + count-partial token 匹配",
       "mode": "count-partial",
       "identifier": "count_partial"
     },
     {
+      "_comment": "best split map coverage-leakage + classnumber 拆分匹配",
       "mode": "classnumber",
-      "identifier": "classnumber",
-      "classnumber_match_mode": "count"
+      "identifier": "classnumber"
     }
   ]
 }

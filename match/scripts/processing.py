@@ -10,7 +10,7 @@ from ..data.fileio import load_defect_tables, save_grid_maps
 from ..core.similarity import compute_similarity
 from ..core.local_matching import explain_count_partial_match
 from ..core.classnumber_matching import classnumber_scores_dict, compute_classnumber_matches
-from .cli_args import SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, PARTIAL_MATCH_MO_COLUMNS, CLASSNUMBER_COLUMNS
+from .cli_args import SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, PARTIAL_MATCH_MO_COLUMNS, CLASSNUMBER_COLUMNS, derive_classnumber_match_mode
 
 
 def process_one(
@@ -32,11 +32,10 @@ def process_one(
 
     mode = getattr(args, "mode", "count-partial")
     result.update(_compute_similarity_scores(ref_gm, grid_maps))
-    if mode in ("count-partial", "classnumber"):
-        result.update(_compute_count_partial_scores(ref_gm, grid_maps, args))
+    result.update(_compute_count_partial_scores(ref_gm, grid_maps, args))
     if mode == "classnumber":
         result.update(_compute_classnumber_scores(klarf_path, ref_gm, shape, args))
-    result.update(_attach_metadata(grid_maps, args, mode))
+    result.update(_attach_metadata(grid_maps, args))
     result["_status"] = "OK"
     return result
 
@@ -159,7 +158,7 @@ def _compute_classnumber_scores(
             die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
             min_area=args.count_partial_min_area,
             top_k=args.count_partial_top_k_proposals,
-            match_mode=args.classnumber_match_mode,
+            match_mode=derive_classnumber_match_mode(args.representation),
             binary_dilation=args.classnumber_binary_dilation,
             binary_beta=args.classnumber_binary_beta,
             die_defect_threshold=args.die_defect_threshold,
@@ -180,12 +179,10 @@ def _compute_classnumber_scores(
         return {col: f"ERR:{e}" for col in CLASSNUMBER_COLUMNS}
 
 
-def _attach_metadata(grid_maps: "GridMaps", args, mode: str) -> dict:
-    result = {
+def _attach_metadata(grid_maps: "GridMaps", args) -> dict:
+    return {
         "_mapped": grid_maps.metadata.get("mapped_defects", 0),
         "_input": grid_maps.metadata.get("input_defects", 0),
         "_die_defect_threshold": grid_maps.metadata.get("die_defect_threshold", args.die_defect_threshold),
+        "_grid_maps": grid_maps,
     }
-    if mode in ("count-partial", "classnumber"):
-        result["_grid_maps"] = grid_maps
-    return result

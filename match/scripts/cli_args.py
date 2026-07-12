@@ -9,12 +9,9 @@ from typing import Any, Dict, List
 from ..core.mappers import MAPPERS
 from ..core.representations import REPRESENTATIONS
 
-MODES = ("baseline", "count-partial", "classnumber")
+MODES = ("count-partial", "classnumber")
 
-SIMILARITY_COLUMNS: List[str] = [
-    "dice", "iou", "ncc", "cosine",
-    "coverage", "leakage", "coverage-leakage", "chamfer",
-]
+SIMILARITY_COLUMNS: List[str] = ["coverage-leakage"]
 
 PARTIAL_MATCH_COLUMNS: List[str] = [
     "count-partial",
@@ -179,7 +176,7 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
         "--mode",
         choices=MODES,
         default="count-partial",
-        help="Matching mode: baseline (global-similarity only), count-partial (+ token matching), classnumber (+ classnumber splitting).",
+        help="Matching mode: count-partial (global + token matching), classnumber (+ classnumber splitting).",
     )
     parser.add_argument(
         "--identifier",
@@ -299,12 +296,6 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--classnumber-match-mode",
-        choices=("count", "binary"),
-        default="count",
-        help="Scoring mode for classnumber split matching: 'count' uses count-partial token matching.",
-    )
-    parser.add_argument(
         "--classnumber-binary-dilation",
         type=int,
         default=1,
@@ -316,6 +307,11 @@ def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:
         default=0.5,
         help="Deprecated compatibility option.",
     )
+
+
+def derive_classnumber_match_mode(representation: str) -> str:
+    """Map representation to classnumber match mode: 'count'→'count', 'binary'→'binary', others→'count'."""
+    return representation if representation in ("count", "binary") else "count"
 
 
 def _validate_required_args(args: argparse.Namespace) -> None:
