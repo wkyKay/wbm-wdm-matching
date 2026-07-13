@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -40,10 +41,10 @@ def run(args: argparse.Namespace) -> List[Tuple[str, dict]]:
     """
     klarf_files = _collect_klarf_files(args)
     ref_gm, shape = _load_reference_context(args)
-    rows, summary = _run_batch(args, klarf_files, ref_gm, shape)
-
     log_dir = _resolve_log_dir(args)
     log_dir.mkdir(parents=True, exist_ok=True)
+    _save_args_json(log_dir.parent, args)
+    rows, summary = _run_batch(args, klarf_files, ref_gm, shape, log_dir)
 
     write_result_log(log_dir / "results.tsv", rows, _result_columns(args), format_score)
     write_topk_log(log_dir / "topk.tsv", rows, _ranking_columns(args), args.topk)
@@ -97,6 +98,7 @@ def _run_batch(
     klarf_files: List[Path],
     ref_gm: "GridMaps",
     shape: Tuple[int, int],
+    npz_dir: Path,
 ) -> tuple[List[Tuple[str, dict]], dict]:
     rows: List[Tuple[str, dict]] = []
     ok_count = skipped_count = error_count = 0
@@ -107,7 +109,7 @@ def _run_batch(
         sys.stdout.write(f"  {status_line} ... ")
         sys.stdout.flush()
 
-        res = process_one(kf, args, shape, ref_gm)
+        res = process_one(kf, args, shape, ref_gm, npz_dir)
         status = res.pop("_status", "UNKNOWN")
         if not (
             status == "SKIPPED"
@@ -139,11 +141,11 @@ def _save_requested_figures(
     if args.mode == "count-partial":
         save_baseline_figures(args, ref_gm, rows, log_dir)
         save_count_partial_figures(args, ref_gm, rows, log_dir)
-        _safe_viz(save_wdm_raw_figures, args, rows, log_dir, "WDM raw")
+        _safe_viz(save_wdm_raw_figures, args, rows, log_dir, label="WDM raw")
     elif args.mode == "classnumber":
         save_classnumber_baseline_figures(args, ref_gm, rows, log_dir)
         save_classnumber_figures(args, ref_gm, rows, log_dir)
-        _safe_viz(save_classnumber_wdm_raw_figures, args, rows, log_dir, "classnumber WDM raw")
+        _safe_viz(save_classnumber_wdm_raw_figures, args, rows, log_dir, label="classnumber WDM raw")
 
 
 def _safe_viz(fn, *fn_args, label: str, **fn_kwargs) -> None:
@@ -191,6 +193,22 @@ def _ranking_columns(args) -> List[str]:
 
 def _safe_identifier(name: str) -> str:
     return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in name)[:80]
+
+
+def _save_args_json(identifier_dir: Path, args: argparse.Namespace) -> None:
+    """将 args 序列化为 JSON 保存到 identifier 文件夹下。"""
+    def _serialize(val):
+        if isinstance(val, Path):
+            return str(val)
+        if isinstance(val, tuple):
+            return list(val)
+        return val
+
+    args_dict = {k: _serialize(v) for k, v in vars(args).items()}
+    json_path = identifier_dir / "args.json"
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(args_dict, f, indent=2, ensure_ascii=False, default=str)
+    print(f"Args saved: {json_path}")
 
 
 def make_args(**overrides: Any) -> argparse.Namespace:

@@ -18,6 +18,7 @@ def process_one(
     args,
     shape: Tuple[int, int],
     ref_gm: "GridMaps",
+    npz_dir: Path | None = None,
 ) -> dict:
     result: dict = {}
 
@@ -25,7 +26,7 @@ def process_one(
     if skip_reason is not None:
         return skip_reason
 
-    grid_maps_or_error = _map_klarf_file(klarf_path, args, shape)
+    grid_maps_or_error = _map_klarf_file(klarf_path, args, shape, npz_dir)
     if "_status" in grid_maps_or_error:
         return grid_maps_or_error
     grid_maps = grid_maps_or_error["_grid_maps"]
@@ -57,7 +58,7 @@ def _check_defect_threshold(klarf_path: Path, args) -> dict | None:
     return None
 
 
-def _map_klarf_file(klarf_path: Path, args, shape: Tuple[int, int]) -> dict:
+def _map_klarf_file(klarf_path: Path, args, shape: Tuple[int, int], npz_dir: Path | None = None) -> dict:
     try:
         grid_maps = map_klarf_to_grid(
             klarf_path,
@@ -77,9 +78,10 @@ def _map_klarf_file(klarf_path: Path, args, shape: Tuple[int, int]) -> dict:
     except Exception as e:
         return {"_status": "ERROR", "_reason": f"{type(e).__name__}: {e}"}
 
-    if args.output_dir:
-        out_path = Path(args.output_dir) / f"{klarf_path.stem}.npz"
-        save_grid_maps(out_path, grid_maps)
+    # if npz_dir:
+    #     npz_dir.mkdir(parents=True, exist_ok=True)
+    #     out_path = npz_dir / f"{klarf_path.stem}.npz"
+    #     save_grid_maps(out_path, grid_maps)
     return {"_grid_maps": grid_maps}
 
 

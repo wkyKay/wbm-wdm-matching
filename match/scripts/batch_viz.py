@@ -24,10 +24,14 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
     from ..core.models import BACKGROUND, VALID_HAS_DEFECT
     from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP
 
+    from ..core.similarity import SimilarityResult
+
     scored: list[tuple[str, "GridMaps", float]] = []
     for fname, res in rows:
         score = res.get("coverage-leakage")
         grid_maps = res.get("_grid_maps")
+        if isinstance(score, SimilarityResult):
+            score = score.score
         if isinstance(score, (float, int)) and grid_maps is not None:
             scored.append((Path(fname).stem, grid_maps, float(score)))
 
