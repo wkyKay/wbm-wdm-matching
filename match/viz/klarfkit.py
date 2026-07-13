@@ -340,7 +340,13 @@ class WaferMap:
                 defect_collect = False
 
             elif defect_collect:
-                defects.append(i.replace(";", "").split())
+                parts = i.replace(";", "").split()
+                if parts:
+                    try:
+                        float(parts[0])
+                        defects.append(parts)
+                    except ValueError:
+                        pass  # skip non-numeric lines (e.g. section headers between DefectList and SummarySpec)
 
             elif sample_plan_collect and 'SampleTestPlan' not in i:
                 sample_test_plan.append([int(j) for j in i.replace(";","").split()])
