@@ -163,11 +163,11 @@
     <td><code class="tag">sparse-density</code></td>
     <td>多尺度高斯核密度估计（KDE），将权重连续化后再提取连通域，适合稀疏、碎片化的缺陷分布。</td>
   </tr>
-  <tr>
+  <!-- <tr>
     <td><strong>Auto</strong></td>
     <td><code class="tag">auto</code></td>
     <td>自动判断：如果缺陷分布碎片化则选用 <code>sparse-density</code>，否则回退到 <code>cc</code>。</td>
-  </tr>
+  </tr> -->
 </table>
 
 <h3>1.1 cc — Connected Components</h3>
@@ -206,9 +206,9 @@
   <li>排序：<code>sqrt(raw_mass) + 0.25&times;sqrt(area) + 0.05&times;peak_density</code>，保留 top-K。</li>
 </ol>
 
-<div class="note">
+<!-- <div class="note">
   <strong>auto 模式的判定逻辑：</strong>检查 WBM 或 WDM mask 是否"碎片化"——最大连通域的像素数 &lt; <code>density_min_raw_points</code>（3），或最大连通域占所有正像素的比例 &le; 50%。满足任一条件则启用 <code>sparse-density</code>，否则用 <code>cc</code>。
-</div>
+</div> -->
 
 <!-- <h3>1.4 Proposal 自适应参数</h3>
 <p>无论哪种模式，系统都会根据 grid 尺寸自适应调整参数：</p>
@@ -307,7 +307,7 @@
   &middot; &rho;<sup>n-2s</sup>
 </div>
 
-<h4>有效的 (n, m) 组合（degree=8，共 20 个）</h4>
+<!-- <h4>有效的 (n, m) 组合（degree=8，共 20 个）</h4>
 
 <table>
   <tr><th>n</th><th>m</th><th>描述</th></tr>
@@ -339,7 +339,7 @@
 
 <div class="note">
   <strong>为什么取模后旋转不变？</strong>Zernike 矩在图像旋转 &alpha; 度后变为 A<sub>nm</sub> &middot; e<sup>im&alpha;</sup>。取模 |A<sub>nm</sub>| 消除了相位因子 e<sup>im&alpha;</sup>，仅保留幅度信息，因此旋转任意角度后模值不变。
-</div>
+</div> -->
 
 <h3>2.3 Position Affinity — 位置亲和度</h3>
 
