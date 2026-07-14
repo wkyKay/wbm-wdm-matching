@@ -9,11 +9,23 @@ from .morphology import (_binary_closing_square_constrained, _connected_componen
 from .descriptors import _classify_token, _shape_descriptor
 
 
-def _tokens_from_mask(mask: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
+def _tokens_from_mask(
+    mask: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    proposal_debug: Optional[Dict] = None,
+) -> List[Dict]:
     weight_map = mask.astype(np.float32)
     if proposal_config.proposal_mode == "sparse-density":
         return _tokens_from_sparse_density(weight_map, valid_mask, proposal_config, source="wbm")
-    return _tokens_from_components(mask, valid_mask, weight_map, proposal_config=proposal_config, source="wbm")
+    return _tokens_from_components(
+        mask,
+        valid_mask,
+        weight_map,
+        proposal_config=proposal_config,
+        source="wbm",
+        proposal_debug=proposal_debug,
+    )
 
 
 def _tokens_from_count(count_map: np.ndarray, valid_mask: np.ndarray, proposal_config: ProposalConfig) -> List[Dict]:
@@ -27,6 +39,7 @@ def _tokens_from_weighted_mask(
     weight_map: np.ndarray,
     proposal_config: ProposalConfig,
     raw_weight_map: Optional[np.ndarray] = None,
+    proposal_debug: Optional[Dict] = None,
 ) -> List[Dict]:
     if proposal_config.proposal_mode == "sparse-density":
         return _tokens_from_sparse_density(
@@ -36,7 +49,14 @@ def _tokens_from_weighted_mask(
             source="wdm",
             raw_weight_map=raw_weight_map,
         )
-    return _tokens_from_components(mask, valid_mask, weight_map, proposal_config=proposal_config, source="wdm")
+    return _tokens_from_components(
+        mask,
+        valid_mask,
+        weight_map,
+        proposal_config=proposal_config,
+        source="wdm",
+        proposal_debug=proposal_debug,
+    )
 
 
 def _tokens_from_sparse_density(
@@ -166,10 +186,13 @@ def _tokens_from_components(
     weight_map: np.ndarray,
     proposal_config: ProposalConfig,
     source: str,
+    proposal_debug: Optional[Dict] = None,
 ) -> List[Dict]:
     h, w = mask.shape
     if proposal_config.proposal_mode == "compact":
-        tokens = _retrieval_compact_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
+        tokens, ring_debug = _retrieval_compact_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
+        if proposal_debug is not None:
+            proposal_debug[source] = ring_debug
         for token in tokens:
             _finalize_token(token, (h, w), proposal_config)
         return tokens
@@ -277,7 +300,7 @@ def _retrieval_compact_tokens(
     valid_mask: np.ndarray,
     proposal_config: ProposalConfig,
     source: str,
-) -> List[Dict]:
+) -> Tuple[List[Dict], Dict]:
     h, w = weight_map.shape
     original = mask & valid_mask
     denoised = np.zeros_like(original, dtype=bool)
@@ -285,12 +308,20 @@ def _retrieval_compact_tokens(
         if len(comp) >= proposal_config.min_area:
             denoised[comp[:, 0].astype(int), comp[:, 1].astype(int)] = True
 
-    ring_input = _small_map_ring_input(denoised, valid_mask, weight_map.shape)
-    ring_token, ring_mask, _ = _extract_retrieval_ring_token(
+    ring_input = _small_map_ring_input(original, valid_mask, weight_map.shape)
+    ring_token, ring_mask, ring_debug = _extract_retrieval_ring_token(
         ring_input,
         weight_map,
         valid_mask=valid_mask,
         source=source,
+        min_area=proposal_config.ring_min_area,
+        edge_r_min=proposal_config.ring_edge_r_min,
+        band_width=proposal_config.ring_band_width,
+        min_angular_coverage=proposal_config.ring_min_angular_coverage,
+        angular_bins=proposal_config.ring_angular_bins,
+        max_radial_std=proposal_config.ring_max_radial_std,
+        max_defect_ratio=proposal_config.ring_max_defect_ratio,
+        min_edge_defect_fraction=proposal_config.ring_min_edge_defect_fraction,
     )
     residual = denoised & (~ring_mask)
     component_tokens = _retrieval_component_tokens(
@@ -300,7 +331,13 @@ def _retrieval_compact_tokens(
         min_area=proposal_config.min_area,
         source=source,
     )
-    return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k)
+    ring_debug.update(
+        source=source,
+        original_area=int(original.sum()),
+        denoised_area=int(denoised.sum()),
+        ring_input_area=int(ring_input.sum()),
+    )
+    return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k), ring_debug
 
 
 def _small_map_ring_input(mask: np.ndarray, valid_mask: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
@@ -319,6 +356,7 @@ def _extract_retrieval_ring_token(
     band_width: float = 0.10,
     min_angular_coverage: float = 0.16,
     min_ring_area_ratio: float = 0.12,
+    angular_bins: int = 72,
     max_radial_std: float = 0.12,
     max_defect_ratio: float = 0.45,
     min_edge_defect_fraction: float = 0.45,
@@ -369,7 +407,7 @@ def _extract_retrieval_ring_token(
     ring_radial = edge_radial[band_keep]
 
     theta = (np.degrees(np.arctan2(ring_points[:, 0] - center[0], ring_points[:, 1] - center[1])) + 360.0) % 360.0
-    angular_bins = 72
+    angular_bins = max(int(angular_bins), 1)
     occupied = np.unique(np.floor(theta / (360.0 / angular_bins)).astype(int)) if len(theta) else []
     angular_coverage = float(len(occupied) / angular_bins)
     area_ratio = float(len(ring_points) / max(len(points), 1))
@@ -554,6 +592,14 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         "rotation_tolerance": proposal_config.rotation_tolerance,
         "density_sigmas": proposal_config.density_sigmas,
         "density_threshold": proposal_config.density_threshold,
+        "ring_min_area": proposal_config.ring_min_area,
+        "ring_edge_r_min": proposal_config.ring_edge_r_min,
+        "ring_band_width": proposal_config.ring_band_width,
+        "ring_min_angular_coverage": proposal_config.ring_min_angular_coverage,
+        "ring_angular_bins": proposal_config.ring_angular_bins,
+        "ring_max_radial_std": proposal_config.ring_max_radial_std,
+        "ring_max_defect_ratio": proposal_config.ring_max_defect_ratio,
+        "ring_min_edge_defect_fraction": proposal_config.ring_min_edge_defect_fraction,
     }
 
 
@@ -570,6 +616,14 @@ def _proposal_config(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: Optional[int] = None,
+    ring_edge_r_min: Optional[float] = None,
+    ring_band_width: Optional[float] = None,
+    ring_min_angular_coverage: Optional[float] = None,
+    ring_angular_bins: Optional[int] = None,
+    ring_max_radial_std: Optional[float] = None,
+    ring_max_defect_ratio: Optional[float] = None,
+    ring_min_edge_defect_fraction: Optional[float] = None,
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
     if proposal_mode not in {"cc", "compact", "sparse-density"}:
@@ -586,14 +640,40 @@ def _proposal_config(
         adaptive_min_area = 2
         adaptive_top_k = 4
         descriptor_mode = "coarse"
+        ring_defaults = (6, 0.65, 0.10, 0.10, 24, 0.18, 0.60, 0.45)
     elif short_side <= 25:
         adaptive_min_area = max(3, int(round(valid_area * 0.01)))
         adaptive_top_k = 6
         descriptor_mode = "normal"
+        ring_defaults = (12, 0.65, 0.10, 0.16, 72, 0.12, 0.45, 0.45)
     else:
         adaptive_min_area = max(5, int(round(valid_area * 0.005)))
         adaptive_top_k = 8
         descriptor_mode = "normal"
+        ring_defaults = (12, 0.65, 0.10, 0.16, 72, 0.12, 0.45, 0.45)
+
+    (
+        default_ring_min_area,
+        default_ring_edge_r_min,
+        default_ring_band_width,
+        default_ring_min_angular_coverage,
+        default_ring_angular_bins,
+        default_ring_max_radial_std,
+        default_ring_max_defect_ratio,
+        default_ring_min_edge_defect_fraction,
+    ) = ring_defaults
+    ring_min_area = default_ring_min_area if ring_min_area is None else ring_min_area
+    ring_edge_r_min = default_ring_edge_r_min if ring_edge_r_min is None else ring_edge_r_min
+    ring_band_width = default_ring_band_width if ring_band_width is None else ring_band_width
+    ring_min_angular_coverage = default_ring_min_angular_coverage if ring_min_angular_coverage is None else ring_min_angular_coverage
+    ring_angular_bins = default_ring_angular_bins if ring_angular_bins is None else ring_angular_bins
+    ring_max_radial_std = default_ring_max_radial_std if ring_max_radial_std is None else ring_max_radial_std
+    ring_max_defect_ratio = default_ring_max_defect_ratio if ring_max_defect_ratio is None else ring_max_defect_ratio
+    ring_min_edge_defect_fraction = (
+        default_ring_min_edge_defect_fraction
+        if ring_min_edge_defect_fraction is None
+        else ring_min_edge_defect_fraction
+    )
 
     return ProposalConfig(
         min_area=max(1, min(int(min_area), adaptive_min_area)),
@@ -608,6 +688,14 @@ def _proposal_config(
         density_min_raw_mass=max(float(density_min_raw_mass), 0.0),
         density_merge_iou=min(max(float(density_merge_iou), 0.0), 1.0),
         density_weight_transform=density_weight_transform,
+        ring_min_area=max(int(ring_min_area), 1),
+        ring_edge_r_min=min(max(float(ring_edge_r_min), 0.0), 1.0),
+        ring_band_width=max(float(ring_band_width), 0.0),
+        ring_min_angular_coverage=min(max(float(ring_min_angular_coverage), 0.0), 1.0),
+        ring_angular_bins=max(int(ring_angular_bins), 1),
+        ring_max_radial_std=max(float(ring_max_radial_std), 0.0),
+        ring_max_defect_ratio=min(max(float(ring_max_defect_ratio), 0.0), 1.0),
+        ring_min_edge_defect_fraction=min(max(float(ring_min_edge_defect_fraction), 0.0), 1.0),
     )
 
 

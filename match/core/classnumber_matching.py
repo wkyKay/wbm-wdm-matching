@@ -60,6 +60,14 @@ def compute_classnumber_matches(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -123,6 +131,14 @@ def compute_classnumber_matches(
                 density_min_raw_mass=density_min_raw_mass,
                 density_merge_iou=density_merge_iou,
                 density_weight_transform=density_weight_transform,
+                ring_min_area=ring_min_area,
+                ring_edge_r_min=ring_edge_r_min,
+                ring_band_width=ring_band_width,
+                ring_min_angular_coverage=ring_min_angular_coverage,
+                ring_angular_bins=ring_angular_bins,
+                ring_max_radial_std=ring_max_radial_std,
+                ring_max_defect_ratio=ring_max_defect_ratio,
+                ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
             )
             partial = count_explanation["result"]
             partial_matched_only = count_explanation["result_matched_only"]
@@ -147,6 +163,14 @@ def compute_classnumber_matches(
                 density_min_raw_mass=density_min_raw_mass,
                 density_merge_iou=density_merge_iou,
                 density_weight_transform=density_weight_transform,
+                ring_min_area=ring_min_area,
+                ring_edge_r_min=ring_edge_r_min,
+                ring_band_width=ring_band_width,
+                ring_min_angular_coverage=ring_min_angular_coverage,
+                ring_angular_bins=ring_angular_bins,
+                ring_max_radial_std=ring_max_radial_std,
+                ring_max_defect_ratio=ring_max_defect_ratio,
+                ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
             )
 
         rank_score = _rank_score(partial, binary, match_mode)
@@ -249,6 +273,14 @@ def compute_binary_class_score(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
 ) -> tuple[LocalMatchResult, LocalMatchResult]:
     """Score a classnumber split using binary-token partial matching. Returns (result, result_matched_only)."""
     explanation = explain_binary_partial_match(
@@ -271,6 +303,14 @@ def compute_binary_class_score(
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area,
+        ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
     return explanation["result"], explanation["result_matched_only"]
 

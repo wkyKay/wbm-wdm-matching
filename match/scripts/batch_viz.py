@@ -49,7 +49,7 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
     representation = getattr(args, "representation", "count")
 
     # 根据 representation 选择 cmap
-    if representation == "count":
+    if representation in ("count", "density"):
         cmap = COUNT_PARTIAL_CMAP
     elif representation == "binary":
         cmap = "gray"
@@ -78,12 +78,8 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
         ax = axes[idx + 1]
         rep_map = gm.representation_maps.get(representation)
         if rep_map is not None:
-            masked = _mask_background_for_baseline(rep_map, gm.status_map)
-            if representation == "binary":
-                ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="equal", interpolation="nearest")
-            else:
-                vmax_val = float(masked.max()) if masked.max() > 0 else 1.0
-                ax.imshow(masked, cmap=cmap, vmin=1e-6, vmax=vmax_val, aspect="equal", interpolation="nearest")
+            img = _render_wdm_baseline(rep_map, gm.status_map, cmap)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
         ax.set_title(f"#{idx + 1}  {_safe_name(name)}\ncl={score:.4f}", fontsize=11)
         ax.axis("off")
 
@@ -124,7 +120,7 @@ def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None
     out_dir.mkdir(parents=True, exist_ok=True)
 
     representation = getattr(args, "representation", "count")
-    if representation == "count":
+    if representation in ("count", "density"):
         cmap = COUNT_PARTIAL_CMAP
     elif representation == "binary":
         cmap = "gray"
@@ -152,12 +148,8 @@ def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None
         ax = axes[idx + 1]
         rep_map = gm.representation_maps.get(representation)
         if rep_map is not None:
-            masked = _mask_background_for_baseline(rep_map, gm.status_map)
-            if representation == "binary":
-                ax.imshow(masked, cmap=cmap, vmin=0, vmax=1, aspect="equal", interpolation="nearest")
-            else:
-                vmax_val = float(masked.max()) if masked.max() > 0 else 1.0
-                ax.imshow(masked, cmap=cmap, vmin=1e-6, vmax=vmax_val, aspect="equal", interpolation="nearest")
+            img = _render_wdm_baseline(rep_map, gm.status_map, cmap)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
         ax.set_title(f"#{idx + 1}  {_safe_name(name)}\nsplit rank={score:.4f}", fontsize=11)
         ax.axis("off")
 
@@ -178,6 +170,29 @@ def _mask_background_for_baseline(map_data, status_map: "np.ndarray") -> "np.nda
     invalid = (status_map == BACKGROUND) | (status_map == UNINSPECTED)
     masked[invalid] = 0.0
     return masked
+
+
+def _render_wdm_baseline(rep_map, status_map, cmap_name):
+    """构建 RGB 图层：黑色背景、灰色 valid 无缺陷区域、cmap 叠缺陷区域。"""
+    import matplotlib.pyplot as _plt
+    import numpy as np
+    from matplotlib.colors import Normalize
+    from ..core.models import BACKGROUND, UNINSPECTED
+
+    h, w = status_map.shape
+    img = np.zeros((h, w, 3), dtype=np.float32)
+    valid = (status_map != BACKGROUND) & (status_map != UNINSPECTED)
+    img[valid] = [0.498, 0.498, 0.498]  # #7f7f7f gray
+
+    raw = rep_map.astype(np.float32)
+    defect = (raw > 0) & valid
+    if defect.any():
+        vmax_val = float(raw.max()) if raw.max() > 0 else 1.0
+        norm = Normalize(vmin=1e-6, vmax=vmax_val)
+        colored = _plt.get_cmap(cmap_name)(norm(raw))[..., :3]
+        img[defect] = colored[defect]
+
+    return img
 
 
 def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
@@ -251,6 +266,14 @@ def _save_count_partial_figures_for_key(
         density_min_raw_mass=args.density_min_raw_mass,
         density_merge_iou=args.density_merge_iou,
         density_weight_transform=args.density_weight_transform,
+        ring_min_area=args.ring_min_area,
+        ring_edge_r_min=args.ring_edge_r_min,
+        ring_band_width=args.ring_band_width,
+        ring_min_angular_coverage=args.ring_min_angular_coverage,
+        ring_angular_bins=args.ring_angular_bins,
+        ring_max_radial_std=args.ring_max_radial_std,
+        ring_max_defect_ratio=args.ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
         save_path=topk_path,
         result_key=result_key,
     )
@@ -280,6 +303,14 @@ def _save_count_partial_figures_for_key(
             density_min_raw_mass=args.density_min_raw_mass,
             density_merge_iou=args.density_merge_iou,
             density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
             save_path=step_path,
             result_key=result_key,
         )
@@ -418,6 +449,14 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
             density_min_raw_mass=args.density_min_raw_mass,
             density_merge_iou=args.density_merge_iou,
             density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
             save_path=step_path,
         )
         plt.close("all")
@@ -472,6 +511,14 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
                 density_min_raw_mass=args.density_min_raw_mass,
                 density_merge_iou=args.density_merge_iou,
                 density_weight_transform=args.density_weight_transform,
+                ring_min_area=args.ring_min_area,
+                ring_edge_r_min=args.ring_edge_r_min,
+                ring_band_width=args.ring_band_width,
+                ring_min_angular_coverage=args.ring_min_angular_coverage,
+                ring_angular_bins=args.ring_angular_bins,
+                ring_max_radial_std=args.ring_max_radial_std,
+                ring_max_defect_ratio=args.ring_max_defect_ratio,
+                ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
                 save_path=step_path,
                 result_key="result_matched_only",
             )

@@ -330,6 +330,14 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         default="sqrt",
         help="WDM count transform used as sparse-density KDE point weights.",
     )
+    parser.add_argument("--ring-min-area", type=int, default=None, help="Override the adaptive minimum ring-band cell count.")
+    parser.add_argument("--ring-edge-r-min", type=float, default=None, help="Override the minimum normalized radius considered part of an edge ring.")
+    parser.add_argument("--ring-band-width", type=float, default=None, help="Override the normalized radial half-width around the selected ring band.")
+    parser.add_argument("--ring-min-angular-coverage", type=float, default=None, help="Override the adaptive occupied angular-bin ratio required for a ring.")
+    parser.add_argument("--ring-angular-bins", type=int, default=None, help="Override the adaptive angular-bin count for compact-ring coverage.")
+    parser.add_argument("--ring-max-radial-std", type=float, default=None, help="Override the maximum normalized radial spread for a ring.")
+    parser.add_argument("--ring-max-defect-ratio", type=float, default=None, help="Override the maximum valid-area defect ratio permitted for a ring.")
+    parser.add_argument("--ring-min-edge-defect-fraction", type=float, default=None, help="Override the minimum defect fraction required in the outer radial region.")
 
 
 def _add_classnumber_args(parser: argparse.ArgumentParser) -> None:

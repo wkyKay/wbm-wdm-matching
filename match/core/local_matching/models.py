@@ -29,3 +29,11 @@ class ProposalConfig:
     density_min_raw_mass: float
     density_merge_iou: float
     density_weight_transform: str
+    ring_min_area: int
+    ring_edge_r_min: float
+    ring_band_width: float
+    ring_min_angular_coverage: float
+    ring_angular_bins: int
+    ring_max_radial_std: float
+    ring_max_defect_ratio: float
+    ring_min_edge_defect_fraction: float

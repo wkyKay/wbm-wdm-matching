@@ -44,6 +44,14 @@ def compute_count_partial_match(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference,
@@ -69,6 +77,14 @@ def compute_count_partial_match(
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area,
+        ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
     return explanation["result"]
 
@@ -97,6 +113,14 @@ def compute_binary_partial_match(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference,
@@ -122,6 +146,14 @@ def compute_binary_partial_match(
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area,
+        ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
     return explanation["result"]
 
@@ -150,6 +182,14 @@ def explain_count_partial_match(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -183,6 +223,14 @@ def explain_count_partial_match(
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area,
+        ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
 
 
@@ -210,6 +258,14 @@ def explain_binary_partial_match(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -243,6 +299,14 @@ def explain_binary_partial_match(
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area,
+        ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
 
 
@@ -273,6 +337,14 @@ def _explain_local_partial_match(
     density_min_raw_mass: float,
     density_merge_iou: float,
     density_weight_transform: str,
+    ring_min_area: int | None,
+    ring_edge_r_min: float | None,
+    ring_band_width: float | None,
+    ring_min_angular_coverage: float | None,
+    ring_angular_bins: int | None,
+    ring_max_radial_std: float | None,
+    ring_max_defect_ratio: float | None,
+    ring_min_edge_defect_fraction: float | None,
 ) -> Dict:
     proposal_config = _proposal_config(
         reference.status_map.shape,
@@ -293,24 +365,40 @@ def _explain_local_partial_match(
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area,
+        ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
+    proposal_debug = {"proposal_mode": proposal_config.proposal_mode}
     if proposal_config.proposal_mode == "sparse-density":
         wbm_tokens = _tokens_from_weighted_mask(
             wbm_mask & valid_mask,
             valid_mask,
             (wbm_mask & valid_mask).astype(np.float32),
             proposal_config=proposal_config,
+            proposal_debug=proposal_debug,
         )
         raw_wdm_weight_map = wdm_weight_map
         wdm_weight_map = _density_weight_map(wdm_weight_map, density_weight_transform)
     else:
-        wbm_tokens = _tokens_from_mask(wbm_mask & valid_mask, valid_mask, proposal_config=proposal_config)
+        wbm_tokens = _tokens_from_mask(
+            wbm_mask & valid_mask,
+            valid_mask,
+            proposal_config=proposal_config,
+            proposal_debug=proposal_debug,
+        )
     wdm_tokens = _tokens_from_weighted_mask(
         wdm_mask & valid_mask,
         valid_mask,
         wdm_weight_map.astype(np.float32),
         proposal_config=proposal_config,
         raw_weight_map=raw_wdm_weight_map if proposal_config.proposal_mode == "sparse-density" else None,
+        proposal_debug=proposal_debug,
     )
 
     empty_result = LocalMatchResult(
@@ -332,6 +420,7 @@ def _explain_local_partial_match(
             "matches": [],
             "token_topk_matches": [],
             "map_topk_matches": [],
+            "proposal_debug": proposal_debug,
         }
 
     all_pairs = []
@@ -457,6 +546,7 @@ def _explain_local_partial_match(
         "matches": matches,
         "token_topk_matches": token_topk_matches,
         "map_topk_matches": map_topk_matches,
+        "proposal_debug": proposal_debug,
     }
 
 

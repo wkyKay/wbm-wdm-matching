@@ -282,7 +282,8 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 - **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
 - **Compact**：先提取边缘环状 token（radial histogram 检测环形密集带），再从残差中提取 component token（分类为 blob / line / central / irregular），按类型多样性选取
-  - 对短边 ≤12 的小图，Compact 在 ring 检测前会对有效区域内的 mask 做一次轻量 closing，用于桥接 1-2 个像素的断裂，提升小图环状 token 的稳定性
+  - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，再进行 ring 检测，因此单像素断裂碎片不会在桥接前被面积过滤；残余 component 仍由去噪后的原始 mask 提取
+  - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
 - **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。

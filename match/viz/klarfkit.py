@@ -99,7 +99,7 @@ class WaferMap:
         self._defect_list = defect_record
 
         if isinstance(defect_record, (pd.DataFrame)):
-            self._calculate_actual_locations(defect_record)
+            self._defect_list = self._calculate_actual_locations(defect_record)
 
         self.file_version = file_version
         if file_timestamp:
@@ -169,8 +169,11 @@ class WaferMap:
         return self._defect_list
 
     def _calculate_actual_locations(self, df):
-        df['_XACTUAL'] = (df['XINDEX'] * self._die_pitch[0]) + df['XREL'] - self._center_location[0]
-        df['_YACTUAL'] = (df['YINDEX'] * self._die_pitch[1]) + df['YREL'] - self._center_location[1]
+        new_cols = pd.DataFrame({
+            '_XACTUAL': (df['XINDEX'] * self._die_pitch[0]) + df['XREL'] - self._center_location[0],
+            '_YACTUAL': (df['YINDEX'] * self._die_pitch[1]) + df['YREL'] - self._center_location[1],
+        }, index=df.index)
+        return pd.concat([df, new_cols], axis=1)
 
     def _update_relative_coordinates(self, old_die_pitch, new_die_pitch, old_center, new_center):
         scale_x = new_die_pitch[0] / old_die_pitch[0]

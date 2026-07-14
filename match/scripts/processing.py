@@ -125,6 +125,14 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             density_min_raw_mass=args.density_min_raw_mass,
             density_merge_iou=args.density_merge_iou,
             density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
         )
         partial = explanation["result"]
         partial_mo = explanation["result_matched_only"]
@@ -185,6 +193,14 @@ def _compute_classnumber_scores(
             density_min_raw_mass=args.density_min_raw_mass,
             density_merge_iou=args.density_merge_iou,
             density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
         )
         result = classnumber_scores_dict(class_result)
         result["_classnumber_result"] = class_result
