@@ -15,6 +15,6 @@
   "density_min_raw_mass": 3.0,
   "density_merge_iou": 0.6,
   "density_weight_transform": "sqrt",
-  "count_partial_review_top_k": 3,
-  "count_partial_step_max": 3
+  "review_top_k": 3,
+  "step_max": 3
 }

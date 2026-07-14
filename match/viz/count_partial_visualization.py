@@ -21,7 +21,7 @@ COUNT_PARTIAL_CMAP = LinearSegmentedColormap.from_list(
     ["#93c5fd", "#60a5fa", "#3b82f6", "#1d4ed8", "#1e3a5f"],
 )
 COUNT_PARTIAL_CMAP.set_bad("black")
-COUNT_PARTIAL_CMAP.set_under("#7f7f7f")
+COUNT_PARTIAL_CMAP.set_under("black")
 TOKEN_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#8c564b", "#17becf",
     "#e377c2", "#bcbd22", "#7f7f7f", "#d62728",

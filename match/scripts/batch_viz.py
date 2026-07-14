@@ -40,7 +40,7 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)
-    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_k = max(getattr(args, "review_top_k", 3), 1)
     top_records = scored[:top_k]
 
     out_dir = log_dir / "baseline_review"
@@ -117,10 +117,10 @@ def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)
-    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_k = max(getattr(args, "review_top_k", 3), 1)
     top_records = scored[:top_k]
 
-    out_dir = log_dir / "baseline_review"
+    out_dir = log_dir / "classnumber_baseline_review"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     representation = getattr(args, "representation", "count")
@@ -227,7 +227,7 @@ def _save_count_partial_figures_for_key(
     out_dir.mkdir(parents=True, exist_ok=True)
     steps_dir.mkdir(parents=True, exist_ok=True)
 
-    top_n = max(args.count_partial_review_top_k, 1)
+    top_n = max(args.review_top_k, 1)
     top_records = scored[:top_n]
     topk_path = out_dir / f"top{len(top_records)}_count_partial.png"
     plot_count_partial_topk(
@@ -257,7 +257,7 @@ def _save_count_partial_figures_for_key(
     close_all("all")
     print(f"Count-partial TopK figure saved [{result_key}]: {topk_path}")
 
-    for rank, (name, gm, _) in enumerate(scored[: max(args.count_partial_step_max, 0)], start=1):
+    for rank, (name, gm, _) in enumerate(scored[: max(args.step_max, 0)], start=1):
         step_path = steps_dir / f"rank{rank:02d}_{_safe_name(name)}_steps.png"
         plot_count_partial_steps(
             ref_gm,
@@ -332,7 +332,7 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
 
     rank_by = derive_classnumber_match_mode(args.representation)
     split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
-    top_k = max(args.count_partial_review_top_k, 1)
+    top_k = max(args.review_top_k, 1)
     top_records = split_records[:top_k]
     _save_topk_classnumber_split_maps(
         ref_gm=ref_gm,
@@ -534,7 +534,7 @@ def save_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)
-    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_k = max(getattr(args, "review_top_k", 3), 1)
     top_records = scored[:top_k]
 
     out_dir = log_dir / "wdm_raw_review"
@@ -617,7 +617,7 @@ def save_classnumber_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
     if rank_by not in ("count", "binary"):
         rank_by = "count"
     split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
-    top_k = max(getattr(args, "count_partial_review_top_k", 3), 1)
+    top_k = max(getattr(args, "review_top_k", 3), 1)
     top_records = split_records[:top_k]
 
     out_dir = log_dir / "wdm_raw_classnumber_review"

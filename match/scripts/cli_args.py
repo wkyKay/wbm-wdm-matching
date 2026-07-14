@@ -204,16 +204,16 @@ def _add_output_args(parser: argparse.ArgumentParser) -> None:
 
 def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
-        "--count-partial-review-top-k",
+        "--review-top-k",
         type=int,
         default=3,
-        help="Number of candidates shown in the count-partial TopK figure.",
+        help="Number of top candidates shown in WDM raw review figures (shared across modes).",
     )
     parser.add_argument(
-        "--count-partial-step-max",
+        "--step-max",
         type=int,
         default=3,
-        help="Number of top count-partial candidates rendered as proposal-step figures.",
+        help="Number of top candidates rendered as individual proposal-step figures (shared across modes).",
     )
     parser.add_argument(
         "--proposal-min-area",

@@ -1,10 +1,25 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+from __future__ import annotations
+
 import pandas as pd
 import datetime
 import numpy as np
 import matplotlib.pyplot as plt
+
+from ..data import klarfio
+
+
+def _coerce_columns_to_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert DataFrame columns to numeric where possible; non-numeric become NaN."""
+    for col in df.columns:
+        try:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        except Exception:
+            pass
+    return df
+
 
 class WaferMap:
     """
@@ -72,7 +87,6 @@ class WaferMap:
         - The CLASS LOOKUP table is used to associate index numbers with defect descriptions.
         - Each device can have multiple defects listed in the DEFECT RECORD section.
     """
-class WaferMap:
     def __init__(self, defect_record: pd.DataFrame|None = None, sample_center_location = (150_000,150_000),
                  die_pitch = (10_000, 10_000), die_origin = (0,0), sample_test_plan = None, orientation_marker = 'NOTCH',
                  orientation = 'DOWN', class_lookup: dict|None = None, inspection_test: int = 1, area_per_test: float|None = None, 
@@ -230,146 +244,77 @@ class WaferMap:
         return ""
         
     @classmethod
-    def read_klarf(cls, file_path) -> WaferMap:    
-        'Read an Excel file into a pandas DataFrame.'
+    def read_klarf(cls, file_path) -> 'WaferMap':
+        """Read a KLARF file (v1.2 or v1.8) using klarfio as the parser backend."""
+        parsed = klarfio.klarf(filename=str(file_path))
 
-        with open(file_path) as f:
-            data = [i.strip().replace(';','').replace('"', '') for i in f.readlines()]
+        if parsed.version == "1.8":
+            return cls._from_klarfio_v1_8(parsed)
+        elif parsed.version == "1.2":
+            return cls._from_klarfio_v1_2(parsed)
+        else:
+            raise ValueError(f"Unsupported KLARF version: {parsed.version}")
 
-        # Define a dictionary that will be unpacked in the WaferMap class
-        payload = {}
+    @classmethod
+    def _from_klarfio_v1_8(cls, parsed) -> 'WaferMap':
+        file_data = parsed.data["FileRecord_1.8"]
 
-        # Lists for the defect attributes and the attributes names
-        cols = []
-        defects = []
+        # Find first LotRecord
+        lot_keys = [k for k in file_data if k.startswith("LotRecord")]
+        if not lot_keys:
+            raise ValueError("No LotRecord found in v1.8 KLARF")
+        lot_data = file_data[lot_keys[0]]
 
-        # Dictionary for the classes
-        class_lookup = {}
+        # Find first WaferRecord
+        wafer_keys = [k for k in lot_data if k.startswith("WaferRecord")]
+        if not wafer_keys:
+            raise ValueError("No WaferRecord found in v1.8 KLARF")
+        wafer_data = lot_data[wafer_keys[0]]
 
-        # Sample plan collection 
-        sample_test_plan = []
+        # Defect list: Columns + Data → DataFrame
+        defect_list = wafer_data["DefectList"]
+        columns = [c["Column"] for c in defect_list["Columns"]]
+        defect_record = pd.DataFrame(defect_list["Data"], columns=columns)
+        defect_record = _coerce_columns_to_numeric(defect_record)
 
-        # Bools for collecting defect data, sample plan data, and classes data
-        defect_collect = False
-        sample_plan_collect = False
-        classes_collect = False
+        # Metadata
+        die_pitch = tuple(float(v) for v in lot_data.get("DiePitch", [10000, 10000]))
+        die_origin = tuple(float(v) for v in wafer_data.get("DieOrigin", [0, 0]))
+        sample_size = float(lot_data.get("SampleSize", [300000])[0])
+        center_location = tuple(float(v) for v in wafer_data.get("SampleCenterLocation", [sample_size / 2, sample_size / 2]))
 
-        def get_row_value(row):
-            return row.split(" ", maxsplit = 1)[-1].strip('\"')
+        return cls(
+            defect_record=defect_record,
+            sample_center_location=center_location,
+            die_pitch=die_pitch,
+            die_origin=die_origin,
+            sample_size=sample_size,
+            file_version="1 8",
+        )
 
+    @classmethod
+    def _from_klarfio_v1_2(cls, parsed) -> 'WaferMap':
+        data = parsed.data["FileRecord_1.2"]
 
-        # Iterate over each row to get the attributes and metadata
-        for i in data:
-            if 'FileVersion' in i:
-                payload['file_version'] = get_row_value(i)
+        # Defect list
+        defect_list = data["DefectList"]
+        columns = [c["Column"] for c in defect_list["Columns"]]
+        defect_record = pd.DataFrame(defect_list["Data"], columns=columns)
+        defect_record = _coerce_columns_to_numeric(defect_record)
 
-            elif 'FileTimestamp' in i:
-                payload['file_timestamp'] = get_row_value(i)
+        # Metadata — klarf v1.2 stores SampleSize in mm, convert to um
+        die_pitch = tuple(float(v) for v in data.get("DiePitch", [10000, 10000]))
+        sample_size_raw = float(data.get("SampleSize", [300])[0])
+        sample_size = sample_size_raw * 1000 if sample_size_raw < 10000 else sample_size_raw
+        center_location = tuple(float(v) for v in data.get("SampleCenterLocation", [sample_size / 2, sample_size / 2]))
 
-
-            elif 'InspectionStationID' in i:
-                payload['inspection_station'] = get_row_value(i)
-
-            elif 'SampleType' in i:
-                payload['sample_type'] = get_row_value(i)
-
-            elif 'ResultTimestamp' in i:
-                payload['result_timestamp'] = get_row_value(i)
-                #datetime.datetime.strptime(
-                #    i.split(" ", maxsplit = 1)[-1],
-                #    '%m-%d-%y %H:%M:%S')
-
-            elif 'LotID' in i:
-                payload['lot_id'] = get_row_value(i)
-
-            elif "SampleSize" in i:
-                payload['sample_size'] = float(i.split(" ")[-1]) * 1000  
-
-            elif 'SetupID' in i:
-                payload['setup_id'] = get_row_value(i)
-
-            elif 'StepID' in i:
-                payload['step_id'] = get_row_value(i)
-
-            elif 'OrientationMarkType' in i:
-                payload['orientation_marker'] = get_row_value(i)
-
-            elif 'OrientationMarkLocation' in i:
-                payload['orientation'] = get_row_value(i)
-
-            elif "DiePitch" in i:
-                payload['die_pitch'] = [float(j) for j in i.split(" ")[1:]]
-
-
-            elif "DieOrigin" in i:
-                payload['die_origin'] = [float(j) for j in i.split(" ")[1:]]
-
-            elif "WaferID" in i:
-                payload['wafer_id'] = get_row_value(i)
-
-            elif "Slot" in i:
-                payload['slot'] = get_row_value(i)
-
-            elif "CenterLocation" in i:
-                payload['sample_center_location'] = [float(j) for j in i.split(" ")[1:]]
-
-            elif 'ClassLookup' in i:
-                nrows = int(get_row_value(i))
-                count_rows = 0
-                classes_collect = True
-
-            elif 'InspectionTest' in i:
-                payload['inspection_test'] = get_row_value(i)
-
-            elif 'SampleTestPlan' in i:
-                nrows = int(i.split()[-1])
-                count_rows = 0
-                sample_plan_collect = True
-
-            elif 'AreaPerTest' in i:
-                payload['area_per_test'] = float(get_row_value(i))
-
-            elif "DefectRecordSpec" in i:
-                for j in i[:-1].split()[2::]:
-                    cols.append(j)
-
-            elif "DefectList" in i:
-                defect_collect = True
-
-            elif "SummarySpec" in i:
-                defect_collect = False
-
-            elif defect_collect:
-                parts = i.replace(";", "").split()
-                if parts:
-                    try:
-                        float(parts[0])
-                        defects.append(parts)
-                    except ValueError:
-                        pass  # skip non-numeric lines (e.g. section headers between DefectList and SummarySpec)
-
-            elif sample_plan_collect and 'SampleTestPlan' not in i:
-                sample_test_plan.append([int(j) for j in i.replace(";","").split()])
-                count_rows += 1
-                if count_rows == nrows:
-                    sample_plan_collect = False
-
-            elif classes_collect and 'ClassLookup' not in i:
-
-                if count_rows == nrows:
-                    classes_collect = False
-                else:
-                    k, v = i.split()
-                    class_lookup[int(k)] = v.replace('"','')
-                    count_rows += 1
-        if defects:
-            payload['defect_record'] = pd.DataFrame(defects, columns=cols).astype(float)
-        if sample_test_plan:
-            payload['sample_test_plan'] = sample_test_plan
-        if class_lookup:
-            payload['class_lookup'] = class_lookup
-
-        return cls(**payload)
+        return cls(
+            defect_record=defect_record,
+            sample_center_location=center_location,
+            die_pitch=die_pitch,
+            sample_size=sample_size,
+            file_version="1 2",
+        )
     
     
     def describe(self):
