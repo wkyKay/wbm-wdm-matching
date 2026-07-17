@@ -74,6 +74,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pf-col", default="Pf", help="Pass/fail result column.")
     parser.add_argument("--hardbin-col", default="Hardbin_Number", help="Hardbin number column.")
     parser.add_argument("--hardbin-name-col", default="Hardbin_Name", help="Optional hardbin name column.")
+    parser.add_argument("--softbin-col", default="Softbin_Number", help="Softbin number column.")
+    parser.add_argument("--softbin-name-col", default="Softbin_Name", help="Optional softbin name column.")
     return parser.parse_args()
 
 
@@ -129,6 +131,7 @@ def _write_wafer_outputs(
 ) -> Dict[str, object]:
     wafer_dir = out_root / _safe_path_part(lot_id) / _safe_path_part(wafer_number)
     hardbin_dir = wafer_dir / "hardbin"
+    softbin_dir = wafer_dir / "softbin"
     hardbin_dir.mkdir(parents=True, exist_ok=True)
 
     die_records = _die_records(rows, args.x_col, args.y_col)
@@ -152,6 +155,21 @@ def _write_wafer_outputs(
     )
     _write_tsv(hardbin_dir / "hardbin_index.tsv", hardbin_rows)
 
+    softbin_rows = _write_softbin_pngs(
+        softbin_dir=softbin_dir,
+        rows=rows,
+        die_records=die_records,
+        valid_mask=valid_mask,
+        shape=shape,
+        x_min=x_min,
+        y_max=y_max,
+        softbin_col=args.softbin_col,
+        softbin_name_col=args.softbin_name_col,
+    )
+    if softbin_rows:
+        softbin_dir.mkdir(parents=True, exist_ok=True)
+        _write_tsv(softbin_dir / "softbin_index.tsv", softbin_rows)
+
     metadata = _metadata(
         rows=rows,
         lot_id=lot_id,
@@ -160,6 +178,7 @@ def _write_wafer_outputs(
         bounds=(x_min, x_max, y_min, y_max),
         valid_die_count=int(valid_mask.sum()),
         hardbin_count=len(hardbin_rows),
+        softbin_count=len(softbin_rows),
         args=args,
     )
     (wafer_dir / "metadata.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -172,6 +191,7 @@ def _write_wafer_outputs(
         "width": shape[1],
         "valid_die_count": int(valid_mask.sum()),
         "hardbin_count": len(hardbin_rows),
+        "softbin_count": len(softbin_rows),
     }
 
 
@@ -273,6 +293,56 @@ def _write_hardbin_pngs(
     return index_rows
 
 
+def _write_softbin_pngs(
+    softbin_dir: Path,
+    rows: List[Dict[str, str]],
+    die_records: List[Tuple[Dict[str, str], int, int]],
+    valid_mask: np.ndarray,
+    shape: Tuple[int, int],
+    x_min: int,
+    y_max: int,
+    softbin_col: str,
+    softbin_name_col: str,
+) -> List[Dict[str, object]]:
+    if softbin_col not in rows[0]:
+        return []
+    softbins = sorted(
+        {
+            _cell(row, softbin_col)
+            for row in rows
+            if _cell(row, softbin_col) != ""
+        },
+        key=_sort_key,
+    )
+
+    index_rows = []
+    for softbin in softbins:
+        pixels = _base_pixels(valid_mask)
+        die_count = 0
+        softbin_names = set()
+        for row, x, y in die_records:
+            if _cell(row, softbin_col) != softbin:
+                continue
+            grid_row, grid_col = _grid_position(x, y, x_min, y_max)
+            pixels[grid_row, grid_col] = VALID_HAS_DEFECT
+            die_count += 1
+            if softbin_name_col in row and _cell(row, softbin_name_col):
+                softbin_names.add(_cell(row, softbin_name_col))
+
+        softbin_name = "|".join(sorted(softbin_names))
+        filename = _softbin_filename(softbin, softbin_name)
+        _write_png(softbin_dir / filename, pixels)
+        index_rows.append(
+            {
+                "softbin_number": softbin,
+                "softbin_name": softbin_name,
+                "die_count": die_count,
+                "png_path": filename,
+            }
+        )
+    return index_rows
+
+
 def _base_pixels(valid_mask: np.ndarray) -> np.ndarray:
     pixels = np.full(valid_mask.shape, BACKGROUND, dtype=np.uint8)
     pixels[valid_mask] = VALID_NO_DEFECT
@@ -300,6 +370,7 @@ def _metadata(
     bounds: Tuple[int, int, int, int],
     valid_die_count: int,
     hardbin_count: int,
+    softbin_count: int,
     args: argparse.Namespace,
 ) -> Dict[str, object]:
     x_min, x_max, y_min, y_max = bounds
@@ -309,6 +380,7 @@ def _metadata(
         "row_count": len(rows),
         "valid_die_count": valid_die_count,
         "hardbin_count": hardbin_count,
+        "softbin_count": softbin_count,
         "height": shape[0],
         "width": shape[1],
         "die_x_min": x_min,
@@ -319,6 +391,7 @@ def _metadata(
         "y_col": args.y_col,
         "pf_col": args.pf_col,
         "hardbin_col": args.hardbin_col,
+        "softbin_col": args.softbin_col,
         "product_id": _unique_text(rows, "Product_Id"),
         "test_program": _unique_text(rows, "Test_Program"),
         "stage": _unique_text(rows, "Stage"),
@@ -404,6 +477,12 @@ def _safe_path_part(value: object) -> str:
 def _hardbin_filename(hardbin_number: str, hardbin_name: str) -> str:
     name_part = _safe_path_part(hardbin_name) if hardbin_name else "hardbin"
     number_part = _safe_path_part(hardbin_number)
+    return f"{number_part}_{name_part}.png"
+
+
+def _softbin_filename(softbin_number: str, softbin_name: str) -> str:
+    name_part = _safe_path_part(softbin_name) if softbin_name else "softbin"
+    number_part = _safe_path_part(softbin_number)
     return f"{number_part}_{name_part}.png"
 
 

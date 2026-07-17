@@ -11,7 +11,7 @@ from ..core.representations import REPRESENTATIONS
 
 MODES = ("count-partial", "classnumber")
 
-SIMILARITY_COLUMNS: List[str] = ["coverage-leakage"]
+SIMILARITY_COLUMNS: List[str] = ["iou"]
 
 PARTIAL_MATCH_COLUMNS: List[str] = [
     "count-partial",
@@ -153,11 +153,11 @@ def _add_mapping_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--die-x-range", nargs=2, type=int, metavar=("MIN", "MAX"),
-        help="Fixed die index range along X (e.g. -20 20).",
+        help="Die index range along X (e.g. -20 20). Auto-detected from KLARF if omitted.",
     )
     parser.add_argument(
         "--die-y-range", nargs=2, type=int, metavar=("MIN", "MAX"),
-        help="Fixed die index range along Y (e.g. -20 20).",
+        help="Die index range along Y (e.g. -20 20). Auto-detected from KLARF if omitted.",
     )
     parser.add_argument(
         "--defect-table-index", type=int, default=0,

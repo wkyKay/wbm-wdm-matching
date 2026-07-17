@@ -16,7 +16,7 @@ def ensure_mpl() -> None:
 
 
 def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
-    """保存 baseline 对比图：按 coverage-leakage 排序 top-K，左侧 WBM、右侧 WDM 按 representation 上色。"""
+    """保存 baseline 对比图：按 IoU (|A∩B|/|A∪B|) 排序 top-K，左侧 WBM、右侧 WDM 按 representation 上色。"""
     ensure_mpl()
     import matplotlib.pyplot as plt
     import numpy as np
@@ -28,7 +28,7 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
 
     scored: list[tuple[str, "GridMaps", float]] = []
     for fname, res in rows:
-        score = res.get("coverage-leakage")
+        score = res.get("iou")
         grid_maps = res.get("_grid_maps")
         if isinstance(score, SimilarityResult):
             score = score.score
@@ -36,7 +36,7 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
             scored.append((Path(fname).stem, grid_maps, float(score)))
 
     if not scored:
-        print("Baseline figures skipped: no valid coverage-leakage GridMaps available")
+        print("Baseline figures skipped: no valid IoU GridMaps available")
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)

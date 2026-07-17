@@ -8,8 +8,8 @@
 
 | 模式 | 计算内容 | 自动输出 |
 |---|---|---|
-| `count-partial`（默认） | coverage-leakage（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review / wdm_raw_review 图表 |
-| `classnumber` | coverage-leakage（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review / wdm_raw_classnumber_review 图表 |
+| `count-partial`（默认） | IoU（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review / wdm_raw_review 图表 |
+| `classnumber` | IoU（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review / wdm_raw_classnumber_review 图表 |
 
 ```bash
 # count-partial — 默认模式，sum map baseline + count-partial 图表
@@ -17,7 +17,6 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --mode count-partial \
   --identifier AF00138
@@ -27,7 +26,6 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
   --representation count \
   --mode classnumber \
   --identifier AF00138
@@ -49,7 +47,6 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
   --representation density \
   --mode count-partial \
   --proposal-mode sparse-density \
@@ -62,7 +59,6 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
-  --die-x-range -20 20 --die-y-range -20 20 \
   --representation count \
   --mode classnumber \
   --proposal-mode sparse-density \
@@ -178,8 +174,8 @@ KLARF 文件
   │    └── core/representations.py  网格表达 (count / binary / density / soft / three-value)
   │    输出: GridMaps (与 WBM 同尺寸 H×W)
   │
-  ├─ ③ Global Similarity ── core/similarity.py → compute_similarity (method="coverage-leakage")
-  │    coverage-leakage 作为 baseline 指标
+  ├─ ③ Global Similarity ── core/similarity.py → compute_similarity (method="iou")
+  │    IoU (|A∩B|/|A∪B|) 作为 baseline 指标
   │
   ├─ ④ Count-Partial Match ── core/local_matching/scoring.py → explain_count_partial_match
   │    ├── 4a. Token 提案 ── proposal.py
@@ -209,7 +205,7 @@ KLARF 文件
 rows (所有文件的结果)
   │
   ├── scripts/batch_io.py
-  │     write_result_log    → results.tsv (每文件一行, 含 coverage-leakage + partial + classnumber)
+  │     write_result_log    → results.tsv (每文件一行, 含 iou + partial + classnumber)
   │     write_topk_log      → topk.tsv     (各指标 top-K 排名)
   │     write_token_match_log → token_match.tsv  (每 WBM token 的 top-K WDM 匹配)
   │     write_map_match_log   → map_match.tsv    (每 map 的最高分 token 对)
@@ -217,7 +213,7 @@ rows (所有文件的结果)
   └── scripts/batch_viz.py（按 mode 分支）
         ├── count-partial 模式:
         │     ├── save_baseline_figures → baseline_review/
-        │     │     (sum map coverage-leakage top-K, 左 WBM 右 WDM 对比图)
+        │     │     (sum map IoU top-K, 左 WBM 右 WDM 对比图)
         │     ├── save_count_partial_figures → count_partial_review/
         │     │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
         │     │     (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)

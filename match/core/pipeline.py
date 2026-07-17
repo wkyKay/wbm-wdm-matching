@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Tuple
 
-from ..data.fileio import load_defect_tables, load_die_pitch
+from ..data.fileio import load_defect_tables, load_die_pitch, load_die_index_bounds
 from .mappers import MAPPERS, GridMapper, DieIndexGridMapper, PhysicalCoordinateGridMapper
 from .representations import REPRESENTATIONS, DensityMapBuilder
 from .models import DefectTable, GridMaps
@@ -67,9 +67,11 @@ def build_mapper(
     # 构建 mapper 实例
     if mapper_cls is PhysicalCoordinateGridMapper:
         if die_x_range is None or die_y_range is None:
-            raise ValueError(
-                f"--mapper physical-coordinate requires --die-x-range and --die-y-range"
-            )
+            x_min, x_max, y_min, y_max = load_die_index_bounds(klarf_path)
+            if die_x_range is None:
+                die_x_range = (x_min, x_max)
+            if die_y_range is None:
+                die_y_range = (y_min, y_max)
         die_pitch_x, die_pitch_y = load_die_pitch(klarf_path)
         mapper: GridMapper = PhysicalCoordinateGridMapper(
             die_pitch_x=die_pitch_x,

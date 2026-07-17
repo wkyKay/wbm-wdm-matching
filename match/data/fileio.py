@@ -259,15 +259,78 @@ def _find_column_name(columns: List[str], candidates: Tuple[str, ...]) -> str | 
 def load_die_pitch(klarf_path: str | Path) -> tuple[float, float]:
     """从 KLARF LotRecord 中提取 DiePitch。"""
     parsed = klarfio.klarf(filename=str(klarf_path))
-    file_data = parsed.data["FileRecord_1.8"]
-    lot_keys = [k for k in file_data if k.startswith("LotRecord")]
-    if not lot_keys:
-        raise ValueError(f"No LotRecord found in {klarf_path}")
-    lot_data = file_data[lot_keys[0]]
+    lot_data = _lot_data(parsed)
     if "DiePitch" not in lot_data:
         raise ValueError(f"No DiePitch found in LotRecord of {klarf_path}")
     die_pitch = lot_data["DiePitch"]
     return float(die_pitch[0]), float(die_pitch[1])
+
+
+def load_die_index_bounds(klarf_path: str | Path) -> tuple[int, int, int, int]:
+    """从 KLARF 元数据中估算完整 die 网格范围（对齐 klarfkit 的网格绘制逻辑）。
+
+    使用 SampleSize + DiePitch + SampleCenterLocation 计算晶圆圆周内
+    每个轴上的 die 索引最小/最大值。公式：
+
+        i_min = floor((center - radius) / pitch)
+        i_max = ceil ((center + radius) / pitch)
+
+    其中 radius = sample_size / 2。
+
+    返回 (x_min, x_max, y_min, y_max)，反映晶圆上所有 die（不限于有缺陷的 die）。
+    """
+    import math
+
+    parsed = klarfio.klarf(filename=str(klarf_path))
+    lot_data = _lot_data(parsed)
+    wafer_data = _wafer_data(parsed)
+
+    die_pitch_x, die_pitch_y = (
+        float(lot_data["DiePitch"][0]),
+        float(lot_data["DiePitch"][1]),
+    )
+    sample_size = float(lot_data.get("SampleSize", [300_000])[0])
+    radius = sample_size / 2.0
+    center_x, center_y = _sample_center_location(wafer_data, sample_size)
+
+    x_min = math.floor((center_x - radius) / die_pitch_x)
+    x_max = math.ceil((center_x + radius) / die_pitch_x)
+    y_min = math.floor((center_y - radius) / die_pitch_y)
+    y_max = math.ceil((center_y + radius) / die_pitch_y)
+
+    return int(x_min), int(x_max), int(y_min), int(y_max)
+
+
+def _lot_data(parsed) -> dict:
+    """Extract LotRecord from parsed KLARF (supports v1.2 and v1.8)."""
+    version = parsed.version
+    if version == "1.8":
+        file_data = parsed.data["FileRecord_1.8"]
+    elif version == "1.2":
+        file_data = parsed.data["FileRecord_1.2"]
+    else:
+        raise ValueError(f"Unsupported KLARF version: {version}")
+    lot_keys = [k for k in file_data if k.startswith("LotRecord")]
+    if not lot_keys:
+        raise ValueError("No LotRecord found in KLARF")
+    return file_data[lot_keys[0]]
+
+
+def _wafer_data(parsed) -> dict:
+    """Extract the first WaferRecord from parsed KLARF."""
+    lot_data = _lot_data(parsed)
+    wafer_keys = [k for k in lot_data if k.startswith("WaferRecord")]
+    if not wafer_keys:
+        raise ValueError("No WaferRecord found in KLARF")
+    return lot_data[wafer_keys[0]]
+
+
+def _sample_center_location(wafer_data: dict, sample_size: float) -> tuple[float, float]:
+    """Read SampleCenterLocation from KLARF WaferRecord, defaulting to wafer center."""
+    if "SampleCenterLocation" in wafer_data:
+        vals = wafer_data["SampleCenterLocation"]
+        return float(vals[0]), float(vals[1])
+    return sample_size / 2.0, sample_size / 2.0
 
 
 def save_grid_maps(path: str | Path, grid_maps: GridMaps) -> None:
