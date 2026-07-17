@@ -133,6 +133,7 @@ def _write_wafer_outputs(
     hardbin_dir = wafer_dir / "hardbin"
     softbin_dir = wafer_dir / "softbin"
     hardbin_dir.mkdir(parents=True, exist_ok=True)
+    softbin_dir.mkdir(parents=True, exist_ok=True)
 
     die_records = _die_records(rows, args.x_col, args.y_col)
     x_min, x_max, y_min, y_max = _die_bounds(die_records)
@@ -167,7 +168,6 @@ def _write_wafer_outputs(
         softbin_name_col=args.softbin_name_col,
     )
     if softbin_rows:
-        softbin_dir.mkdir(parents=True, exist_ok=True)
         _write_tsv(softbin_dir / "softbin_index.tsv", softbin_rows)
 
     metadata = _metadata(

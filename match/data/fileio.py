@@ -1,6 +1,7 @@
 # KLARF / WBM file I/O: read shapes, parse defect tables, load die pitch, save outputs.
 from __future__ import annotations
 
+import math
 import struct
 import zlib
 from pathlib import Path
@@ -279,7 +280,6 @@ def load_die_index_bounds(klarf_path: str | Path) -> tuple[int, int, int, int]:
 
     返回 (x_min, x_max, y_min, y_max)，反映晶圆上所有 die（不限于有缺陷的 die）。
     """
-    import math
 
     parsed = klarfio.klarf(filename=str(klarf_path))
     lot_data = _lot_data(parsed)
