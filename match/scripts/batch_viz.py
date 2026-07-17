@@ -78,7 +78,7 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
         ax = axes[idx + 1]
         rep_map = gm.representation_maps.get(representation)
         if rep_map is not None:
-            img = _render_wdm_baseline(rep_map, gm.status_map, cmap)
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, cmap)
             ax.imshow(img, aspect="equal", interpolation="nearest")
         ax.set_title(f"#{idx + 1}  {_safe_name(name)}\ncl={score:.4f}", fontsize=11)
         ax.axis("off")
@@ -148,7 +148,7 @@ def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None
         ax = axes[idx + 1]
         rep_map = gm.representation_maps.get(representation)
         if rep_map is not None:
-            img = _render_wdm_baseline(rep_map, gm.status_map, cmap)
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, cmap)
             ax.imshow(img, aspect="equal", interpolation="nearest")
         ax.set_title(f"#{idx + 1}  {_safe_name(name)}\nsplit rank={score:.4f}", fontsize=11)
         ax.axis("off")
@@ -199,7 +199,7 @@ def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
     ensure_mpl()
     import matplotlib.pyplot as plt
 
-    from ..viz.count_partial_visualization import plot_count_partial_steps, plot_count_partial_topk
+    from ..viz.count_partial_visualization import plot_count_partial_steps
 
     scored: list[tuple[str, "GridMaps", float]] = []
     for fname, res in rows:
@@ -218,7 +218,6 @@ def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
         args, ref_gm, scored, log_dir,
         result_key="result",
         review_subdir="count_partial_review",
-        plot_count_partial_topk=plot_count_partial_topk,
         plot_count_partial_steps=plot_count_partial_steps,
         close_all=plt.close,
     )
@@ -227,7 +226,6 @@ def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
         args, ref_gm, scored, log_dir,
         result_key="result_matched_only",
         review_subdir="count_partial_review_matched_only",
-        plot_count_partial_topk=plot_count_partial_topk,
         plot_count_partial_steps=plot_count_partial_steps,
         close_all=plt.close,
     )
@@ -235,7 +233,7 @@ def save_count_partial_figures(args, ref_gm, rows, log_dir: Path) -> None:
 
 def _save_count_partial_figures_for_key(
     args, ref_gm, scored, log_dir: Path, result_key, review_subdir,
-    plot_count_partial_topk, plot_count_partial_steps, close_all,
+    plot_count_partial_steps, close_all,
 ) -> None:
     out_dir = log_dir / review_subdir
     steps_dir = out_dir / "proposal_steps"
@@ -244,41 +242,11 @@ def _save_count_partial_figures_for_key(
 
     top_n = max(args.review_top_k, 1)
     top_records = scored[:top_n]
-    topk_path = out_dir / f"top{len(top_records)}_count_partial.png"
-    plot_count_partial_topk(
-        ref_gm,
-        [(name, gm) for name, gm, _ in top_records],
-        title="Count-map partial matching top candidates",
-        min_area=args.proposal_min_area,
-        top_k=args.proposal_top_k,
-        proposal_mode=args.proposal_mode,
-        rotation_tolerance=args.proposal_rotation_tolerance,
-        min_token_score=args.token_min_score,
-        score_shape_weight=args.token_score_shape_weight,
-        score_position_weight=args.token_score_position_weight,
-        score_scale_weight=args.token_score_scale_weight,
-        min_relative_token_area=args.proposal_min_relative_token_area,
-        scale_area_weight=args.token_scale_area_weight,
-        scale_pca_weight=args.token_scale_pca_weight,
-        density_sigmas=tuple(args.density_sigmas),
-        density_threshold=args.density_threshold,
-        density_min_raw_points=args.density_min_raw_points,
-        density_min_raw_mass=args.density_min_raw_mass,
-        density_merge_iou=args.density_merge_iou,
-        density_weight_transform=args.density_weight_transform,
-        ring_min_area=args.ring_min_area,
-        ring_edge_r_min=args.ring_edge_r_min,
-        ring_band_width=args.ring_band_width,
-        ring_min_angular_coverage=args.ring_min_angular_coverage,
-        ring_angular_bins=args.ring_angular_bins,
-        ring_max_radial_std=args.ring_max_radial_std,
-        ring_max_defect_ratio=args.ring_max_defect_ratio,
-        ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
-        save_path=topk_path,
-        result_key=result_key,
+
+    # ── 横排 top-K 总览图：第 1 列 WBM reference，后续列 top-K WDM candidates ──
+    _save_count_partial_topk_horizontal(
+        args, ref_gm, top_records, result_key, out_dir, top_n,
     )
-    close_all("all")
-    print(f"Count-partial TopK figure saved [{result_key}]: {topk_path}")
 
     for rank, (name, gm, _) in enumerate(scored[: max(args.step_max, 0)], start=1):
         step_path = steps_dir / f"rank{rank:02d}_{_safe_name(name)}_steps.png"
@@ -318,6 +286,102 @@ def _save_count_partial_figures_for_key(
         print(f"Count-partial step figure saved [{result_key}]: {step_path}")
 
 
+def _save_count_partial_topk_horizontal(
+    args, ref_gm, top_records, result_key: str, out_dir: Path, top_n: int,
+) -> None:
+    """横排 top-K count-partial 总览图：左 WBM reference，右依次为 top-K WDM candidates。"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP
+
+    n_cols = 1 + len(top_records)
+    fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 6))
+    if n_cols == 1:
+        axes = [axes]
+
+    representation = getattr(args, "representation", "count")
+    if representation in ("count", "density"):
+        cmap = COUNT_PARTIAL_CMAP
+    elif representation == "binary":
+        cmap = "gray"
+    else:
+        cmap = "hot"
+
+    # 第 1 列: WBM reference
+    wbm_status = ref_gm.status_map.copy()
+    wbm_img = np.zeros((*wbm_status.shape, 3), dtype=np.uint8)
+    wbm_img[wbm_status == BACKGROUND] = [0, 0, 0]
+    valid = wbm_status != BACKGROUND
+    wbm_img[valid] = [127, 127, 127]
+    wbm_img[wbm_status == VALID_HAS_DEFECT] = [255, 255, 255]
+    axes[0].imshow(wbm_img, aspect="equal", interpolation="nearest")
+    axes[0].set_title("WBM Reference", fontsize=12)
+    axes[0].axis("off")
+
+    # 后续列: top-K WDM candidates
+    for idx, (name, gm) in enumerate(top_records):
+        ax = axes[idx + 1]
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, cmap)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
+        ax.set_title(f"Rank #{idx + 1}  {_safe_name(name)}", fontsize=11)
+        ax.axis("off")
+
+    out_key = result_key.replace("result", "count_partial")
+    save_path = out_dir / f"top{top_n}_{_safe_name(out_key)}.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Count-partial TopK figure saved [{result_key}]: {save_path}")
+
+
+def _save_classnumber_topk_horizontal(
+    ref_gm, top_records, rank_by: str, out_dir: Path, save_path: Path,
+) -> None:
+    """横排 top-K classnumber split 总览图：左 WBM reference，右依次为 top-K split WDM。"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..core.classnumber_matching import split_score
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    from ..viz.classnumber_visualization import CLASSNUMBER_CMAP
+
+    n_cols = 1 + len(top_records)
+    fig, axes = plt.subplots(1, n_cols, figsize=(5 * n_cols, 6))
+    if n_cols == 1:
+        axes = [axes]
+
+    # 第 1 列: WBM reference
+    wbm_status = ref_gm.status_map.copy()
+    wbm_img = np.zeros((*wbm_status.shape, 3), dtype=np.uint8)
+    wbm_img[wbm_status == BACKGROUND] = [0, 0, 0]
+    valid = wbm_status != BACKGROUND
+    wbm_img[valid] = [127, 127, 127]
+    wbm_img[wbm_status == VALID_HAS_DEFECT] = [255, 255, 255]
+    axes[0].imshow(wbm_img, aspect="equal", interpolation="nearest")
+    axes[0].set_title("WBM Reference", fontsize=12)
+    axes[0].axis("off")
+
+    # 后续列: top-K classnumber split WDM candidates
+    for idx, rec in enumerate(top_records):
+        ax = axes[idx + 1]
+        rep_map = rec["grid_maps"].representation_maps.get(rank_by)
+        if rep_map is not None:
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, CLASSNUMBER_CMAP)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
+        score = split_score(rec["split"], rank_by)
+        ax.set_title(
+            f"Rank #{idx + 1}  {_safe_name(rec['file'])} / class {rec['classnumber']}\n{rank_by}={score:.3f}",
+            fontsize=10,
+        )
+        ax.axis("off")
+
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
 def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
     ensure_mpl()
     import matplotlib.pyplot as plt
@@ -326,7 +390,6 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
     from ..viz.classnumber_visualization import (
         plot_classnumber_splits,
         plot_classnumber_step,
-        plot_classnumber_topk_splits,
     )
 
     review_name = _classnumber_review_name(args)
@@ -414,15 +477,9 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
     print(f"Classnumber ranking saved: {ranking_path}")
 
     topk_path = out_dir / f"classnumber_top{min(top_k, len(split_records))}.png"
-    plot_classnumber_topk_splits(
-        ref_gm,
-        split_records,
-        top_k=top_k,
-        score_mode=rank_by,
-        title=f"Global classnumber split top candidates ({rank_by})",
-        save_path=topk_path,
+    _save_classnumber_topk_horizontal(
+        ref_gm, top_records, rank_by, out_dir, topk_path,
     )
-    plt.close("all")
     print(f"Classnumber TopK figure saved: {topk_path}")
 
     for rank, record in enumerate(split_records[:top_k], start=1):
@@ -487,7 +544,15 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
 
     if mo_split_records:
         mo_split_records.sort(key=lambda item: item["mo_score"], reverse=True)
-        for rank, record in enumerate(mo_split_records[:top_k], start=1):
+        mo_top_records = mo_split_records[:top_k]
+
+        # ── 横排 top-K 总览图 ──
+        mo_topk_path = mo_out_dir / f"classnumber_mo_top{min(top_k, len(mo_split_records))}.png"
+        _save_classnumber_topk_horizontal(
+            ref_gm, mo_top_records, rank_by, mo_out_dir, mo_topk_path,
+        )
+
+        for rank, record in enumerate(mo_top_records, start=1):
             step_path = mo_steps_dir / f"rank{rank:02d}_{_safe_name(record['file'])}_class{record['classnumber']}_mo_steps.png"
             plot_classnumber_step(
                 ref_gm,
@@ -587,11 +652,23 @@ def save_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
     out_dir = log_dir / "wdm_raw_review"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for rank, (fname, klarf_path, score) in enumerate(top_records, start=1):
+    # ── 横排总览图：所有 top-K 在一个 figure 中 ──
+    n_cols = len(top_records)
+    if n_cols == 0:
+        return
+    fig, axes = plt.subplots(1, n_cols, figsize=(6 * n_cols, 7))
+    if n_cols == 1:
+        axes = [axes]
+
+    for ax_idx, (rank, (fname, klarf_path, score)) in enumerate(
+        enumerate(top_records, start=1)
+    ):
+        ax = axes[ax_idx]
         try:
             wm = WaferMap.read_klarf(klarf_path)
         except Exception as e:
             print(f"WDM raw figure skipped [{fname}]: {e}")
+            ax.axis("off")
             continue
 
         df = wm.defect_list
@@ -601,7 +678,6 @@ def save_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
                 cls_col = col
                 break
 
-        fig, ax = plt.subplots(figsize=(8, 8))
         _draw_wafer_base(wm, ax)
 
         x = df["_XACTUAL"].to_numpy()
@@ -624,10 +700,10 @@ def save_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
         ax.set_aspect("equal")
         ax.axis("off")
 
-        save_path = out_dir / f"rank{rank:02d}_{_safe_name(file_stem)}_wdm_raw.png"
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"WDM raw figure saved: {save_path}")
+    save_path = out_dir / f"wdm_raw_top{len(top_records)}.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"WDM raw figure saved: {save_path}")
 
 
 def save_classnumber_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
@@ -670,11 +746,21 @@ def save_classnumber_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
     out_dir = log_dir / "wdm_raw_classnumber_review"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    for rank, record in enumerate(top_records, start=1):
+    # ── 横排总览图：所有 top-K 在一个 figure 中 ──
+    n_cols = len(top_records)
+    if n_cols == 0:
+        return
+    fig, axes = plt.subplots(1, n_cols, figsize=(6 * n_cols, 7))
+    if n_cols == 1:
+        axes = [axes]
+
+    for ax_idx, (rank, record) in enumerate(enumerate(top_records, start=1)):
+        ax = axes[ax_idx]
         try:
             wm = WaferMap.read_klarf(record["klarf_path"])
         except Exception as e:
             print(f"Classnumber WDM raw figure skipped [{record['file_name']}]: {e}")
+            ax.axis("off")
             continue
 
         df = wm.defect_list
@@ -692,7 +778,6 @@ def save_classnumber_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
         else:
             df_filtered = df
 
-        fig, ax = plt.subplots(figsize=(8, 8))
         if not df_filtered.empty:
             wm_tmp = WaferMap(defect_record=df_filtered.copy(), die_pitch=wm.die_pitch,
                              sample_center_location=wm.center_location, sample_size=wm.sample_size)
@@ -710,10 +795,10 @@ def save_classnumber_wdm_raw_figures(args, rows: list, log_dir: Path) -> None:
         ax.set_aspect("equal")
         ax.axis("off")
 
-        save_path = out_dir / f"rank{rank:02d}_{_safe_name(file_stem)}_class{target_class}_wdm_raw.png"
-        fig.savefig(save_path, dpi=150, bbox_inches="tight")
-        plt.close(fig)
-        print(f"Classnumber WDM raw figure saved: {save_path}")
+    save_path = out_dir / f"wdm_raw_classnumber_top{len(top_records)}.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Classnumber WDM raw figure saved: {save_path}")
 
 
 def _draw_wafer_base(wm, ax) -> None:

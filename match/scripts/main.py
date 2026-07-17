@@ -51,7 +51,6 @@ def run(args: argparse.Namespace) -> List[Tuple[str, dict]]:
     write_token_match_log(log_dir / "token_match.tsv", rows)
     write_map_match_log(log_dir / "map_match.tsv", rows)
     _save_requested_figures(args, ref_gm, rows, log_dir)
-    _print_summary_table(args, rows)
     print(
         f"\nDone in {summary['elapsed']:.1f}s: "
         f"{summary['ok']} OK, {summary['skipped']} skipped, {summary['error']} error"
