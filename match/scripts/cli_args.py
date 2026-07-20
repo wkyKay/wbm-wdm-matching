@@ -283,9 +283,9 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--proposal-mode",
-        choices=("cc", "compact", "sparse-density", "auto"),
+        choices=("cc", "compact", "tangential-ring", "sparse-density", "auto"),
         default="cc",
-        help="Proposal mode for token extraction. 'cc' preserves legacy components; 'sparse-density' forces multi-scale KDE; 'auto' enables it for fragmented sparse pairs.",
+        help="Proposal mode: cc, compact, tangential-ring for raw-pixel rings with short angular-gap bridging, sparse-density, or auto.",
     )
     parser.add_argument(
         "--proposal-rotation-tolerance",

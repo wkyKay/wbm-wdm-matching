@@ -49,6 +49,25 @@ class SparseDensityProposalTest(unittest.TestCase):
         self.assertEqual(result["wbm_tokens"][0]["raw_point_count"], len(points))
         self.assertEqual(result["wdm_tokens"][0]["raw_mass"], float(len(points) * 4))
 
+    def test_kde_support_does_not_expand_the_matched_token_region(self) -> None:
+        points = [(5, 5), (7, 7), (9, 9), (11, 11), (13, 13)]
+        result = explain_count_partial_match(
+            _grid(points),
+            _grid(points),
+            proposal_mode="sparse-density",
+            density_sigmas=(1.6,),
+            density_threshold=0.15,
+            density_min_raw_points=3,
+            density_min_raw_mass=3.0,
+        )
+
+        token = result["wbm_tokens"][0]
+        self.assertEqual(set(token["pixels"]), set(points))
+        self.assertEqual(token["area"], len(points))
+        self.assertEqual(token["support_area"], len(points))
+        self.assertGreater(token["kde_support_area"], token["area"])
+        self.assertGreater(len(token["kde_support_pixels"]), len(token["pixels"]))
+
     def test_insufficient_sparse_evidence_does_not_create_tokens(self) -> None:
         points = [(5, 5), (9, 9)]
         result = explain_count_partial_match(

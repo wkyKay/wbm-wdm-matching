@@ -91,14 +91,20 @@ def _tokens_from_sparse_density(
                 continue
             if raw_mass < proposal_config.density_min_raw_mass:
                 continue
-            token = _token_stats(comp, density, valid_mask, total_mass=total_density_mass, source=source)
+            # KDE support groups nearby defects, but it must not become the
+            # matched region: all token geometry is computed from raw defects.
+            raw_component = comp[component_raw > 0]
+            token = _token_stats(raw_component, raw_weights, valid_mask, total_mass=total_raw_mass, source=source)
             token.update(
                 proposal_source="sparse_density",
                 proposal_type="density_support",
                 proposal_scale=float(sigma),
                 raw_mass=raw_mass,
                 raw_point_count=raw_point_count,
-                raw_pixels=[(int(r), int(c)) for r, c in np.argwhere(raw_points & _component_mask(comp, raw_points.shape))],
+                raw_pixels=[(int(r), int(c)) for r, c in raw_component],
+                kde_support_pixels=[(int(r), int(c)) for r, c in comp],
+                kde_support_area=int(len(comp)),
+                kde_support_mass=total_density_mass,
                 density_peak=float(density[rows, cols].max()),
             )
             tokens.append(token)
@@ -143,22 +149,16 @@ def _density_support_mask(density: np.ndarray, valid_mask: np.ndarray, threshold
     return valid_mask & (density >= max(float(threshold), 0.0) * peak)
 
 
-def _component_mask(component: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
-    mask = np.zeros(shape, dtype=bool)
-    mask[component[:, 0].astype(np.int64), component[:, 1].astype(np.int64)] = True
-    return mask
-
-
 def _deduplicate_density_tokens(tokens: List[Dict], min_iou: float) -> List[Dict]:
     selected: List[Dict] = []
     for token in sorted(tokens, key=_density_token_importance, reverse=True):
-        pixels = set(token.get("pixels", []))
+        support_pixels = set(token.get("kde_support_pixels", []))
         raw_pixels = set(token.get("raw_pixels", []))
         duplicate = False
         for existing in selected:
-            other = set(existing.get("pixels", []))
+            other = set(existing.get("kde_support_pixels", []))
             other_raw = set(existing.get("raw_pixels", []))
-            support_iou = _pixel_iou(pixels, other)
+            support_iou = _pixel_iou(support_pixels, other)
             raw_iou = _pixel_iou(raw_pixels, other_raw)
             if support_iou >= min_iou or raw_iou >= min_iou:
                 duplicate = True
@@ -175,7 +175,7 @@ def _pixel_iou(a: set, b: set) -> float:
 
 def _density_token_importance(token: Dict) -> float:
     raw_mass = float(token.get("raw_mass", 0.0))
-    area = float(token.get("support_area", token.get("area", 0.0)))
+    area = float(token.get("area", 0.0))
     peak = float(token.get("density_peak", 0.0))
     return float(np.sqrt(max(raw_mass, 0.0)) + 0.25 * np.sqrt(max(area, 0.0)) + 0.05 * peak)
 
@@ -191,6 +191,13 @@ def _tokens_from_components(
     h, w = mask.shape
     if proposal_config.proposal_mode == "compact":
         tokens, ring_debug = _retrieval_compact_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
+        if proposal_debug is not None:
+            proposal_debug[source] = ring_debug
+        for token in tokens:
+            _finalize_token(token, (h, w), proposal_config)
+        return tokens
+    if proposal_config.proposal_mode == "tangential-ring":
+        tokens, ring_debug = _tangential_ring_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
         if proposal_debug is not None:
             proposal_debug[source] = ring_debug
         for token in tokens:
@@ -312,6 +319,7 @@ def _retrieval_compact_tokens(
     ring_token, ring_mask, ring_debug = _extract_retrieval_ring_token(
         ring_input,
         weight_map,
+        raw_mask=original,
         valid_mask=valid_mask,
         source=source,
         min_area=proposal_config.ring_min_area,
@@ -340,6 +348,167 @@ def _retrieval_compact_tokens(
     return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k), ring_debug
 
 
+def _tangential_ring_tokens(
+    mask: np.ndarray,
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+) -> Tuple[List[Dict], Dict]:
+    """Extract a high-recall ring from raw points with tangential-only gap bridging."""
+    original = mask & valid_mask
+    ring_token, ring_mask, ring_debug = _extract_tangential_ring_token(
+        original,
+        weight_map,
+        valid_mask,
+        source=source,
+        edge_r_min=proposal_config.ring_edge_r_min,
+        max_defect_ratio=proposal_config.ring_max_defect_ratio,
+    )
+
+    denoised = np.zeros_like(original, dtype=bool)
+    for comp in _connected_components(original, connectivity=proposal_config.connectivity):
+        if len(comp) >= proposal_config.min_area:
+            denoised[comp[:, 0].astype(int), comp[:, 1].astype(int)] = True
+    component_tokens = _retrieval_component_tokens(
+        denoised & (~ring_mask),
+        weight_map,
+        valid_mask,
+        min_area=proposal_config.min_area,
+        source=source,
+    )
+    ring_debug.update(source=source, original_area=int(original.sum()), denoised_area=int(denoised.sum()))
+    return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k), ring_debug
+
+
+def _extract_tangential_ring_token(
+    raw_mask: np.ndarray,
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    source: str,
+    edge_r_min: float,
+    max_defect_ratio: float,
+    max_gap_cells: float = 2.0,
+    max_half_width_cells: float = 2.0,
+) -> Tuple[Optional[Dict], np.ndarray, Dict]:
+    """Bridge only short angular gaps; the returned mask always contains raw pixels."""
+    h, w = raw_mask.shape
+    empty_mask = np.zeros_like(raw_mask, dtype=bool)
+    points = np.argwhere(raw_mask).astype(np.int64)
+    debug = {"accepted": False, "reason": "no_points", "raw_ring_area": 0}
+    if len(points) < 3:
+        return None, empty_mask, debug
+
+    center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
+    valid_points = np.argwhere(valid_mask).astype(np.float32)
+    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else 0.0
+    if radius_ref <= 1e-6:
+        debug["reason"] = "bad_radius"
+        return None, empty_mask, debug
+
+    defect_ratio = float(len(points) / max(int(valid_mask.sum()), 1))
+    if defect_ratio > max_defect_ratio:
+        debug.update(reason="skip_high_defect_ratio", defect_ratio=defect_ratio)
+        return None, empty_mask, debug
+
+    rel = points.astype(np.float32) - center
+    radial = np.linalg.norm(rel, axis=1) / radius_ref
+    outer = radial >= edge_r_min
+    if int(outer.sum()) < 3:
+        debug.update(reason="too_few_outer_points", defect_ratio=defect_ratio)
+        return None, empty_mask, debug
+
+    outer_points = points[outer]
+    outer_radial = radial[outer]
+    outer_weights = np.maximum(weight_map[outer_points[:, 0], outer_points[:, 1]], 1e-6)
+    radial_cell = 1.0 / radius_ref
+    bin_count = max(1, int(np.ceil((1.05 - edge_r_min) / radial_cell)))
+    hist, edges = np.histogram(outer_radial, bins=bin_count, range=(edge_r_min, 1.05), weights=outer_weights)
+    peak = int(hist.argmax())
+    seed = (outer_radial >= edges[peak]) & (outer_radial <= edges[peak + 1])
+    if not seed.any():
+        debug["reason"] = "no_radial_peak"
+        return None, empty_mask, debug
+
+    ring_radius = float(np.median(outer_radial[seed]))
+    radial_mad = float(np.median(np.abs(outer_radial[seed] - ring_radius)))
+    half_width = min(max_half_width_cells * radial_cell, max(radial_cell, 2.0 * radial_mad))
+    in_band = np.abs(outer_radial - ring_radius) <= half_width
+    ring_points = outer_points[in_band]
+    if len(ring_points) < 3:
+        debug.update(reason="too_few_band_points", ring_radius=ring_radius, half_width_cells=half_width * radius_ref)
+        return None, empty_mask, debug
+
+    angular_bins = int(np.clip(np.ceil(2.0 * np.pi * ring_radius * radius_ref), 12, 144))
+    theta = (np.degrees(np.arctan2(ring_points[:, 0] - center[0], ring_points[:, 1] - center[1])) + 360.0) % 360.0
+    bin_ids = np.floor(theta / (360.0 / angular_bins)).astype(np.int64) % angular_bins
+    occupied = np.zeros(angular_bins, dtype=bool)
+    occupied[bin_ids] = True
+    arc_cells_per_bin = 2.0 * np.pi * ring_radius * radius_ref / angular_bins
+    max_gap_bins = max(1, int(np.floor(max_gap_cells / max(arc_cells_per_bin, 1e-6))))
+    contour = _bridge_short_circular_gaps(occupied, max_gap_bins)
+    raw_coverage = float(occupied.mean())
+    contour_coverage = float(contour.mean())
+    bridged_gap_bins = int(contour.sum() - occupied.sum())
+    min_coverage = min(0.08, max(3.0 / angular_bins, 0.0))
+    if contour_coverage < min_coverage:
+        debug.update(reason="low_tangential_coverage", raw_angular_coverage=raw_coverage, contour_angular_coverage=contour_coverage)
+        return None, empty_mask, debug
+
+    ring_mask = np.zeros_like(raw_mask, dtype=bool)
+    ring_mask[ring_points[:, 0], ring_points[:, 1]] = True
+    token = _token_stats(
+        ring_points,
+        weight_map,
+        valid_mask,
+        total_mass=float(weight_map[raw_mask].sum()),
+        source=source,
+    )
+    token.update(
+        proposal_source="tangential_ring",
+        proposal_type="raw_radial_band",
+        geometry_type="edge_ring",
+        ring_radius_norm=ring_radius,
+        ring_half_width_cells=float(half_width * radius_ref),
+        ring_raw_angular_coverage=raw_coverage,
+        ring_contour_angular_coverage=contour_coverage,
+        ring_angular_bins=angular_bins,
+        ring_max_tangential_gap_cells=float(max_gap_bins * arc_cells_per_bin),
+        ring_bridged_gap_bins=bridged_gap_bins,
+        ring_contour_bins=np.flatnonzero(contour).astype(int).tolist(),
+    )
+    debug.update(
+        accepted=True,
+        reason="accepted",
+        defect_ratio=defect_ratio,
+        raw_ring_area=int(len(ring_points)),
+        ring_radius_norm=ring_radius,
+        ring_half_width_cells=float(half_width * radius_ref),
+        raw_angular_coverage=raw_coverage,
+        contour_angular_coverage=contour_coverage,
+        angular_bins=angular_bins,
+        bridged_gap_bins=bridged_gap_bins,
+    )
+    return token, ring_mask, debug
+
+
+def _bridge_short_circular_gaps(occupied: np.ndarray, max_gap_bins: int) -> np.ndarray:
+    """Mark gaps bounded by occupied angular bins without creating spatial pixels."""
+    bridged = occupied.copy()
+    count = len(bridged)
+    if count == 0 or not occupied.any():
+        return bridged
+    for start in range(count):
+        if occupied[start] or not occupied[(start - 1) % count]:
+            continue
+        gap_len = 0
+        while gap_len < count and not occupied[(start + gap_len) % count]:
+            gap_len += 1
+        if gap_len <= max_gap_bins and gap_len < count and occupied[(start + gap_len) % count]:
+            bridged[(start + np.arange(gap_len)) % count] = True
+    return bridged
+
+
 def _small_map_ring_input(mask: np.ndarray, valid_mask: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
     if min(int(shape[0]), int(shape[1])) > 12:
         return mask
@@ -349,6 +518,7 @@ def _small_map_ring_input(mask: np.ndarray, valid_mask: np.ndarray, shape: Tuple
 def _extract_retrieval_ring_token(
     mask: np.ndarray,
     weight_map: np.ndarray,
+    raw_mask: np.ndarray,
     valid_mask: Optional[np.ndarray],
     source: str,
     min_area: int = 12,
@@ -362,11 +532,12 @@ def _extract_retrieval_ring_token(
     min_edge_defect_fraction: float = 0.45,
 ) -> Tuple[Optional[Dict], np.ndarray, Dict]:
     h, w = mask.shape
-    ring_mask = np.zeros_like(mask, dtype=bool)
+    contour_mask = np.zeros_like(mask, dtype=bool)
+    raw_ring_mask = np.zeros_like(mask, dtype=bool)
     points = np.argwhere(mask).astype(np.float32)
     debug = {"accepted": False, "reason": "no_points", "candidate_area": 0, "angular_coverage": 0.0}
     if len(points) < min_area:
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
 
     center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
     if valid_mask is not None and valid_mask.any():
@@ -378,7 +549,7 @@ def _extract_retrieval_ring_token(
         valid_area = h * w
     if radius_ref <= 1e-6:
         debug["reason"] = "bad_radius"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
 
     rel = points - center
     radial = np.linalg.norm(rel, axis=1) / radius_ref
@@ -388,16 +559,16 @@ def _extract_retrieval_ring_token(
     debug.update(defect_ratio=defect_ratio, edge_fraction=edge_fraction)
     if defect_ratio > max_defect_ratio:
         debug["reason"] = "skip_high_defect_ratio"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
     if edge_fraction < min_edge_defect_fraction:
         debug["reason"] = "skip_low_edge_fraction"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
 
     edge_points = points[edge_keep]
     edge_radial = radial[edge_keep]
     if len(edge_points) < min_area:
         debug.update(reason="too_few_edge_points", candidate_area=int(len(edge_points)))
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
 
     hist, edges = np.histogram(edge_radial, bins=12, range=(edge_r_min, 1.05))
     peak = int(hist.argmax())
@@ -424,38 +595,47 @@ def _extract_retrieval_ring_token(
     )
     if len(ring_points) < min_area:
         debug["reason"] = "too_few_ring_points"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
     if angular_coverage < min_angular_coverage:
         debug["reason"] = "low_angular_coverage"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
     if area_ratio < min_ring_area_ratio:
         debug["reason"] = "low_ring_area_ratio"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
     if radial_std > max_radial_std:
         debug["reason"] = "high_radial_std"
-        return None, ring_mask, debug
+        return None, raw_ring_mask, debug
 
-    ring_pixels = ring_points.astype(np.int64)
-    ring_mask[ring_pixels[:, 0], ring_pixels[:, 1]] = True
+    contour_pixels = ring_points.astype(np.int64)
+    contour_mask[contour_pixels[:, 0], contour_pixels[:, 1]] = True
+    raw_ring_mask = contour_mask & raw_mask
+    raw_ring_pixels = np.argwhere(raw_ring_mask).astype(np.int64)
+    if not len(raw_ring_pixels):
+        debug["reason"] = "no_raw_ring_points"
+        return None, raw_ring_mask, debug
+
     token = _token_stats(
-        ring_pixels,
+        raw_ring_pixels,
         weight_map,
         valid_mask if valid_mask is not None else np.ones_like(mask, dtype=bool),
-        total_mass=float(weight_map[mask].sum()),
+        total_mass=float(weight_map[raw_mask].sum()),
         source=source,
     )
     token.update(
         proposal_source="retrieval_compact",
         proposal_type="ring_band",
         geometry_type="edge_ring",
-        radial_mean=debug["radial_mean"],
-        radial_std=debug["radial_std"],
+        ring_contour_pixels=[(int(r), int(c)) for r, c in contour_pixels],
+        ring_contour_area=int(len(contour_pixels)),
+        ring_contour_radial_mean=debug["radial_mean"],
+        ring_contour_radial_std=debug["radial_std"],
+        ring_contour_angular_coverage=angular_coverage,
         radial_band_center=band_center,
-        angular_coverage=angular_coverage,
     )
+    debug.update(raw_ring_area=int(len(raw_ring_pixels)), contour_area=int(len(contour_pixels)))
     debug["accepted"] = True
     debug["reason"] = "accepted"
-    return token, ring_mask, debug
+    return token, raw_ring_mask, debug
 
 
 def _retrieval_component_tokens(
@@ -626,7 +806,7 @@ def _proposal_config(
     ring_min_edge_defect_fraction: Optional[float] = None,
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
-    if proposal_mode not in {"cc", "compact", "sparse-density"}:
+    if proposal_mode not in {"cc", "compact", "tangential-ring", "sparse-density"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
     density_sigmas = tuple(float(sigma) for sigma in density_sigmas)
     if not density_sigmas or any(sigma <= 0.0 for sigma in density_sigmas):

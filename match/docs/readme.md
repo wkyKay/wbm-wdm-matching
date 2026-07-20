@@ -39,7 +39,7 @@ CLI 参数优先级高于配置文件。
 
 ### 1.1.1 稀疏缺陷 proposal
 
-当 WBM 和 WDM 都由分散点构成、普通连通域无法恢复肉眼可见的环、带状或线状模式时，可使用 `sparse-density` proposal。WDM 仍先映射到与 WBM 完全一致的网格；两侧随后都把缺陷格作为 impulse，在同一组 grid-cell 尺度上生成高斯密度场、提取阈值 support，并进行跨尺度 token 去重。原始图不会被改写，token 会保留 `raw_pixels`、`raw_mass`、`raw_point_count` 和 `proposal_scale` 作为证据与追溯信息。该功能同时适用于 `--mode count-partial` 和 `--mode classnumber`。
+当 WBM 和 WDM 都由分散点构成、普通连通域无法恢复肉眼可见的环、带状或线状模式时，可使用 `sparse-density` proposal。WDM 仍先映射到与 WBM 完全一致的网格；两侧随后都把缺陷格作为 impulse，在同一组 grid-cell 尺度上生成高斯密度场、提取阈值 support，并进行跨尺度 token 去重。support 仅用于将邻近真实缺陷归为同一候选簇及绘制轮廓；token 的像素、面积、几何统计、描述子和匹配分数均只使用 support 内的原始缺陷格。token 会保留 `raw_pixels`、`raw_mass`、`raw_point_count`、`proposal_scale` 和 `kde_support_pixels` 作为证据与追溯信息。该功能同时适用于 `--mode count-partial` 和 `--mode classnumber`。
 
 ```bash
 # count-partial 模式（sparse-density proposal）
@@ -68,6 +68,23 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 ```
 
 `--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝仅由平滑产生、没有足够原始缺陷证据的候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。若使用 `--proposal-mode auto`，系统会在任一侧由多个小连通域组成且满足最小原始证据时，让 WBM 与该 WDM 同时切换到 sparse-density；它不以图像尺寸作为判断条件。`cc` 仍是默认模式，以保持既有实验可复现。
+
+### 1.1.2 切向断裂环 proposal
+
+`tangential-ring` 是独立于 `compact` 的高召回环状 proposal。它先在原始外圈缺陷点上估计主环半径，并将环宽限制在最多两个 die；随后仅在极坐标的角度轴上桥接不超过两个 die 的短缺口。桥接结果只记录为 `ring_contour_bins` 和覆盖率证据，绝不生成 token 像素；因此 token 的面积、几何统计、描述子和匹配始终只使用原始缺陷格。检测到的 ring 从 residual 中按原始像素扣除，其余区域仍按连通域提取。
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --representation count \
+  --mode count-partial \
+  --proposal-mode tangential-ring \
+  --identifier AF00138_tangential_ring
+```
+
+该模式不要求 ring 贴到晶圆最外边界，而是在 `ring_edge_r_min` 之外寻找主径向带。它适合小图中只断开一两个 die 的环；较大截断、宽外侧区域或与环半径不一致的散点不会被切向桥接补成真实 token 像素。
 
 ### 1.2 CP CSV 参考图预处理
 
@@ -240,7 +257,7 @@ match/
     local_matching/        # count-partial 局部匹配
       models.py            # LocalMatchResult、ProposalConfig
       morphology.py        # 连通域提取、形态学操作
-      proposal.py          # token 提案生成（cc / compact / sparse-density 三种模式）
+      proposal.py          # token 提案生成（cc / compact / tangential-ring / sparse-density 四种模式）
       descriptors.py       # shape descriptor（Zernike 矩 + 几何特征）
       scoring.py           # token 配对打分、贪心匹配、分数聚合
     classnumber_matching.py # classnumber 分图匹配
@@ -274,12 +291,13 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 ### 4.2 Proposal：Token 提取
 
-从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。支持三种模式：
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。支持四种模式：
 
 - **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
 - **Compact**：先提取边缘环状 token（radial histogram 检测环形密集带），再从残差中提取 component token（分类为 blob / line / central / irregular），按类型多样性选取
-  - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，再进行 ring 检测，因此单像素断裂碎片不会在桥接前被面积过滤；残余 component 仍由去噪后的原始 mask 提取
+  - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，仅作为 ring 连通性与轮廓证据；ring token 的像素、面积、几何统计和描述子仍只使用原始缺陷格，残余 component 也由去噪后的原始 mask 提取
   - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
+- **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
 - **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。

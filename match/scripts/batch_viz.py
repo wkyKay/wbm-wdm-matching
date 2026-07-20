@@ -321,7 +321,7 @@ def _save_count_partial_topk_horizontal(
     axes[0].axis("off")
 
     # 后续列: top-K WDM candidates
-    for idx, (name, gm) in enumerate(top_records):
+    for idx, (name, gm, _score) in enumerate(top_records):
         ax = axes[idx + 1]
         rep_map = gm.representation_maps.get(representation)
         if rep_map is not None:
