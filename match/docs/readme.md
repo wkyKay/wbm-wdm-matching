@@ -9,7 +9,7 @@
 | 模式 | 计算内容 | 自动输出 |
 |---|---|---|
 | `count-partial`（默认） | IoU（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review / wdm_raw_review 图表 |
-| `classnumber` | IoU（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review / wdm_raw_classnumber_review 图表 |
+| `classnumber` | IoU（每个文件的最佳 classnumber split） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review / wdm_raw_classnumber_review 图表 |
 
 ```bash
 # count-partial — 默认模式，sum map baseline + count-partial 图表
@@ -85,6 +85,47 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 ```
 
 该模式不要求 ring 贴到晶圆最外边界，而是在 `ring_edge_r_min` 之外寻找主径向带。它适合小图中只断开一两个 die 的环；较大截断、宽外侧区域或与环半径不一致的散点不会被切向桥接补成真实 token 像素。
+
+### 1.1.3 小图刚性叠合匹配
+
+当 WBM 与 WDM 都是小网格，且目标是比较整体图案的实际重合程度时，可使用 `rigid-overlay`。这是独立于 `--proposal-mode` 的匹配打分模式：它不提取 token、不计算形状描述子，也不改变原始缺陷分布；而是直接对 WDM 的原始二值缺陷 mask 搜索离散旋转与小范围平移，并以最大重合分数作为匹配结果。默认仍为 `token`，因此既有命令和实验结果不受影响。
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --representation count \
+  --mode count-partial \
+  --small-map-match-mode rigid-overlay \
+  --rigid-overlay-score dice \
+  --rigid-overlay-max-shift 1 \
+  --identifier AF00138_overlay
+```
+
+搜索角度固定为 `0, 45, 90, 135, 180, 225, 270, 315` 度；`--rigid-overlay-max-shift s` 表示行、列各自搜索 `[-s, s]` 个 die 的整数平移。`--rigid-overlay-score dice|iou` 选择最终排序分数：Dice 更适合比较总体重合，IoU 对额外缺陷更严格。每个候选变换均以晶圆网格中心为旋转中心、最近邻落到网格 cell；不插值、不膨胀、不补点。若旋转或平移使保留的原始 WDM 缺陷点少于 95%，该变换会被拒绝，避免因裁剪或离散化改变缺陷结构。
+
+该模式仅允许网格短边不超过 12 个 cell；较大的 WBM/WDM 会直接报错，以避免将小图全图叠合误用于大图或局部 proposal 场景。它可用于 `count-partial` 与 `classnumber`：后者会对每个 classnumber split 独立执行叠合并按该分数选取最佳 split。由于没有 token 配对，token/map match 日志不会包含配对记录，`shape`、`position`、`scale` 等 token 指标不参与分数；结果中的主 score 即所选 Dice 或 IoU 最大值。
+
+### 1.1.4 大图 proposal 刚性叠合匹配
+
+对于短边大于 12 个 cell 的大图，可使用 `proposal-rigid-overlay`。它继续使用现有 `--proposal-mode` 提取 WBM/WDM proposal；随后将每个 proposal 的原始像素平移到各自的局部锚点，在局部坐标中搜索同一组离散旋转和小范围平移，按 Dice 或 IoU 取每个 proposal 对的最高分。proposal 对仍按现有的一对一贪心规则接受，并按 WBM proposal 面积加权汇总为文件分数。因此，它解决的是“局部 proposal 形状在旋转、轻微位移后是否重合”，并不会将整张大图旋转或扩大缺陷区域。
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --representation count \
+  --mode count-partial \
+  --proposal-mode tangential-ring \
+  --small-map-match-mode proposal-rigid-overlay \
+  --rigid-overlay-score dice \
+  --rigid-overlay-max-shift 1 \
+  --identifier AF00138_proposal_overlay
+```
+
+`--proposal-mode` 仍决定 proposal 如何提取，例如 `cc`、`compact`、`tangential-ring` 或 `sparse-density`；`proposal-rigid-overlay` 只替换 proposal 对的打分方式，不会改变提取结果。若 token 带有 `raw_pixels`，叠合必定使用该原始像素；否则使用既有 token 像素。旋转落格造成像素合并时同样受 95% 保留率约束，且局部画布预留了平移空间，因此不会因 proposal bbox 裁剪而丢失缺陷点。该模式不允许用于小图；小图应使用 `rigid-overlay`，默认实验仍使用 `token`。
 
 ### 1.2 CP CSV 参考图预处理
 
@@ -238,7 +279,7 @@ rows (所有文件的结果)
         │           (top-K KLARF 物理坐标 wafer 原图, CLASSNUMBER=0 红色, !=0 蓝色)
         └── classnumber 模式:
               ├── save_classnumber_baseline_figures → baseline_review/
-              │     (best split map rank_score top-K, 左 WBM 右 WDM 对比图)
+              │     (每个文件取 IoU 最高的 classnumber split，再取 top-K，左 WBM 右 WDM 对比图)
               ├── save_classnumber_figures → classnumber_review/
               │     viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
               └── save_classnumber_wdm_raw_figures → wdm_raw_classnumber_review/

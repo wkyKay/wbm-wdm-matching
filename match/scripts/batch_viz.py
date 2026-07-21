@@ -91,7 +91,7 @@ def save_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
 
 
 def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None:
-    """保存 classnumber 模式 baseline 对比图：用各 KLARF 的 best split map 替代 sum map，按 rank_score 排名 top-K。"""
+    """Save the split-aware IoU baseline: best-IoU classnumber split per KLARF."""
     ensure_mpl()
     import matplotlib.pyplot as plt
     import numpy as np
@@ -99,17 +99,22 @@ def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None
     from ..core.models import BACKGROUND, VALID_HAS_DEFECT
     from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP
 
-    # 收集每个 KLARF 的最佳 classnumber split
-    scored: list[tuple[str, "GridMaps", float]] = []
+    # Match the classnumber candidate granularity without using local-match rank_score.
+    scored: list[tuple[str, "GridMaps", float, int]] = []
     for fname, res in rows:
         class_result = res.get("_classnumber_result")
-        if class_result is None or class_result.best is None:
+        if class_result is None or not class_result.splits:
             continue
-        file_stem = Path(fname).stem
-        scored.append((file_stem, class_result.best.grid_maps, float(class_result.best.rank_score)))
+        best_iou_split = max(class_result.splits, key=lambda split: split.baseline_iou)
+        scored.append((
+            Path(fname).stem,
+            best_iou_split.grid_maps,
+            float(best_iou_split.baseline_iou),
+            int(best_iou_split.classnumber),
+        ))
 
     if not scored:
-        print("Classnumber baseline figures skipped: no valid classnumber split results")
+        print("Classnumber baseline figures skipped: no valid split IoU results")
         return
 
     scored.sort(key=lambda item: item[2], reverse=True)
@@ -143,14 +148,14 @@ def save_classnumber_baseline_figures(args, ref_gm, rows, log_dir: Path) -> None
     axes[0].set_title("WBM Reference", fontsize=12)
     axes[0].axis("off")
 
-    # 后续列：top-K best split maps
-    for idx, (name, gm, score) in enumerate(top_records):
+    # 后续列：每个 KLARF 的最高 split-IoU，再跨文件取 top-K。
+    for idx, (name, gm, score, classnumber) in enumerate(top_records):
         ax = axes[idx + 1]
         rep_map = gm.representation_maps.get(representation)
         if rep_map is not None:
             img = _render_wdm_baseline(rep_map, ref_gm.status_map, cmap)
             ax.imshow(img, aspect="equal", interpolation="nearest")
-        ax.set_title(f"#{idx + 1}  {_safe_name(name)}\nsplit rank={score:.4f}", fontsize=11)
+        ax.set_title(f"#{idx + 1}  {_safe_name(name)} / class {classnumber}\nIoU={score:.4f}", fontsize=11)
         ax.axis("off")
 
     plt.tight_layout()
@@ -257,6 +262,9 @@ def _save_count_partial_figures_for_key(
             min_area=args.proposal_min_area,
             top_k=args.proposal_top_k,
             proposal_mode=args.proposal_mode,
+            small_map_match_mode=args.small_map_match_mode,
+            rigid_overlay_score=args.rigid_overlay_score,
+            rigid_overlay_max_shift=args.rigid_overlay_max_shift,
             rotation_tolerance=args.proposal_rotation_tolerance,
             min_token_score=args.token_min_score,
             score_shape_weight=args.token_score_shape_weight,
@@ -492,6 +500,9 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
             min_area=args.proposal_min_area,
             top_k=args.proposal_top_k,
             proposal_mode=args.proposal_mode,
+            small_map_match_mode=args.small_map_match_mode,
+            rigid_overlay_score=args.rigid_overlay_score,
+            rigid_overlay_max_shift=args.rigid_overlay_max_shift,
             rotation_tolerance=args.proposal_rotation_tolerance,
             min_token_score=args.token_min_score,
             score_shape_weight=args.token_score_shape_weight,
@@ -562,6 +573,9 @@ def save_classnumber_figures(args, ref_gm, rows, log_dir: Path) -> None:
                 min_area=args.proposal_min_area,
                 top_k=args.proposal_top_k,
                 proposal_mode=args.proposal_mode,
+                small_map_match_mode=args.small_map_match_mode,
+                rigid_overlay_score=args.rigid_overlay_score,
+                rigid_overlay_max_shift=args.rigid_overlay_max_shift,
                 rotation_tolerance=args.proposal_rotation_tolerance,
                 min_token_score=args.token_min_score,
                 score_shape_weight=args.token_score_shape_weight,

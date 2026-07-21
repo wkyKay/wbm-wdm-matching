@@ -288,6 +288,24 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Proposal mode: cc, compact, tangential-ring for raw-pixel rings with short angular-gap bridging, sparse-density, or auto.",
     )
     parser.add_argument(
+        "--small-map-match-mode",
+        choices=("token", "rigid-overlay", "proposal-rigid-overlay"),
+        default="token",
+        help="Matching mode. rigid-overlay scores small full maps; proposal-rigid-overlay scores large-map proposal pairs by discrete overlap.",
+    )
+    parser.add_argument(
+        "--rigid-overlay-score",
+        choices=("dice", "iou"),
+        default="dice",
+        help="Overlap score used by --small-map-match-mode rigid-overlay.",
+    )
+    parser.add_argument(
+        "--rigid-overlay-max-shift",
+        type=int,
+        default=1,
+        help="Maximum row/column shift in grid cells searched by rigid-overlay.",
+    )
+    parser.add_argument(
         "--proposal-rotation-tolerance",
         action="store_true",
         help="Use a rotation-tolerant shape descriptor for token matching.",

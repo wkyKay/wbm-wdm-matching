@@ -57,6 +57,9 @@ def plot_count_partial_steps(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    small_map_match_mode: str = "token",
+    rigid_overlay_score: str = "dice",
+    rigid_overlay_max_shift: int = 1,
     save_path: str | Path | None = None,
     explain_fn=explain_count_partial_match,
     map_mode: str = "count",
@@ -91,6 +94,9 @@ def plot_count_partial_steps(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        small_map_match_mode=small_map_match_mode,
+        rigid_overlay_score=rigid_overlay_score,
+        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
     result = explanation[result_key]
     wbm_tokens = explanation["wbm_tokens"]
@@ -167,6 +173,9 @@ def plot_count_partial_topk(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    small_map_match_mode: str = "token",
+    rigid_overlay_score: str = "dice",
+    rigid_overlay_max_shift: int = 1,
     save_path: str | Path | None = None,
     result_key: str = "result",
 ) -> Tuple[plt.Figure, List[plt.Axes]]:
@@ -203,6 +212,9 @@ def plot_count_partial_topk(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+                small_map_match_mode=small_map_match_mode,
+                rigid_overlay_score=rigid_overlay_score,
+                rigid_overlay_max_shift=rigid_overlay_max_shift,
             ),
         )
         for name, gm in candidates

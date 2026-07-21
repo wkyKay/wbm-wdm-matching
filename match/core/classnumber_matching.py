@@ -9,12 +9,14 @@ from ..data.fileio import load_defect_tables, split_defect_table_by_classnumber
 from .local_matching import LocalMatchResult, compute_binary_partial_match, explain_binary_partial_match, explain_count_partial_match
 from .models import GridMaps
 from .pipeline import build_mapper, map_defect_table_to_grid
+from .similarity import SimilarityResult, compute_similarity
 
 
 @dataclass(frozen=True)
 class ClassSplitMatch:
     classnumber: int
     grid_maps: GridMaps
+    baseline_iou: float
     partial: LocalMatchResult | None
     partial_matched_only: LocalMatchResult | None
     binary: LocalMatchResult | None
@@ -68,6 +70,9 @@ def compute_classnumber_matches(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    small_map_match_mode: str = "token",
+    rigid_overlay_score: str = "dice",
+    rigid_overlay_max_shift: int = 1,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -106,6 +111,14 @@ def compute_classnumber_matches(
             },
             die_defect_threshold=die_defect_threshold,
         )
+        baseline_score = compute_similarity(
+            reference.representation_map,
+            gm.representation_map,
+            method="iou",
+            reference_status=reference.status_map,
+            candidate_status=gm.status_map,
+        )
+        baseline_iou = float(baseline_score.score if isinstance(baseline_score, SimilarityResult) else baseline_score)
         partial = None
         partial_matched_only = None
         binary = None
@@ -139,6 +152,9 @@ def compute_classnumber_matches(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+                small_map_match_mode=small_map_match_mode,
+                rigid_overlay_score=rigid_overlay_score,
+                rigid_overlay_max_shift=rigid_overlay_max_shift,
             )
             partial = count_explanation["result"]
             partial_matched_only = count_explanation["result_matched_only"]
@@ -171,6 +187,9 @@ def compute_classnumber_matches(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+                small_map_match_mode=small_map_match_mode,
+                rigid_overlay_score=rigid_overlay_score,
+                rigid_overlay_max_shift=rigid_overlay_max_shift,
             )
 
         rank_score = _rank_score(partial, binary, match_mode)
@@ -178,6 +197,7 @@ def compute_classnumber_matches(
             ClassSplitMatch(
                 classnumber=classnumber,
                 grid_maps=gm,
+                baseline_iou=baseline_iou,
                 partial=partial,
                 partial_matched_only=partial_matched_only,
                 binary=binary,
@@ -281,6 +301,9 @@ def compute_binary_class_score(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    small_map_match_mode: str = "token",
+    rigid_overlay_score: str = "dice",
+    rigid_overlay_max_shift: int = 1,
 ) -> tuple[LocalMatchResult, LocalMatchResult]:
     """Score a classnumber split using binary-token partial matching. Returns (result, result_matched_only)."""
     explanation = explain_binary_partial_match(
@@ -311,6 +334,9 @@ def compute_binary_class_score(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        small_map_match_mode=small_map_match_mode,
+        rigid_overlay_score=rigid_overlay_score,
+        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
     return explanation["result"], explanation["result_matched_only"]
 
