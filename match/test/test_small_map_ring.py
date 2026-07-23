@@ -6,7 +6,7 @@ import unittest
 import numpy as np
 
 from match.core.local_matching import explain_count_partial_match
-from match.core.local_matching.proposal import _bridge_short_circular_gaps
+from match.core.local_matching.proposal import _bridge_short_circular_gaps, _proposal_config
 from match.core.models import GridMaps, VALID_HAS_DEFECT, VALID_NO_DEFECT
 
 
@@ -99,6 +99,15 @@ class SmallMapRingProposalTest(unittest.TestCase):
 
         token = explanation["wbm_tokens"][0]
         self.assertEqual(token["proposal_config"]["ring_angular_bins"], 72)
+
+    def test_explicit_min_area_and_top_k_are_not_adaptively_capped(self) -> None:
+        default_cfg = _proposal_config((12, 12), valid_area=144, min_area=5, top_k=6)
+        explicit_cfg = _proposal_config((12, 12), valid_area=144, min_area=20, top_k=10)
+
+        self.assertEqual(default_cfg.min_area, 2)
+        self.assertEqual(default_cfg.top_k, 4)
+        self.assertEqual(explicit_cfg.min_area, 20)
+        self.assertEqual(explicit_cfg.top_k, 10)
 
 
 if __name__ == "__main__":

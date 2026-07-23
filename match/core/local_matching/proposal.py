@@ -8,6 +8,17 @@ from .models import ProposalConfig
 from .morphology import (_binary_closing_square_constrained, _connected_components, _perimeter,)
 from .descriptors import _classify_token, _shape_descriptor
 
+DEFAULT_REQUESTED_MIN_AREA = 5
+DEFAULT_REQUESTED_TOP_K = 6
+SPARSE_RING_EDGE_R_MIN = 0.60
+SPARSE_RING_MAX_RADIAL_STD = 0.16
+SPARSE_RING_RADIUS_TOL_CELLS = 2.0
+SPARSE_RING_MIN_ANGULAR_BINS = 12
+SPARSE_RING_MAX_ANGULAR_BINS = 144
+SPARSE_RING_MIN_ARC_BINS = 2
+SPARSE_RING_MIN_ARC_COVERAGE = 0.25
+SPARSE_RING_MIN_FULL_COVERAGE = 0.65
+
 
 def _tokens_from_mask(
     mask: np.ndarray,
@@ -78,6 +89,7 @@ def _tokens_from_sparse_density(
 
     tokens: List[Dict] = []
     for sigma in proposal_config.density_sigmas:
+        sigma_tokens: List[Dict] = []
         density = _masked_gaussian_density(density_weights, valid_mask, sigma)
         support = _density_support_mask(density, valid_mask, proposal_config.density_threshold)
         total_density_mass = float(density[support].sum())
@@ -107,7 +119,9 @@ def _tokens_from_sparse_density(
                 kde_support_mass=total_density_mass,
                 density_peak=float(density[rows, cols].max()),
             )
-            tokens.append(token)
+            _annotate_sparse_ring_arc(token, valid_mask)
+            sigma_tokens.append(token)
+        tokens.extend(_merge_sparse_density_ring_arcs(sigma_tokens, raw_weights, valid_mask, total_raw_mass, source))
 
     tokens = _deduplicate_density_tokens(tokens, proposal_config.density_merge_iou)
     tokens.sort(key=_density_token_importance, reverse=True)
@@ -149,6 +163,154 @@ def _density_support_mask(density: np.ndarray, valid_mask: np.ndarray, threshold
     return valid_mask & (density >= max(float(threshold), 0.0) * peak)
 
 
+def _annotate_sparse_ring_arc(token: Dict, valid_mask: np.ndarray) -> None:
+    features = _sparse_ring_features(token.get("raw_pixels", token.get("pixels", [])), valid_mask)
+    token.update(features)
+    if not features.get("sparse_ring_arc_candidate", False):
+        return
+    coverage = float(features.get("ring_angular_coverage", 0.0))
+    if coverage >= SPARSE_RING_MIN_FULL_COVERAGE:
+        token.update(proposal_type="density_ring", geometry_type="edge_ring")
+    elif coverage >= SPARSE_RING_MIN_ARC_COVERAGE:
+        token.update(proposal_type="density_ring_arc", geometry_type="ring_arc")
+
+
+def _sparse_ring_features(pixels, valid_mask: np.ndarray) -> Dict:
+    arr = np.asarray(pixels, dtype=np.int64)
+    if arr.size == 0:
+        return {"sparse_ring_arc_candidate": False}
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        arr = arr.reshape(-1, 2)
+
+    center, radius_ref = _wafer_center_and_radius(valid_mask)
+    if radius_ref <= 1e-6:
+        return {"sparse_ring_arc_candidate": False}
+
+    rel = arr.astype(np.float32) - center
+    radial = np.linalg.norm(rel, axis=1) / radius_ref
+    radius = float(np.median(radial))
+    bins = int(np.clip(
+        np.ceil(2.0 * np.pi * radius * radius_ref),
+        SPARSE_RING_MIN_ANGULAR_BINS,
+        SPARSE_RING_MAX_ANGULAR_BINS,
+    ))
+    theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
+    occupied = np.unique(np.floor(theta / (360.0 / bins)).astype(np.int64) % bins)
+    radial_std = float(radial.std()) if len(radial) else 0.0
+    coverage = float(len(occupied) / max(bins, 1))
+    arc_candidate = (
+        radius >= SPARSE_RING_EDGE_R_MIN
+        and radial_std <= SPARSE_RING_MAX_RADIAL_STD
+        and len(occupied) >= SPARSE_RING_MIN_ARC_BINS
+    )
+    return {
+        "sparse_ring_arc_candidate": bool(arc_candidate),
+        "ring_radius_norm": radius,
+        "ring_radial_std": radial_std,
+        "ring_angular_bins": bins,
+        "ring_occupied_bins": occupied.astype(int).tolist(),
+        "ring_angular_coverage": coverage,
+    }
+
+
+def _merge_sparse_density_ring_arcs(
+    tokens: List[Dict],
+    raw_weights: np.ndarray,
+    valid_mask: np.ndarray,
+    total_raw_mass: float,
+    source: str,
+) -> List[Dict]:
+    arc_tokens = [token for token in tokens if token.get("sparse_ring_arc_candidate")]
+    if not arc_tokens:
+        return tokens
+
+    _, radius_ref = _wafer_center_and_radius(valid_mask)
+    if radius_ref <= 1e-6:
+        return tokens
+
+    groups = _group_sparse_ring_arcs_by_radius(arc_tokens, radius_ref)
+    merged_tokens: List[Dict] = []
+    used_ids = set()
+    for group in groups:
+        if len(group) < 2:
+            continue
+        raw_pixels = _unique_pixel_array(_chain_pixels(group, "raw_pixels"))
+        if len(raw_pixels) == 0:
+            continue
+        merged_features = _sparse_ring_features(raw_pixels, valid_mask)
+        coverage = float(merged_features.get("ring_angular_coverage", 0.0))
+        if coverage < SPARSE_RING_MIN_ARC_COVERAGE:
+            continue
+        support_pixels = _unique_pixel_array(_chain_pixels(group, "kde_support_pixels"))
+        merged = _token_stats(raw_pixels, raw_weights, valid_mask, total_mass=total_raw_mass, source=source)
+        raw_rows = raw_pixels[:, 0].astype(np.int64)
+        raw_cols = raw_pixels[:, 1].astype(np.int64)
+        raw_mass = float(raw_weights[raw_rows, raw_cols].sum())
+        geometry_type = "edge_ring" if coverage >= SPARSE_RING_MIN_FULL_COVERAGE else "ring_arc"
+        merged.update(
+            proposal_source="sparse_density_ring_merge",
+            proposal_type="merged_ring" if geometry_type == "edge_ring" else "merged_ring_arc",
+            proposal_scale=float(np.median([float(token.get("proposal_scale", 0.0)) for token in group])),
+            geometry_type=geometry_type,
+            raw_mass=raw_mass,
+            raw_point_count=int((raw_weights[raw_rows, raw_cols] > 0).sum()),
+            raw_pixels=[(int(r), int(c)) for r, c in raw_pixels],
+            kde_support_pixels=[(int(r), int(c)) for r, c in support_pixels],
+            kde_support_area=int(len(support_pixels)),
+            kde_support_mass=float(sum(float(token.get("kde_support_mass", 0.0)) for token in group)),
+            density_peak=float(max(float(token.get("density_peak", 0.0)) for token in group)),
+            sparse_ring_arc_candidate=True,
+            ring_radius_norm=float(merged_features.get("ring_radius_norm", 0.0)),
+            ring_radial_std=float(merged_features.get("ring_radial_std", 0.0)),
+            ring_angular_bins=int(merged_features.get("ring_angular_bins", SPARSE_RING_MIN_ANGULAR_BINS)),
+            ring_occupied_bins=list(merged_features.get("ring_occupied_bins", [])),
+            ring_angular_coverage=coverage,
+            ring_arc_count=len(group),
+        )
+        merged_tokens.append(merged)
+        used_ids.update(id(token) for token in group)
+
+    if not merged_tokens:
+        return tokens
+    return merged_tokens + [token for token in tokens if id(token) not in used_ids]
+
+
+def _group_sparse_ring_arcs_by_radius(tokens: List[Dict], radius_ref: float) -> List[List[Dict]]:
+    radius_tol = max(SPARSE_RING_RADIUS_TOL_CELLS / max(radius_ref, 1e-6), 0.04)
+    groups: List[List[Dict]] = []
+    for token in sorted(tokens, key=lambda item: float(item.get("ring_radius_norm", 0.0))):
+        radius = float(token.get("ring_radius_norm", 0.0))
+        for group in groups:
+            group_radius = float(np.median([float(item.get("ring_radius_norm", 0.0)) for item in group]))
+            if abs(radius - group_radius) <= radius_tol:
+                group.append(token)
+                break
+        else:
+            groups.append([token])
+    return groups
+
+
+def _chain_pixels(tokens: List[Dict], key: str) -> list[tuple[int, int]]:
+    pixels: list[tuple[int, int]] = []
+    for token in tokens:
+        pixels.extend((int(row), int(col)) for row, col in token.get(key, []))
+    return pixels
+
+
+def _unique_pixel_array(pixels) -> np.ndarray:
+    if not pixels:
+        return np.zeros((0, 2), dtype=np.int64)
+    return np.asarray(sorted(set((int(row), int(col)) for row, col in pixels)), dtype=np.int64)
+
+
+def _wafer_center_and_radius(valid_mask: np.ndarray) -> tuple[np.ndarray, float]:
+    h, w = valid_mask.shape
+    center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
+    valid_points = np.argwhere(valid_mask).astype(np.float32)
+    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else float(np.linalg.norm(center))
+    return center, radius_ref
+
+
 def _deduplicate_density_tokens(tokens: List[Dict], min_iou: float) -> List[Dict]:
     selected: List[Dict] = []
     for token in sorted(tokens, key=_density_token_importance, reverse=True):
@@ -177,7 +339,12 @@ def _density_token_importance(token: Dict) -> float:
     raw_mass = float(token.get("raw_mass", 0.0))
     area = float(token.get("area", 0.0))
     peak = float(token.get("density_peak", 0.0))
-    return float(np.sqrt(max(raw_mass, 0.0)) + 0.25 * np.sqrt(max(area, 0.0)) + 0.05 * peak)
+    ring_bonus = 0.0
+    if token.get("geometry_type") == "edge_ring":
+        ring_bonus = 2.0 * float(token.get("ring_angular_coverage", 0.0))
+    elif token.get("geometry_type") == "ring_arc":
+        ring_bonus = 0.5 * float(token.get("ring_angular_coverage", 0.0))
+    return float(np.sqrt(max(raw_mass, 0.0)) + 0.25 * np.sqrt(max(area, 0.0)) + 0.05 * peak + ring_bonus)
 
 
 def _tokens_from_components(
@@ -856,8 +1023,8 @@ def _proposal_config(
     )
 
     return ProposalConfig(
-        min_area=max(1, min(int(min_area), adaptive_min_area)),
-        top_k=max(1, min(int(top_k), adaptive_top_k)),
+        min_area=_effective_proposal_min_area(int(min_area), adaptive_min_area),
+        top_k=_effective_proposal_top_k(int(top_k), adaptive_top_k),
         connectivity=8,
         descriptor_mode=descriptor_mode,
         proposal_mode=proposal_mode,
@@ -877,6 +1044,18 @@ def _proposal_config(
         ring_max_defect_ratio=min(max(float(ring_max_defect_ratio), 0.0), 1.0),
         ring_min_edge_defect_fraction=min(max(float(ring_min_edge_defect_fraction), 0.0), 1.0),
     )
+
+
+def _effective_proposal_min_area(requested: int, adaptive: int) -> int:
+    if requested == DEFAULT_REQUESTED_MIN_AREA:
+        return max(1, min(requested, adaptive))
+    return max(1, requested)
+
+
+def _effective_proposal_top_k(requested: int, adaptive: int) -> int:
+    if requested == DEFAULT_REQUESTED_TOP_K:
+        return max(1, min(requested, adaptive))
+    return max(1, requested)
 
 
 def _token_importance(token: Dict) -> float:

@@ -282,6 +282,12 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="PCA-extent component weight inside scale affinity.",
     )
     parser.add_argument(
+        "--token-scale-ratio-min",
+        type=float,
+        default=0.35,
+        help="Minimum allowed area/long-axis/short-axis ratio for token matching. 0 disables hard scale gating.",
+    )
+    parser.add_argument(
         "--proposal-mode",
         choices=("cc", "compact", "tangential-ring", "sparse-density", "auto"),
         default="cc",

@@ -17,8 +17,13 @@ DEFAULT_SCALE_SCORE_WEIGHT = 0.15
 DEFAULT_MIN_RELATIVE_TOKEN_AREA = 0.10
 DEFAULT_SCALE_AREA_WEIGHT = 0.30
 DEFAULT_SCALE_PCA_WEIGHT = 0.70
+DEFAULT_SCALE_RATIO_MIN = 0.35
 PCA_LONG_EXTENT_WEIGHT = 0.75
 PCA_SHORT_EXTENT_WEIGHT = 0.25
+MOMENT_SIM_FLOOR = 0.70
+MOMENT_SIM_GAMMA = 2.0
+GEOMETRY_SIM_FLOOR = 0.55
+GEOMETRY_SIM_GAMMA = 1.5
 
 
 def compute_count_partial_match(
@@ -39,6 +44,7 @@ def compute_count_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -75,6 +81,7 @@ def compute_count_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
         density_sigmas=density_sigmas,
         density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
@@ -114,6 +121,7 @@ def compute_binary_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -150,6 +158,7 @@ def compute_binary_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
         density_sigmas=density_sigmas,
         density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
@@ -189,6 +198,7 @@ def explain_count_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -233,6 +243,7 @@ def explain_count_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
         density_sigmas=density_sigmas,
         density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
@@ -271,6 +282,7 @@ def explain_binary_partial_match(
     min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
     scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
     scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -315,6 +327,7 @@ def explain_binary_partial_match(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
         density_sigmas=density_sigmas,
         density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
@@ -356,6 +369,7 @@ def _explain_local_partial_match(
     min_relative_token_area: float,
     scale_area_weight: float,
     scale_pca_weight: float,
+    scale_ratio_min: float,
     density_sigmas: tuple[float, ...],
     density_threshold: float,
     density_min_raw_points: int,
@@ -483,6 +497,7 @@ def _explain_local_partial_match(
     all_pairs = []
     min_token_score = max(float(min_token_score), 0.0)
     min_relative_token_area = max(float(min_relative_token_area), 0.0)
+    scale_ratio_min = min(max(float(scale_ratio_min), 0.0), 1.0)
     score_weights = _normalized_score_weights(
         score_shape_weight,
         score_position_weight,
@@ -514,6 +529,7 @@ def _explain_local_partial_match(
                 sigma_scale=sigma_scale,
                 score_weights=score_weights,
                 scale_component_weights=scale_component_weights,
+                scale_ratio_min=scale_ratio_min,
             )
             passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
             if passes_score_gate:
@@ -852,6 +868,7 @@ def _token_match_components(
     sigma_scale: float,
     score_weights: tuple[float, float, float],
     scale_component_weights: tuple[float, float],
+    scale_ratio_min: float,
 ) -> Dict:
     shape_parts = _shape_similarity_components(query, candidate)
     shape_sim = shape_parts["shape_sim"]
@@ -859,11 +876,20 @@ def _token_match_components(
     position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
     support_area_affinity = _support_area_affinity(query, candidate, sigma_scale)
     pca_extent_affinity = _pca_extent_affinity(query, candidate, sigma_scale)
+    scale_ratios = _scale_ratio_components(query, candidate)
     area_weight, pca_weight = scale_component_weights
     scale_affinity = area_weight * support_area_affinity + pca_weight * pca_extent_affinity
     # geometry_type remains an explanation/diversity label; shape matching lives in descriptor space.
     type_affinity = 1.0
-    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH:
+    scale_gate_pass = (
+        scale_ratio_min <= 0.0
+        or (
+            scale_ratios["area_ratio"] >= scale_ratio_min
+            and scale_ratios["long_ratio"] >= scale_ratio_min
+            and scale_ratios["short_ratio"] >= scale_ratio_min
+        )
+    )
+    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH or not scale_gate_pass:
         score = 0.0
     else:
         w_shape, w_position, w_scale = score_weights
@@ -873,6 +899,11 @@ def _token_match_components(
         "shape_sim": shape_sim,
         "moment_sim": shape_parts["moment_sim"],
         "geometry_sim": shape_parts["geometry_sim"],
+        "moment_sim_raw": shape_parts["moment_sim_raw"],
+        "geometry_sim_raw": shape_parts["geometry_sim_raw"],
+        "scale_area_ratio": scale_ratios["area_ratio"],
+        "scale_long_ratio": scale_ratios["long_ratio"],
+        "scale_short_ratio": scale_ratios["short_ratio"],
         "position_affinity": position_affinity,
         "scale_affinity": scale_affinity,
         "support_area_affinity": support_area_affinity,
@@ -904,12 +935,34 @@ def _pca_extents(token: Dict) -> tuple[float, float]:
     return long_extent, short_extent
 
 
+def _scale_ratio_components(query: Dict, candidate: Dict) -> Dict[str, float]:
+    q_area = max(float(query.get("area", 0.0)), 1e-12)
+    c_area = max(float(candidate.get("area", 0.0)), 1e-12)
+    q_long, q_short = _pca_extents(query)
+    c_long, c_short = _pca_extents(candidate)
+    return {
+        "area_ratio": float(min(q_area, c_area) / max(q_area, c_area)),
+        "long_ratio": float(min(q_long, c_long) / max(q_long, c_long)),
+        "short_ratio": float(min(q_short, c_short) / max(q_short, c_short)),
+    }
+
+
 def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:
     q_parts = query.get("descriptor_parts")
     c_parts = candidate.get("descriptor_parts")
     if q_parts and c_parts and q_parts.get("kind") == c_parts.get("kind") == "zernike_geometry":
-        moment_sim = _cosine_sim(q_parts.get("moment"), c_parts.get("moment"))
-        geometry_sim = _geometry_sim(q_parts.get("geometry"), c_parts.get("geometry"))
+        moment_sim_raw = _cosine_sim(q_parts.get("moment"), c_parts.get("moment"))
+        geometry_sim_raw = _geometry_sim(q_parts.get("geometry"), c_parts.get("geometry"))
+        moment_sim = _contrast_sim(
+            moment_sim_raw,
+            floor=MOMENT_SIM_FLOOR,
+            gamma=MOMENT_SIM_GAMMA,
+        )
+        geometry_sim = _contrast_sim(
+            geometry_sim_raw,
+            floor=GEOMETRY_SIM_FLOOR,
+            gamma=GEOMETRY_SIM_GAMMA,
+        )
         moment_weight = float(q_parts.get("moment_weight", 0.75))
         geometry_weight = float(q_parts.get("geometry_weight", 0.25))
         total = max(moment_weight + geometry_weight, 1e-6)
@@ -918,6 +971,8 @@ def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:
             "shape_sim": float(np.clip(shape_sim, 0.0, 1.0)),
             "moment_sim": float(moment_sim),
             "geometry_sim": float(geometry_sim),
+            "moment_sim_raw": float(moment_sim_raw),
+            "geometry_sim_raw": float(geometry_sim_raw),
         }
 
     shape_sim = max(float(np.dot(query["descriptor"], candidate["descriptor"])), 0.0)
@@ -925,7 +980,19 @@ def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:
         "shape_sim": float(np.clip(shape_sim, 0.0, 1.0)),
         "moment_sim": float(shape_sim),
         "geometry_sim": 0.0,
+        "moment_sim_raw": float(shape_sim),
+        "geometry_sim_raw": 0.0,
     }
+
+
+def _contrast_sim(value: float, floor: float, gamma: float) -> float:
+    value = float(np.clip(value, 0.0, 1.0))
+    floor = float(np.clip(floor, 0.0, 0.999999))
+    gamma = max(float(gamma), 1e-6)
+    if value <= floor:
+        return 0.0
+    scaled = (value - floor) / (1.0 - floor)
+    return float(np.clip(scaled**gamma, 0.0, 1.0))
 
 
 def _cosine_sim(a, b) -> float:

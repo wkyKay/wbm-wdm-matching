@@ -93,6 +93,53 @@ class SparseDensityProposalTest(unittest.TestCase):
         self.assertEqual(result["wbm_tokens"][0]["proposal_config"]["proposal_mode"], "sparse-density")
         self.assertEqual(result["wdm_tokens"][0]["proposal_config"]["proposal_mode"], "sparse-density")
 
+    def test_fragmented_ring_segments_merge_into_one_sparse_ring_token(self) -> None:
+        shape = (25, 25)
+        center = np.array([12.0, 12.0], dtype=np.float32)
+        radius = 8.0
+        angles_deg = list(range(0, 75, 4)) + list(range(90, 165, 4)) + list(range(180, 255, 4)) + list(range(270, 345, 4))
+        points = set()
+        for angle_deg in angles_deg:
+            theta = np.deg2rad(angle_deg)
+            row = int(round(center[0] + radius * np.sin(theta)))
+            col = int(round(center[1] + radius * np.cos(theta)))
+            points.add((row, col))
+        points = sorted(points)
+
+        rows, cols = np.ogrid[:shape[0], :shape[1]]
+        valid = (rows - center[0]) ** 2 + (cols - center[1]) ** 2 <= 11.5 ** 2
+        status = np.where(valid, VALID_NO_DEFECT, BACKGROUND).astype(np.uint8)
+        for row, col in points:
+            status[row, col] = VALID_HAS_DEFECT
+        count = np.zeros(shape, dtype=np.float32)
+        for row, col in points:
+            count[row, col] = 1.0
+        grid = GridMaps(
+            count_map=count,
+            binary_map=(count > 0).astype(np.uint8),
+            density_map=count / max(float(count.sum()), 1.0),
+            status_map=status,
+            representation_map=count / max(float(count.sum()), 1.0),
+            representation_maps={"count": count, "binary": (count > 0).astype(np.uint8)},
+            metadata={},
+        )
+
+        result = explain_count_partial_match(
+            grid,
+            grid,
+            proposal_mode="sparse-density",
+            density_sigmas=(0.8,),
+            density_threshold=0.50,
+            density_min_raw_points=3,
+            density_min_raw_mass=3.0,
+        )
+
+        ring_tokens = [token for token in result["wbm_tokens"] if token.get("proposal_source") == "sparse_density_ring_merge"]
+        self.assertTrue(ring_tokens)
+        self.assertEqual(ring_tokens[0]["geometry_type"], "edge_ring")
+        self.assertGreaterEqual(ring_tokens[0]["ring_angular_coverage"], 0.65)
+        self.assertEqual(set(ring_tokens[0]["pixels"]), set(points))
+
 
 if __name__ == "__main__":
     unittest.main()

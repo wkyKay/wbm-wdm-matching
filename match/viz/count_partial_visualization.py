@@ -43,6 +43,7 @@ def plot_count_partial_steps(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
+    scale_ratio_min: float = 0.35,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -80,6 +81,7 @@ def plot_count_partial_steps(
         min_relative_token_area=min_relative_token_area,
         scale_area_weight=scale_area_weight,
         scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
         density_sigmas=density_sigmas,
         density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
@@ -159,6 +161,7 @@ def plot_count_partial_topk(
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
+    scale_ratio_min: float = 0.35,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -198,6 +201,7 @@ def plot_count_partial_topk(
                 min_relative_token_area=min_relative_token_area,
                 scale_area_weight=scale_area_weight,
                 scale_pca_weight=scale_pca_weight,
+                scale_ratio_min=scale_ratio_min,
                 density_sigmas=density_sigmas,
                 density_threshold=density_threshold,
                 density_min_raw_points=density_min_raw_points,
@@ -312,6 +316,7 @@ def _plot_cluster_color_map(
     ax.imshow(image, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
+    _draw_token_support_contours(ax, reference_status.shape, tokens)
     _draw_token_ids(ax, tokens)
 
 
@@ -336,12 +341,46 @@ def _cluster_color_image(
 
     for idx, token in enumerate(tokens):
         color = np.array(to_rgb(TOKEN_COLORS[idx % len(TOKEN_COLORS)]), dtype=np.float32)
+        support_color = 0.45 * color
+        for r, c in _token_visual_support_pixels(token):
+            rr = int(r)
+            cc = int(c)
+            if 0 <= rr < h and 0 <= cc < w:
+                image[rr, cc] = np.clip(0.55 * image[rr, cc] + support_color, 0.0, 1.0)
         for r, c in token.get("pixels", []):
             rr = int(r)
             cc = int(c)
             if 0 <= rr < h and 0 <= cc < w:
                 image[rr, cc] = color
     return image
+
+
+def _token_visual_support_pixels(token: Dict) -> list[tuple[int, int]]:
+    if token.get("kde_support_pixels"):
+        return [(int(r), int(c)) for r, c in token.get("kde_support_pixels", [])]
+    if token.get("ring_contour_pixels"):
+        return [(int(r), int(c)) for r, c in token.get("ring_contour_pixels", [])]
+    return []
+
+
+def _draw_token_support_contours(ax: plt.Axes, shape: tuple[int, int], tokens: List[Dict]) -> None:
+    h, w = shape
+    for idx, token in enumerate(tokens):
+        support_pixels = _token_visual_support_pixels(token)
+        if not support_pixels:
+            continue
+        mask = np.zeros((h, w), dtype=np.float32)
+        for r, c in support_pixels:
+            if 0 <= int(r) < h and 0 <= int(c) < w:
+                mask[int(r), int(c)] = 1.0
+        if mask.any():
+            ax.contour(
+                mask,
+                levels=[0.5],
+                colors=[TOKEN_COLORS[idx % len(TOKEN_COLORS)]],
+                linewidths=1.2,
+                alpha=0.95,
+            )
 
 
 def _wdm_status_image(candidate: GridMaps, reference_status: np.ndarray, map_mode: str = "count") -> np.ndarray:

@@ -67,7 +67,11 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --identifier AF00138_sparse_class
 ```
 
-`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝仅由平滑产生、没有足够原始缺陷证据的候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。若使用 `--proposal-mode auto`，系统会在任一侧由多个小连通域组成且满足最小原始证据时，让 WBM 与该 WDM 同时切换到 sparse-density；它不以图像尺寸作为判断条件。`cc` 仍是默认模式，以保持既有实验可复现。
+`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝仅由平滑产生、没有足够原始缺陷证据的候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。
+
+`sparse-density` 还会在每个 sigma 内做轻量 ring-aware merge：先把每个 density support component 当作候选 arc，使用原始缺陷点计算半径、径向标准差和角向覆盖率；半径相近的 arc 会被合并成一个候选 ring token。合并只改变 proposal 分组，不新增 token 像素；merged token 的 `pixels`、`area`、`mass`、描述子和匹配分数仍只来自原始缺陷格。角向覆盖率达到约 0.65 时标为 `edge_ring`，覆盖率约 0.25~0.65 时标为 `ring_arc`，用于记录“像环的一段”但不把半环当完整环处理。token 会记录 `proposal_source=sparse_density_ring_merge`、`ring_radius_norm`、`ring_radial_std`、`ring_angular_coverage`、`ring_occupied_bins` 和 `ring_arc_count` 作为调试证据。
+
+若使用 `--proposal-mode auto`，系统会在任一侧由多个小连通域组成且满足最小原始证据时，让 WBM 与该 WDM 同时切换到 sparse-density；它不以图像尺寸作为判断条件。`cc` 仍是默认模式，以保持既有实验可复现。
 
 ### 1.1.2 切向断裂环 proposal
 
@@ -339,17 +343,21 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
   - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，仅作为 ring 连通性与轮廓证据；ring token 的像素、面积、几何统计和描述子仍只使用原始缺陷格，残余 component 也由去噪后的原始 mask 提取
   - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
 - **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
-- **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
+- **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度内会额外识别半径相近、径向窄的 ring arc，并在角向覆盖足够时合并成 `edge_ring`；覆盖不足的片段只标为 `ring_arc`。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 和 ring-aware merge 只改变 proposal 的分组与证据，不会覆盖原始 WBM/WDM 数据。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。
 
+`--proposal-min-area` 与 `--proposal-top-k` 使用默认值时会按图尺寸做保守自适应：短边 ≤12 的小图默认降到 `min_area=2, top_k=4`，中等图最多保留 6 个 token，大图最多保留 8 个 token。若命令行显式传入其他值，则按用户值执行，不再被内部 adaptive 默认值截断，便于在噪声过多时提高 `min_area`，或在复杂图案中提高 `top_k` 保留更多候选。
+
 ### 4.3 Descriptor：形状描述符
 
-每个 token 的形状描述符由两部分拼接并归一化到单位长度：
+每个 token 的形状描述符由两部分组成：
 
 **Zernike 矩（权重 0.75）**：将 token 的 bbox 裁剪区域最近邻缩放到 48×48，映射到单位圆盘，计算 8 阶 Zernike 矩的幅值向量。Zernike 矩天然旋转不变，对平移和缩放也有良好鲁棒性。
 
 **几何特征（权重 0.25）**：`[fill_ratio, log(aspect), log(elongation), compactness, angular_coverage, radial_std, orientation_cos, orientation_sin]`。
+
+两部分会分别计算相似度，不再依赖拼接后的单一余弦分数作为最终形状分。Zernike 使用余弦相似度得到 `moment_sim_raw`，几何特征使用平均绝对差的指数衰减得到 `geometry_sim_raw`。
 
 若启用 `rotation_tolerance`，描述符退化为径向轮廓直方图（旧版方式）。
 
@@ -357,11 +365,29 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 **Token 对打分**：对每对 (WBM token, WDM token)，计算三个维度的亲和度，组合为 token pair score：
 
-- **Shape similarity**：两个描述符的余弦相似度（或 Zernike 余弦相似度 ×0.75 + 几何特征指数衰减相似度 ×0.25）。低于 `MIN_SHAPE_SIM_FOR_MATCH=0.45` 的直接置零
+- **Shape similarity**：先分别计算原始分数 `moment_sim_raw` 与 `geometry_sim_raw`，再用对比度校准函数压低中等相似度：
+
+```
+contrast(x, floor, gamma) =
+  0                                      if x <= floor
+  ((x - floor) / (1 - floor)) ^ gamma    otherwise
+```
+
+默认校准参数：
+
+```
+moment_sim   = contrast(moment_sim_raw,   floor=0.70, gamma=2.0)
+geometry_sim = contrast(geometry_sim_raw, floor=0.55, gamma=1.5)
+shape_sim    = 0.75 × moment_sim + 0.25 × geometry_sim
+```
+
+`moment_sim_raw` 和 `geometry_sim_raw` 会写入 token/map match 日志，便于调参时对比原始分布和校准后分布。校准后的 `shape_sim` 低于 `MIN_SHAPE_SIM_FOR_MATCH=0.45` 时，该 token pair 直接置零。
 - **Position affinity**：`exp(-d² / σ_pos²)`，d 为归一化质心间的欧氏距离
 - **Scale affinity**：`w_area × area_aff + w_pca × pca_aff`
   - `area_aff = exp(-|log(area_q / area_c)| / σ_scale)`
   - `pca_aff = exp(-(0.75·|log(long_q/long_c)| + 0.25·|log(short_q/short_c)|) / σ_scale)`
+
+另外还有一个硬尺度门控：`--token-scale-ratio-min` 默认 `0.35`，要求面积比、PCA 长轴比、PCA 短轴比都不低于该阈值，否则该 token pair 直接记为 0 分。设为 `0` 可关闭该门控。
 
 ```
 token_score = w_shape × shape_sim + w_position × position_aff + w_scale × scale_aff
