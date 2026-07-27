@@ -55,9 +55,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--c-class", choices=CLASS_NAMES, default=None, help="Optional fixed C class; default selects a class different from A/B.")
     parser.add_argument("--min-area", type=int, default=5)
     parser.add_argument("--top-k-proposals", type=int, default=6)
-    parser.add_argument("--proposal-mode", choices=("cc", "compact", "tangential-ring", "sparse-density"), default="compact", help="Token proposal mode.")
-    parser.add_argument("--min-token-score", type=float, default=0.45)
-    parser.add_argument("--min-shape-sim", type=float, default=0.45, help="Minimum shape similarity for a token pair to be scored (0-1).")
+    parser.add_argument(
+        "--proposal-mode",
+        choices=("cc", "compact", "arc", "tangential-ring", "sparse-density"),
+        default="compact",
+        help="Token proposal mode.",
+    )
+    parser.add_argument("--min-token-score", type=float, default=0.30)
+    parser.add_argument("--min-shape-sim", type=float, default=0.30, help="Minimum shape similarity for a token pair to be scored (0-1).")
     parser.add_argument("--score-shape-weight", type=float, default=0.60, help="Weight for token shape similarity (0-1).")
     parser.add_argument("--score-position-weight", type=float, default=0.25, help="Weight for token position affinity (0-1).")
     parser.add_argument("--score-scale-weight", type=float, default=0.15, help="Weight for token scale affinity (0-1).")

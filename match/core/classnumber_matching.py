@@ -49,14 +49,14 @@ def compute_classnumber_matches(
     die_defect_threshold: int = 1,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
-    min_token_score: float = 0.45,
+    min_token_score: float = 0.30,
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
-    scale_ratio_min: float = 0.35,
+    scale_ratio_min: float = 0.20,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -71,9 +71,6 @@ def compute_classnumber_matches(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
-    small_map_match_mode: str = "token",
-    rigid_overlay_score: str = "dice",
-    rigid_overlay_max_shift: int = 1,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -154,9 +151,6 @@ def compute_classnumber_matches(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-                small_map_match_mode=small_map_match_mode,
-                rigid_overlay_score=rigid_overlay_score,
-                rigid_overlay_max_shift=rigid_overlay_max_shift,
             )
             partial = count_explanation["result"]
             partial_matched_only = count_explanation["result_matched_only"]
@@ -190,9 +184,6 @@ def compute_classnumber_matches(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-                small_map_match_mode=small_map_match_mode,
-                rigid_overlay_score=rigid_overlay_score,
-                rigid_overlay_max_shift=rigid_overlay_max_shift,
             )
 
         rank_score = _rank_score(partial, binary, match_mode)
@@ -283,14 +274,14 @@ def compute_binary_class_score(
     top_k: int = 6,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
-    min_token_score: float = 0.45,
+    min_token_score: float = 0.30,
     score_shape_weight: float = 0.60,
     score_position_weight: float = 0.25,
     score_scale_weight: float = 0.15,
     min_relative_token_area: float = 0.10,
     scale_area_weight: float = 0.50,
     scale_pca_weight: float = 0.50,
-    scale_ratio_min: float = 0.35,
+    scale_ratio_min: float = 0.20,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -305,9 +296,6 @@ def compute_binary_class_score(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
-    small_map_match_mode: str = "token",
-    rigid_overlay_score: str = "dice",
-    rigid_overlay_max_shift: int = 1,
 ) -> tuple[LocalMatchResult, LocalMatchResult]:
     """Score a classnumber split using binary-token partial matching. Returns (result, result_matched_only)."""
     explanation = explain_binary_partial_match(
@@ -339,9 +327,6 @@ def compute_binary_class_score(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-        small_map_match_mode=small_map_match_mode,
-        rigid_overlay_score=rigid_overlay_score,
-        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
     return explanation["result"], explanation["result_matched_only"]
 

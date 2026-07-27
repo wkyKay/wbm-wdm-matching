@@ -76,7 +76,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--map-match-top-k", type=int, default=20)
     parser.add_argument("--sigma-pos", type=float, default=0.35)
     parser.add_argument("--sigma-scale", type=float, default=1.5)
-    parser.add_argument("--min-token-score", type=float, default=0.45)
+    parser.add_argument("--min-token-score", type=float, default=0.30)
     parser.add_argument("--score-shape-weight", type=float, default=0.60)
     parser.add_argument("--score-position-weight", type=float, default=0.25)
     parser.add_argument("--score-scale-weight", type=float, default=0.15)

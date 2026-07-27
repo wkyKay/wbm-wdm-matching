@@ -6,23 +6,22 @@ import numpy as np
 
 from .models import LocalMatchResult
 from .proposal import (_proposal_config, _tokens_from_mask, _tokens_from_weighted_mask,)
-from .rigid_overlay import score_proposal_rigid_overlay, score_rigid_overlay
 
 
-MIN_SHAPE_SIM_FOR_MATCH = 0.45
-MIN_TOKEN_SCORE_FOR_MATCH = 0.45
+MIN_SHAPE_SIM_FOR_MATCH = 0.30
+MIN_TOKEN_SCORE_FOR_MATCH = 0.30
 DEFAULT_SHAPE_SCORE_WEIGHT = 0.60
 DEFAULT_POSITION_SCORE_WEIGHT = 0.25
 DEFAULT_SCALE_SCORE_WEIGHT = 0.15
 DEFAULT_MIN_RELATIVE_TOKEN_AREA = 0.10
 DEFAULT_SCALE_AREA_WEIGHT = 0.30
 DEFAULT_SCALE_PCA_WEIGHT = 0.70
-DEFAULT_SCALE_RATIO_MIN = 0.35
+DEFAULT_SCALE_RATIO_MIN = 0.20
 PCA_LONG_EXTENT_WEIGHT = 0.75
 PCA_SHORT_EXTENT_WEIGHT = 0.25
-MOMENT_SIM_FLOOR = 0.70
+MOMENT_SIM_FLOOR = 0.60
 MOMENT_SIM_GAMMA = 2.0
-GEOMETRY_SIM_FLOOR = 0.55
+GEOMETRY_SIM_FLOOR = 0.45
 GEOMETRY_SIM_GAMMA = 1.5
 
 
@@ -59,9 +58,6 @@ def compute_count_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
-    small_map_match_mode: str = "token",
-    rigid_overlay_score: str = "dice",
-    rigid_overlay_max_shift: int = 1,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference,
@@ -96,9 +92,6 @@ def compute_count_partial_match(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-        small_map_match_mode=small_map_match_mode,
-        rigid_overlay_score=rigid_overlay_score,
-        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
     return explanation["result"]
 
@@ -136,9 +129,6 @@ def compute_binary_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
-    small_map_match_mode: str = "token",
-    rigid_overlay_score: str = "dice",
-    rigid_overlay_max_shift: int = 1,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference,
@@ -173,9 +163,6 @@ def compute_binary_partial_match(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-        small_map_match_mode=small_map_match_mode,
-        rigid_overlay_score=rigid_overlay_score,
-        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
     return explanation["result"]
 
@@ -213,9 +200,6 @@ def explain_count_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
-    small_map_match_mode: str = "token",
-    rigid_overlay_score: str = "dice",
-    rigid_overlay_max_shift: int = 1,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -258,9 +242,6 @@ def explain_count_partial_match(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-        small_map_match_mode=small_map_match_mode,
-        rigid_overlay_score=rigid_overlay_score,
-        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
 
 
@@ -297,9 +278,6 @@ def explain_binary_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
-    small_map_match_mode: str = "token",
-    rigid_overlay_score: str = "dice",
-    rigid_overlay_max_shift: int = 1,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -342,9 +320,6 @@ def explain_binary_partial_match(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
-        small_map_match_mode=small_map_match_mode,
-        rigid_overlay_score=rigid_overlay_score,
-        rigid_overlay_max_shift=rigid_overlay_max_shift,
     )
 
 
@@ -384,26 +359,7 @@ def _explain_local_partial_match(
     ring_max_radial_std: float | None,
     ring_max_defect_ratio: float | None,
     ring_min_edge_defect_fraction: float | None,
-    small_map_match_mode: str,
-    rigid_overlay_score: str,
-    rigid_overlay_max_shift: int,
 ) -> Dict:
-    if small_map_match_mode == "rigid-overlay":
-        if min(reference.status_map.shape) > 12:
-            raise ValueError("rigid-overlay is only available for maps with short side <= 12")
-        overlay = score_rigid_overlay(
-            wbm_mask,
-            wdm_mask,
-            valid_mask,
-            score_mode=rigid_overlay_score,
-            max_shift=rigid_overlay_max_shift,
-        )
-        return _rigid_overlay_explanation(overlay, wbm_mask, wdm_mask, rigid_overlay_score)
-    if small_map_match_mode == "proposal-rigid-overlay" and min(reference.status_map.shape) <= 12:
-        raise ValueError("proposal-rigid-overlay is only available for maps with short side > 12")
-    if small_map_match_mode not in {"token", "proposal-rigid-overlay"}:
-        raise ValueError(f"Unsupported small-map match mode: {small_map_match_mode}")
-
     proposal_config = _proposal_config(
         reference.status_map.shape,
         int(valid_mask.sum()),
@@ -433,7 +389,8 @@ def _explain_local_partial_match(
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
     proposal_debug = {"proposal_mode": proposal_config.proposal_mode}
-    if proposal_config.proposal_mode == "sparse-density":
+    sparse_density_mode = proposal_config.proposal_mode == "sparse-density"
+    if sparse_density_mode:
         wbm_tokens = _tokens_from_weighted_mask(
             wbm_mask & valid_mask,
             valid_mask,
@@ -455,22 +412,9 @@ def _explain_local_partial_match(
         valid_mask,
         wdm_weight_map.astype(np.float32),
         proposal_config=proposal_config,
-        raw_weight_map=raw_wdm_weight_map if proposal_config.proposal_mode == "sparse-density" else None,
+        raw_weight_map=raw_wdm_weight_map if sparse_density_mode else None,
         proposal_debug=proposal_debug,
     )
-
-    if small_map_match_mode == "proposal-rigid-overlay":
-        return _explain_proposal_rigid_overlay(
-            wbm_tokens,
-            wdm_tokens,
-            min_relative_token_area=min_relative_token_area,
-            min_token_score=min_token_score,
-            token_match_top_k=token_match_top_k,
-            map_match_top_k=map_match_top_k,
-            score_mode=rigid_overlay_score,
-            max_shift=rigid_overlay_max_shift,
-            proposal_debug=proposal_debug,
-        )
 
     empty_result = LocalMatchResult(
         score=0.0,
@@ -621,168 +565,6 @@ def _explain_local_partial_match(
         "map_topk_matches": map_topk_matches,
         "proposal_debug": proposal_debug,
     }
-
-
-def _rigid_overlay_explanation(overlay, wbm_mask: np.ndarray, wdm_mask: np.ndarray, score_mode: str) -> Dict:
-    wbm_tokens = int(bool(wbm_mask.any()))
-    wdm_tokens = int(bool(wdm_mask.any()))
-    result = LocalMatchResult(
-        score=float(overlay.score),
-        mean_shape=0.0,
-        mean_position=0.0,
-        mean_scale=0.0,
-        mean_type=0.0,
-        matched_tokens=int(overlay.score > 0.0),
-        wbm_tokens=wbm_tokens,
-        wdm_tokens=wdm_tokens,
-    )
-    return {
-        "result": result,
-        "result_matched_only": result,
-        "wbm_tokens": [],
-        "wdm_tokens": [],
-        "matches": [],
-        "token_topk_matches": [],
-        "map_topk_matches": [],
-        "proposal_debug": {"proposal_mode": "not_used", "small_map_match_mode": "rigid-overlay"},
-        "rigid_overlay": {
-            "score_mode": score_mode,
-            "score": float(overlay.score),
-            "dice": float(overlay.dice),
-            "iou": float(overlay.iou),
-            "angle_deg": int(overlay.angle_deg),
-            "shift_row": int(overlay.shift_row),
-            "shift_col": int(overlay.shift_col),
-            "retained_fraction": float(overlay.retained_fraction),
-            "transformed_pixels": [(int(row), int(col)) for row, col in np.argwhere(overlay.transformed_mask)],
-        },
-    }
-
-
-def _explain_proposal_rigid_overlay(
-    wbm_tokens: list[Dict],
-    wdm_tokens: list[Dict],
-    *,
-    min_relative_token_area: float,
-    min_token_score: float,
-    token_match_top_k: int,
-    map_match_top_k: int,
-    score_mode: str,
-    max_shift: int,
-    proposal_debug: Dict,
-) -> Dict:
-    empty_result = LocalMatchResult(0.0, 0.0, 0.0, 0.0, 0.0, 0, len(wbm_tokens), len(wdm_tokens))
-    proposal_debug = {**proposal_debug, "small_map_match_mode": "proposal-rigid-overlay"}
-    if not wbm_tokens or not wdm_tokens:
-        return {
-            "result": empty_result,
-            "result_matched_only": empty_result,
-            "wbm_tokens": wbm_tokens,
-            "wdm_tokens": wdm_tokens,
-            "matches": [],
-            "token_topk_matches": [],
-            "map_topk_matches": [],
-            "proposal_debug": proposal_debug,
-            "rigid_overlay": {"scope": "proposal", "score_mode": score_mode, "max_shift": max_shift},
-        }
-
-    min_relative_token_area = max(float(min_relative_token_area), 0.0)
-    min_token_score = max(float(min_token_score), 0.0)
-    wbm_max_area = _max_token_area(wbm_tokens)
-    wdm_max_area = _max_token_area(wdm_tokens)
-    scored_query_ids = {
-        query_id for query_id, token in enumerate(wbm_tokens)
-        if _relative_area(token, wbm_max_area) >= min_relative_token_area
-    }
-    all_pairs = []
-    for query_id, query_token in enumerate(wbm_tokens):
-        if query_id not in scored_query_ids:
-            continue
-        for candidate_id, candidate_token in enumerate(wdm_tokens):
-            if _relative_area(candidate_token, wdm_max_area) < min_relative_token_area:
-                continue
-            overlay = score_proposal_rigid_overlay(
-                query_token.get("raw_pixels", query_token["pixels"]),
-                candidate_token.get("raw_pixels", candidate_token["pixels"]),
-                score_mode=score_mode,
-                max_shift=max_shift,
-            )
-            passes_score_gate = overlay.score >= min_token_score if min_token_score > 0 else overlay.score > 0
-            if not passes_score_gate:
-                continue
-            comp = {
-                "score": float(overlay.score),
-                "shape_sim": float(overlay.score),
-                "moment_sim": 0.0,
-                "geometry_sim": 0.0,
-                "position_affinity": 0.0,
-                "scale_affinity": 0.0,
-                "support_area_affinity": 0.0,
-                "pca_extent_affinity": 0.0,
-                "type_affinity": 0.0,
-                "overlay_dice": float(overlay.dice),
-                "overlay_iou": float(overlay.iou),
-                "overlay_angle_deg": int(overlay.angle_deg),
-                "overlay_shift_row": int(overlay.shift_row),
-                "overlay_shift_col": int(overlay.shift_col),
-                "overlay_retained_fraction": float(overlay.retained_fraction),
-            }
-            all_pairs.append(_pair_record(query_id, candidate_id, query_token, candidate_token, comp))
-    all_pairs.sort(key=lambda item: item[0], reverse=True)
-
-    matches = _greedy_one_to_one_matches(all_pairs)
-    map_topk_matches = _ranked_matches(all_pairs[:max(int(map_match_top_k), 0)])
-    token_topk_matches = _token_topk_matches(all_pairs, len(wbm_tokens), max(int(token_match_top_k), 0))
-    result, result_matched_only = _aggregate_overlay_matches(
-        wbm_tokens, len(wdm_tokens), scored_query_ids, matches
-    )
-    return {
-        "result": result,
-        "result_matched_only": result_matched_only,
-        "wbm_tokens": wbm_tokens,
-        "wdm_tokens": wdm_tokens,
-        "matches": matches,
-        "token_topk_matches": token_topk_matches,
-        "map_topk_matches": map_topk_matches,
-        "proposal_debug": proposal_debug,
-        "rigid_overlay": {"scope": "proposal", "score_mode": score_mode, "max_shift": max_shift},
-    }
-
-
-def _aggregate_overlay_matches(
-    wbm_tokens: list[Dict], wdm_token_count: int, scored_query_ids: set[int], matches: list[Dict]
-) -> tuple[LocalMatchResult, LocalMatchResult]:
-    match_by_query = {match["query_token_id"]: match for match in matches}
-    weighted_scores = []
-    weights = []
-    matched_weighted_scores = []
-    matched_weights = []
-    for query_id, token in enumerate(wbm_tokens):
-        if query_id not in scored_query_ids:
-            continue
-        weight = float(np.sqrt(max(token["area"], 1.0)))
-        weights.append(weight)
-        match = match_by_query.get(query_id)
-        score = float(match["score"]) if match else 0.0
-        weighted_scores.append(score * weight)
-        if match:
-            matched_weighted_scores.append(score * weight)
-            matched_weights.append(weight)
-    total_weight = max(float(np.sum(weights)), 1e-6)
-    score = float(np.sum(weighted_scores) / total_weight)
-    matched_total_weight = max(float(np.sum(matched_weights)), 1e-6)
-    score_matched_only = float(np.sum(matched_weighted_scores) / matched_total_weight) if matched_weights else 0.0
-    common = {
-        "mean_position": 0.0,
-        "mean_scale": 0.0,
-        "mean_type": 0.0,
-        "matched_tokens": len(matches),
-        "wbm_tokens": len(wbm_tokens),
-        "wdm_tokens": wdm_token_count,
-    }
-    result = LocalMatchResult(score=score, mean_shape=score, **common)
-    result_matched_only = LocalMatchResult(score=score_matched_only, mean_shape=score_matched_only, **common)
-    return result, result_matched_only
 
 
 def _max_token_area(tokens: list[Dict]) -> float:
@@ -953,16 +735,9 @@ def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:
     if q_parts and c_parts and q_parts.get("kind") == c_parts.get("kind") == "zernike_geometry":
         moment_sim_raw = _cosine_sim(q_parts.get("moment"), c_parts.get("moment"))
         geometry_sim_raw = _geometry_sim(q_parts.get("geometry"), c_parts.get("geometry"))
-        moment_sim = _contrast_sim(
-            moment_sim_raw,
-            floor=MOMENT_SIM_FLOOR,
-            gamma=MOMENT_SIM_GAMMA,
-        )
-        geometry_sim = _contrast_sim(
-            geometry_sim_raw,
-            floor=GEOMETRY_SIM_FLOOR,
-            gamma=GEOMETRY_SIM_GAMMA,
-        )
+        # For the unscaled debug run, keep the raw similarities.
+        moment_sim = float(np.clip(moment_sim_raw, 0.0, 1.0))
+        geometry_sim = float(np.clip(geometry_sim_raw, 0.0, 1.0))
         moment_weight = float(q_parts.get("moment_weight", 0.75))
         geometry_weight = float(q_parts.get("geometry_weight", 0.25))
         total = max(moment_weight + geometry_weight, 1e-6)

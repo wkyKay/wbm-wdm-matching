@@ -257,7 +257,7 @@
 <div class="formula"><strong>Shape Similarity</strong> &nbsp; &isin; &nbsp; [0, 1]</div>
 
 <div class="note">
-  <strong>门控：</strong>若 <code>shape_sim &lt; 0.45</code>，该 Token pair 直接被判为不匹配（score = 0），不参与后续匹配。这是硬性形状门槛。
+  <strong>门控：</strong>若 <code>shape_sim &lt; 0.30</code>，该 Token pair 直接被判为不匹配（score = 0），不参与后续匹配。这是硬性形状门槛。
 </div>
 
 <h3>2.2.1 Zernike 矩描述子详解</h3>
@@ -411,8 +411,8 @@
 
 <p>其中：</p>
 <ul>
-  <li><strong>门控条件：</strong><code>S<sub>shape</sub> &ge; 0.45</code>，否则 score = 0</li>
-  <li><strong>最终过滤：</strong>score 必须 &ge; <code>--token-min-score</code>（默认 0.45）</li>
+  <li><strong>门控条件：</strong><code>S<sub>shape</sub> &ge; 0.30</code>，否则 score = 0</li>
+  <li><strong>最终过滤：</strong>score 必须 &ge; <code>--token-min-score</code>（默认 0.30）</li>
   <li>权重默认归一化后：<code>w_shape=0.60, w_pos=0.25, w_scale=0.15</code></li>
   <li>尺度子权重：<code>w_area=0.50, w_pca=0.50</code></li>
 </ul>
@@ -477,7 +477,7 @@
   <tr><td><code>--density-min-raw-mass</code></td><td>3.0</td><td>最小预 KDE 质量</td></tr>
   <tr><td><code>--density-merge-iou</code></td><td>0.60</td><td>跨尺度去重 IoU</td></tr>
   <tr><td><code>--density-weight-transform</code></td><td>sqrt</td><td>WDM 权重变换</td></tr>
-  <tr><td><code>--token-min-score</code></td><td>0.45</td><td>Token pair 最低得分</td></tr>
+  <tr><td><code>--token-min-score</code></td><td>0.30</td><td>Token pair 最低得分</td></tr>
   <tr><td><code>--token-score-shape-weight</code></td><td>0.60</td><td>形状相似度权重</td></tr>
   <tr><td><code>--token-score-position-weight</code></td><td>0.25</td><td>位置亲和度权重</td></tr>
   <tr><td><code>--token-score-scale-weight</code></td><td>0.15</td><td>尺度亲和度权重</td></tr>

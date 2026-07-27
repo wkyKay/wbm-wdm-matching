@@ -242,7 +242,7 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--token-min-score",
         type=float,
-        default=0.45,
+        default=0.30,
         help="Minimum final token-pair score for token matching.",
     )
     parser.add_argument(
@@ -284,32 +284,14 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--token-scale-ratio-min",
         type=float,
-        default=0.35,
+        default=0.20,
         help="Minimum allowed area/long-axis/short-axis ratio for token matching. 0 disables hard scale gating.",
     )
     parser.add_argument(
         "--proposal-mode",
-        choices=("cc", "compact", "tangential-ring", "sparse-density", "auto"),
+        choices=("cc", "compact", "arc", "arc-band-residual", "tangential-ring", "sparse-density", "auto"),
         default="cc",
-        help="Proposal mode: cc, compact, tangential-ring for raw-pixel rings with short angular-gap bridging, sparse-density, or auto.",
-    )
-    parser.add_argument(
-        "--small-map-match-mode",
-        choices=("token", "rigid-overlay", "proposal-rigid-overlay"),
-        default="token",
-        help="Matching mode. rigid-overlay scores small full maps; proposal-rigid-overlay scores large-map proposal pairs by discrete overlap.",
-    )
-    parser.add_argument(
-        "--rigid-overlay-score",
-        choices=("dice", "iou"),
-        default="dice",
-        help="Overlap score used by --small-map-match-mode rigid-overlay.",
-    )
-    parser.add_argument(
-        "--rigid-overlay-max-shift",
-        type=int,
-        default=1,
-        help="Maximum row/column shift in grid cells searched by rigid-overlay.",
+        help="Proposal mode: cc, compact, arc, arc-band-residual, tangential-ring, sparse-density, or auto.",
     )
     parser.add_argument(
         "--proposal-rotation-tolerance",
