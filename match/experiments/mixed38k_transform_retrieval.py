@@ -40,6 +40,11 @@ DEFAULT_DATA_FILE = WORKSPACE_ROOT / "data" / "wm38k" / "Wafer_Map_Datasets.npz"
 DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "results_of_each_testss"
 TOP_KS = (10, 5, 3, 1)
 TRANSFORM_TYPES = ("translate", "rotate", "scale", "affine", "corrupted_affine")
+TRANSLATION_MIN_NORM = 3.0
+TRANSLATION_MAX_NORM = 6.0
+TRANSLATION_RANGE = 6
+ROTATION_ANGLES = (-60, -45, -30, -20, 20, 30, 45, 60)
+SCALE_FACTORS = (0.65, 0.75, 1.30, 1.45)
 
 
 def main() -> None:
@@ -381,16 +386,16 @@ def _generate_valid_transform(
 def _sample_transform_params(transform_type: str, rng: np.random.Generator) -> Dict:
     if transform_type == "translate":
         dx, dy = 0, 0
-        while np.hypot(dx, dy) < 2.0:
-            dx = int(rng.integers(-4, 5))
-            dy = int(rng.integers(-4, 5))
+        while not (TRANSLATION_MIN_NORM <= np.hypot(dx, dy) <= TRANSLATION_MAX_NORM):
+            dx = int(rng.integers(-TRANSLATION_RANGE, TRANSLATION_RANGE + 1))
+            dy = int(rng.integers(-TRANSLATION_RANGE, TRANSLATION_RANGE + 1))
         return {"type": transform_type, "dx": dx, "dy": dy, "angle": 0.0, "scale": 1.0}
     if transform_type == "rotate":
         return {
             "type": transform_type,
             "dx": 0,
             "dy": 0,
-            "angle": float(rng.choice([-30, -20, -10, 10, 20, 30])),
+            "angle": float(rng.choice(ROTATION_ANGLES)),
             "scale": 1.0,
         }
     if transform_type == "scale":
@@ -399,27 +404,37 @@ def _sample_transform_params(transform_type: str, rng: np.random.Generator) -> D
             "dx": 0,
             "dy": 0,
             "angle": 0.0,
-            "scale": float(rng.choice([0.80, 0.90, 1.10, 1.20])),
+            "scale": float(rng.choice(SCALE_FACTORS)),
         }
     if transform_type == "affine":
+        dx, dy = _sample_translation(rng)
         return {
             "type": transform_type,
-            "dx": int(rng.integers(-3, 4)),
-            "dy": int(rng.integers(-3, 4)),
-            "angle": float(rng.choice([-20, -10, 10, 20])),
-            "scale": float(rng.choice([0.85, 0.95, 1.05, 1.15])),
+            "dx": dx,
+            "dy": dy,
+            "angle": float(rng.choice(ROTATION_ANGLES)),
+            "scale": float(rng.choice(SCALE_FACTORS)),
         }
     if transform_type == "corrupted_affine":
+        dx, dy = _sample_translation(rng)
         return {
             "type": transform_type,
-            "dx": int(rng.integers(-3, 4)),
-            "dy": int(rng.integers(-3, 4)),
-            "angle": float(rng.choice([-20, -10, 10, 20])),
-            "scale": float(rng.choice([0.85, 0.95, 1.05, 1.15])),
+            "dx": dx,
+            "dy": dy,
+            "angle": float(rng.choice(ROTATION_ANGLES)),
+            "scale": float(rng.choice(SCALE_FACTORS)),
             "dropout_rate": float(rng.choice([0.10, 0.20, 0.30])),
             "noise_rate": float(rng.choice([0.05, 0.10])),
         }
     raise ValueError(f"Unsupported transform type: {transform_type}")
+
+
+def _sample_translation(rng: np.random.Generator) -> tuple[int, int]:
+    dx, dy = 0, 0
+    while not (TRANSLATION_MIN_NORM <= np.hypot(dx, dy) <= TRANSLATION_MAX_NORM):
+        dx = int(rng.integers(-TRANSLATION_RANGE, TRANSLATION_RANGE + 1))
+        dy = int(rng.integers(-TRANSLATION_RANGE, TRANSLATION_RANGE + 1))
+    return dx, dy
 
 
 def _apply_transform(mask: np.ndarray, valid: np.ndarray, params: Dict) -> np.ndarray:

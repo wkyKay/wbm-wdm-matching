@@ -105,6 +105,48 @@ Outputs:
   positives outside top10. Each column shows the raw map on top and its
   proposal/token visualization below. Same-label positives are marked in red.
 
+## Mixed38K single-to-multi retrieval
+
+`mixed38k_single_to_multi_retrieval.py` evaluates whether a single-label query
+can retrieve real Mixed38K multi-label maps that contain the query pattern.
+For example, a `center` query has positives whose label sets include `center`;
+all negatives have no `center` label.
+
+Default setup:
+
+- 50 query trials per class;
+- 5 positive candidates per trial;
+- 95 negative candidates per trial;
+- positives are real multi-label maps containing the query class;
+- negatives are real maps whose label set does not contain the query class;
+- classes with no multi-label positives are skipped by default.
+
+Run:
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.experiments.mixed38k_single_to_multi_retrieval
+```
+
+Useful options:
+
+```bash
+PYTHONPATH=wbm-wdm-matching python3 -m match.experiments.mixed38k_single_to_multi_retrieval \
+  --class-name center \
+  --trials-per-class 50 \
+  --positives-per-trial 5 \
+  --negatives-per-trial 95
+```
+
+Outputs:
+
+- `metrics.json`: overall and per-class top5 positive hit/recall, precision@k,
+  recall@k, hit@k, nDCG@k, AP, MRR, and positive-rank summaries.
+- `trials.csv`: one row per query trial, including positive and negative label
+  counts.
+- `rankings.csv`: full candidate ranking with candidate label sets.
+- `figures/*.png`: query, top retrieval results, and positives outside the
+  displayed top-k.
+
 ## Mixed38K proposal check
 
 `mixed38k_proposal_check.py` samples one wafer map from every Mixed38K label
