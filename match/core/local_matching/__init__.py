@@ -4,4 +4,5 @@ from .scoring import (
     compute_count_partial_match,
     explain_binary_partial_match,
     explain_count_partial_match,
+    score_kwargs_from_args,
 )

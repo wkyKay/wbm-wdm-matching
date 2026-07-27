@@ -8,7 +8,7 @@ import numpy as np
 from ..core.pipeline import map_klarf_to_grid
 from ..data.fileio import load_defect_tables, save_grid_maps
 from ..core.similarity import compute_similarity
-from ..core.local_matching import explain_count_partial_match
+from ..core.local_matching import explain_count_partial_match, score_kwargs_from_args
 from ..core.classnumber_matching import classnumber_scores_dict, compute_classnumber_matches
 from .cli_args import SIMILARITY_COLUMNS, PARTIAL_MATCH_COLUMNS, PARTIAL_MATCH_MO_COLUMNS, CLASSNUMBER_COLUMNS, derive_classnumber_match_mode
 
@@ -104,36 +104,8 @@ def _compute_similarity_scores(ref_gm: "GridMaps", grid_maps: "GridMaps") -> dic
 def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", args) -> dict:
     try:
         explanation = explain_count_partial_match(
-            ref_gm,
-            grid_maps,
-            min_area=args.proposal_min_area,
-            top_k=args.proposal_top_k,
-            token_match_top_k=args.token_match_top_k,
-            map_match_top_k=args.map_match_top_k,
-            proposal_mode=args.proposal_mode,
-            rotation_tolerance=args.proposal_rotation_tolerance,
-            min_token_score=args.token_min_score,
-            score_shape_weight=args.token_score_shape_weight,
-            score_position_weight=args.token_score_position_weight,
-            score_scale_weight=args.token_score_scale_weight,
-            min_relative_token_area=args.proposal_min_relative_token_area,
-            scale_area_weight=args.token_scale_area_weight,
-            scale_pca_weight=args.token_scale_pca_weight,
-            scale_ratio_min=args.token_scale_ratio_min,
-            density_sigmas=tuple(args.density_sigmas),
-            density_threshold=args.density_threshold,
-            density_min_raw_points=args.density_min_raw_points,
-            density_min_raw_mass=args.density_min_raw_mass,
-            density_merge_iou=args.density_merge_iou,
-            density_weight_transform=args.density_weight_transform,
-            ring_min_area=args.ring_min_area,
-            ring_edge_r_min=args.ring_edge_r_min,
-            ring_band_width=args.ring_band_width,
-            ring_min_angular_coverage=args.ring_min_angular_coverage,
-            ring_angular_bins=args.ring_angular_bins,
-            ring_max_radial_std=args.ring_max_radial_std,
-            ring_max_defect_ratio=args.ring_max_defect_ratio,
-            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+            ref_gm, grid_maps,
+            **score_kwargs_from_args(args),
         )
         partial = explanation["result"]
         partial_mo = explanation["result_matched_only"]
@@ -173,36 +145,11 @@ def _compute_classnumber_scores(
             defect_table_index=args.defect_table_index,
             die_x_range=tuple(args.die_x_range) if args.die_x_range else None,
             die_y_range=tuple(args.die_y_range) if args.die_y_range else None,
-            min_area=args.proposal_min_area,
-            top_k=args.proposal_top_k,
             match_mode=derive_classnumber_match_mode(args.representation),
             binary_dilation=args.classnumber_binary_dilation,
             binary_beta=args.classnumber_binary_beta,
             die_defect_threshold=args.die_defect_threshold,
-            proposal_mode=args.proposal_mode,
-            rotation_tolerance=args.proposal_rotation_tolerance,
-            min_token_score=args.token_min_score,
-            score_shape_weight=args.token_score_shape_weight,
-            score_position_weight=args.token_score_position_weight,
-            score_scale_weight=args.token_score_scale_weight,
-            min_relative_token_area=args.proposal_min_relative_token_area,
-            scale_area_weight=args.token_scale_area_weight,
-            scale_pca_weight=args.token_scale_pca_weight,
-            scale_ratio_min=args.token_scale_ratio_min,
-            density_sigmas=tuple(args.density_sigmas),
-            density_threshold=args.density_threshold,
-            density_min_raw_points=args.density_min_raw_points,
-            density_min_raw_mass=args.density_min_raw_mass,
-            density_merge_iou=args.density_merge_iou,
-            density_weight_transform=args.density_weight_transform,
-            ring_min_area=args.ring_min_area,
-            ring_edge_r_min=args.ring_edge_r_min,
-            ring_band_width=args.ring_band_width,
-            ring_min_angular_coverage=args.ring_min_angular_coverage,
-            ring_angular_bins=args.ring_angular_bins,
-            ring_max_radial_std=args.ring_max_radial_std,
-            ring_max_defect_ratio=args.ring_max_defect_ratio,
-            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+            **score_kwargs_from_args(args),
         )
         result = classnumber_scores_dict(class_result)
         result["_classnumber_result"] = class_result

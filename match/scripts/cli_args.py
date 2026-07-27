@@ -288,10 +288,22 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Minimum allowed area/long-axis/short-axis ratio for token matching. 0 disables hard scale gating.",
     )
     parser.add_argument(
+        "--moment-sim-floor",
+        type=float,
+        default=0.0,
+        help="Contrast floor for Zernike moment similarity. Raw sim <= floor is set to 0. 0 disables contrast calibration.",
+    )
+    parser.add_argument(
+        "--geometry-sim-floor",
+        type=float,
+        default=0.0,
+        help="Contrast floor for geometry feature similarity. Raw sim <= floor is set to 0. 0 disables contrast calibration.",
+    )
+    parser.add_argument(
         "--proposal-mode",
-        choices=("cc", "compact", "arc", "arc-band-residual", "tangential-ring", "sparse-density", "auto"),
+        choices=("cc", "compact", "arc", "arc-band-residual", "arc-ring-residual", "tangential-ring", "sparse-density", "auto"),
         default="cc",
-        help="Proposal mode: cc, compact, arc, arc-band-residual, tangential-ring, sparse-density, or auto.",
+        help="Proposal mode: cc, compact, arc, arc-band-residual, arc-ring-residual, tangential-ring, sparse-density, or auto.",
     )
     parser.add_argument(
         "--proposal-rotation-tolerance",

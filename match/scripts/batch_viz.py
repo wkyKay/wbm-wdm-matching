@@ -850,3 +850,343 @@ def _mo_split_rank_score(split, match_mode: str) -> float:
             return float(split.binary_matched_only.score)
         return float(split.binary.score) if split.binary is not None else float("-inf")
     return float("-inf")
+
+
+# ---------------------------------------------------------------------------
+# Summary figure: 四行汇总图
+# ---------------------------------------------------------------------------
+
+def _draw_wbm_ref_cell(fig, subplot_spec, ref_gm, title: str) -> None:
+    """在给定的 subplot_spec 中绘制 WBM reference。"""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+
+    ax = fig.add_subplot(subplot_spec)
+    wbm_status = ref_gm.status_map.copy()
+    wbm_img = np.zeros((*wbm_status.shape, 3), dtype=np.uint8)
+    wbm_img[wbm_status == BACKGROUND] = [0, 0, 0]
+    valid = wbm_status != BACKGROUND
+    wbm_img[valid] = [127, 127, 127]
+    wbm_img[wbm_status == VALID_HAS_DEFECT] = [255, 255, 255]
+    ax.imshow(wbm_img, aspect="equal", interpolation="nearest")
+    ax.set_title(title, fontsize=10)
+    ax.axis("off")
+
+
+def save_summary_figures(args, ref_gm, rows, log_dir: Path) -> None:
+    """生成 count-partial 模式四行汇总图。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    from ..viz.count_partial_visualization import (
+        COUNT_PARTIAL_CMAP,
+        _plot_wbm_defects,
+        _plot_wdm_original,
+        _plot_cluster_color_map,
+    )
+    from ..core.local_matching.scoring import explain_count_partial_match, score_kwargs_from_args
+    from ..viz.klarfkit import WaferMap
+
+    # -- collect top-K --------------------------------------------------------
+    scored: list[tuple[str, object, float]] = []
+    for fname, res in rows:
+        score = res.get("count-partial")
+        grid_maps = res.get("_grid_maps")
+        if isinstance(score, (float, int)) and grid_maps is not None:
+            scored.append((fname, grid_maps, float(score)))
+
+    if not scored:
+        print("Summary figures skipped: no valid count-partial results available")
+        return
+
+    scored.sort(key=lambda item: item[2], reverse=True)
+    top_k = max(getattr(args, "review_top_k", 3), 1)
+    top_records = scored[:top_k]
+
+    n_cols = 1 + len(top_records)
+    representation = getattr(args, "representation", "count")
+
+    if representation in ("count", "density"):
+        cmap_name = COUNT_PARTIAL_CMAP
+    elif representation == "binary":
+        cmap_name = "gray"
+    else:
+        cmap_name = "hot"
+
+    out_dir = log_dir / "sum_review"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # -- build figure ---------------------------------------------------------
+    fig = plt.figure(figsize=(5.2 * n_cols, 22))
+    gs_outer = fig.add_gridspec(4, 1, hspace=0.32, top=0.96, bottom=0.03, left=0.02, right=0.98)
+
+    # ── Row 1: baseline ──
+    gs_r1 = gs_outer[0].subgridspec(1, n_cols, wspace=0.06)
+    _draw_wbm_ref_cell(fig, gs_r1[0], ref_gm, "WBM Reference")
+    for idx, (fname, gm, iou_score) in enumerate(top_records):
+        ax = fig.add_subplot(gs_r1[0, idx + 1])
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, cmap_name)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
+        ax.set_title(f"#{idx + 1}  {_safe_name(Path(fname).stem)}\nIoU={iou_score:.4f}",
+                     fontsize=9)
+        ax.axis("off")
+
+    # ── Row 2: count-partial ──
+    gs_r2 = gs_outer[1].subgridspec(1, n_cols, wspace=0.06)
+    _draw_wbm_ref_cell(fig, gs_r2[0], ref_gm, "WBM Reference")
+    for idx, (fname, gm, partial_score) in enumerate(top_records):
+        ax = fig.add_subplot(gs_r2[0, idx + 1])
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, cmap_name)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
+        ax.set_title(f"#{idx + 1}  {_safe_name(Path(fname).stem)}\ncount-partial={partial_score:.4f}",
+                     fontsize=9)
+        ax.axis("off")
+
+    # ── Row 3: proposal-steps (compact) ──
+    gs_r3 = gs_outer[2].subgridspec(2, n_cols, height_ratios=[2, 1], hspace=0.12, wspace=0.06)
+
+    # WBM reference column: original + cluster color map
+    _draw_wbm_ref_cell(fig, gs_r3[0, 0], ref_gm, "WBM")
+    ax_wbm_cluster = fig.add_subplot(gs_r3[1, 0])
+    try:
+        from ..core.local_matching.proposal import _tokens_from_mask
+        wbm_tokens = _tokens_from_mask(
+            (ref_gm.status_map == VALID_HAS_DEFECT),
+            min_area=args.proposal_min_area,
+            top_k=args.proposal_top_k,
+            connectivity=4,
+            proposal_config=None,
+        )
+        _plot_cluster_color_map(ax_wbm_cluster, ref_gm, wbm_tokens, "WBM cluster")
+    except Exception:
+        ax_wbm_cluster.axis("off")
+
+    for idx, (fname, gm, _score) in enumerate(top_records):
+        ax_wbm = fig.add_subplot(gs_r3[0, idx + 1])
+        ax_wdm = fig.add_subplot(gs_r3[1, idx + 1])
+
+        try:
+            explanation = explain_count_partial_match(
+                ref_gm, gm,
+                **score_kwargs_from_args(args),
+            )
+            wbm_tokens_ex = explanation.get("wbm_tokens", [])
+            wdm_tokens_ex = explanation.get("wdm_tokens", [])
+
+            _plot_cluster_color_map(ax_wbm, ref_gm, wbm_tokens_ex,
+                                     f"#{idx + 1} WBM token")
+            _plot_cluster_color_map(ax_wdm, gm, wdm_tokens_ex,
+                                     f"#{idx + 1} WDM token")
+        except Exception as e:
+            ax_wbm.text(0.5, 0.5, f"ERR: {e}", transform=ax_wbm.transAxes,
+                        ha="center", va="center", fontsize=8)
+            ax_wbm.axis("off")
+            ax_wdm.axis("off")
+
+    # ── Row 4: WDM raw ──
+    gs_r4 = gs_outer[3].subgridspec(1, n_cols, wspace=0.06)
+    _draw_wbm_ref_cell(fig, gs_r4[0], ref_gm, "WBM Reference")
+    for idx, (fname, gm, _score) in enumerate(top_records):
+        ax = fig.add_subplot(gs_r4[0, idx + 1])
+        klarf_path = gm.metadata.get("klarf_path", "")
+        if klarf_path:
+            try:
+                wm = WaferMap.read_klarf(klarf_path)
+            except Exception:
+                ax.axis("off")
+                continue
+            df = wm.defect_list
+            cls_col = next((col for col in df.columns if col.upper() == "CLASSNUMBER"), None)
+            _draw_wafer_base(wm, ax)
+            x = df["_XACTUAL"].to_numpy()
+            y = df["_YACTUAL"].to_numpy()
+            if cls_col is not None:
+                class_vals = df[cls_col].to_numpy()
+                m0 = class_vals == 0
+                if m0.any():
+                    ax.scatter(x[m0], y[m0], color="red", s=6, zorder=10, label="cls=0")
+                if (~m0).any():
+                    ax.scatter(x[~m0], y[~m0], color="blue", s=6, zorder=10, label="cls!=0")
+                ax.legend(loc="lower left", fontsize=7)
+            else:
+                ax.scatter(x, y, color="red", s=6, zorder=10)
+        ax.set_title(f"#{idx + 1}  {_safe_name(Path(fname).stem)}", fontsize=9)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    # -- save ----------------------------------------------------------------
+    save_path = out_dir / "summary.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Summary figure saved: {save_path}")
+
+
+def save_classnumber_summary_figures(args, ref_gm, rows, log_dir: Path) -> None:
+    """生成 classnumber 模式四行汇总图。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from ..core.classnumber_matching import split_score
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    from ..viz.classnumber_visualization import CLASSNUMBER_CMAP
+    from ..viz.count_partial_visualization import (
+        COUNT_PARTIAL_CMAP,
+        _plot_cluster_color_map,
+    )
+    from ..core.local_matching.scoring import explain_count_partial_match, score_kwargs_from_args
+    from .cli_args import derive_classnumber_match_mode
+    from ..viz.klarfkit import WaferMap
+
+    # -- collect top-K splits ------------------------------------------------
+    split_records = []
+    for fname, res in rows:
+        grid_maps = res.get("_grid_maps")
+        class_result = res.get("_classnumber_result")
+        if grid_maps is None or class_result is None or not class_result.splits:
+            continue
+        for split in class_result.splits:
+            split_records.append({
+                "file": Path(fname).stem,
+                "file_name": fname,
+                "classnumber": split.classnumber,
+                "split": split,
+                "grid_maps": split.grid_maps,
+                "full_grid_maps": grid_maps,
+            })
+
+    if not split_records:
+        print("Classnumber summary figures skipped: no valid splits")
+        return
+
+    rank_by = derive_classnumber_match_mode(args.representation)
+    split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
+    top_k = max(args.review_top_k, 1)
+    top_records = split_records[:top_k]
+
+    n_cols = 1 + len(top_records)
+
+    out_dir = log_dir / "sum_review"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # -- build figure ---------------------------------------------------------
+    fig = plt.figure(figsize=(5.2 * n_cols, 22))
+    gs_outer = fig.add_gridspec(4, 1, hspace=0.32, top=0.96, bottom=0.03, left=0.02, right=0.98)
+
+    # ── Row 1: classnumber baseline ──
+    gs_r1 = gs_outer[0].subgridspec(1, n_cols, wspace=0.06)
+    _draw_wbm_ref_cell(fig, gs_r1[0], ref_gm, "WBM Reference")
+    for idx, rec in enumerate(top_records):
+        ax = fig.add_subplot(gs_r1[0, idx + 1])
+        rep_map = rec["grid_maps"].representation_maps.get(rank_by)
+        if rep_map is not None:
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, CLASSNUMBER_CMAP)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
+        s = split_score(rec["split"], rank_by)
+        ax.set_title(f"#{idx + 1}  {rec['file']} / cl {rec['classnumber']}\n{rank_by}={s:.3f}",
+                     fontsize=9)
+        ax.axis("off")
+
+    # ── Row 2: classnumber matched (partial) ──
+    gs_r2 = gs_outer[1].subgridspec(1, n_cols, wspace=0.06)
+    _draw_wbm_ref_cell(fig, gs_r2[0], ref_gm, "WBM Reference")
+    for idx, rec in enumerate(top_records):
+        ax = fig.add_subplot(gs_r2[0, idx + 1])
+        rep_map = rec["grid_maps"].representation_maps.get(rank_by)
+        if rep_map is not None:
+            img = _render_wdm_baseline(rep_map, ref_gm.status_map, CLASSNUMBER_CMAP)
+            ax.imshow(img, aspect="equal", interpolation="nearest")
+        partial_score = (rec["split"].partial.score
+                         if rec["split"].partial is not None
+                         else float("nan"))
+        ax.set_title(f"#{idx + 1}  {rec['file']} / cl {rec['classnumber']}\npartial={partial_score:.4f}",
+                     fontsize=9)
+        ax.axis("off")
+
+    # ── Row 3: proposal-steps (compact) ──
+    gs_r3 = gs_outer[2].subgridspec(2, n_cols, height_ratios=[2, 1], hspace=0.12, wspace=0.06)
+
+    _draw_wbm_ref_cell(fig, gs_r3[0, 0], ref_gm, "WBM")
+    ax_wbm_cluster = fig.add_subplot(gs_r3[1, 0])
+    try:
+        from ..core.local_matching.proposal import _tokens_from_mask
+        wbm_tokens = _tokens_from_mask(
+            (ref_gm.status_map == VALID_HAS_DEFECT),
+            min_area=args.proposal_min_area,
+            top_k=args.proposal_top_k,
+            connectivity=4,
+            proposal_config=None,
+        )
+        _plot_cluster_color_map(ax_wbm_cluster, ref_gm, wbm_tokens, "WBM cluster")
+    except Exception:
+        ax_wbm_cluster.axis("off")
+
+    for idx, rec in enumerate(top_records):
+        ax_wbm = fig.add_subplot(gs_r3[0, idx + 1])
+        ax_wdm = fig.add_subplot(gs_r3[1, idx + 1])
+
+        try:
+            explanation = explain_count_partial_match(
+                ref_gm, rec["grid_maps"],
+                **score_kwargs_from_args(args),
+            )
+            wbm_tokens_ex = explanation.get("wbm_tokens", [])
+            wdm_tokens_ex = explanation.get("wdm_tokens", [])
+
+            _plot_cluster_color_map(ax_wbm, ref_gm, wbm_tokens_ex,
+                                     f"#{idx + 1} WBM token")
+            _plot_cluster_color_map(ax_wdm, rec["grid_maps"], wdm_tokens_ex,
+                                     f"#{idx + 1} WDM token / cl {rec['classnumber']}")
+        except Exception as e:
+            ax_wbm.text(0.5, 0.5, f"ERR: {e}", transform=ax_wbm.transAxes,
+                        ha="center", va="center", fontsize=8)
+            ax_wbm.axis("off")
+            ax_wdm.axis("off")
+
+    # ── Row 4: classnumber WDM raw ──
+    gs_r4 = gs_outer[3].subgridspec(1, n_cols, wspace=0.06)
+    _draw_wbm_ref_cell(fig, gs_r4[0], ref_gm, "WBM Reference")
+    for idx, rec in enumerate(top_records):
+        ax = fig.add_subplot(gs_r4[0, idx + 1])
+        klarf_path = rec["full_grid_maps"].metadata.get("klarf_path", "")
+        target_class = rec["classnumber"]
+        if klarf_path:
+            try:
+                wm = WaferMap.read_klarf(klarf_path)
+            except Exception:
+                ax.axis("off")
+                continue
+            df = wm.defect_list
+            cls_col = next((col for col in df.columns if col.upper() == "CLASSNUMBER"), None)
+            if cls_col is not None:
+                df_filtered = df[df[cls_col].to_numpy() == target_class]
+            else:
+                df_filtered = df
+            if not df_filtered.empty:
+                wm_tmp = WaferMap(defect_record=df_filtered.copy(),
+                                  die_pitch=wm.die_pitch,
+                                  sample_center_location=wm.center_location,
+                                  sample_size=wm.sample_size)
+                _draw_wafer_base(wm_tmp, ax)
+                ax.scatter(wm_tmp.defect_list["_XACTUAL"].to_numpy(),
+                           wm_tmp.defect_list["_YACTUAL"].to_numpy(),
+                           color="blue", s=6, zorder=10)
+            else:
+                _draw_wafer_base(wm, ax)
+        ax.set_title(f"#{idx + 1}  {rec['file']} / cl {rec['classnumber']}",
+                     fontsize=9)
+        ax.set_aspect("equal")
+        ax.axis("off")
+
+    # -- save ----------------------------------------------------------------
+    save_path = out_dir / "summary.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Classnumber summary figure saved: {save_path}")

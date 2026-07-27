@@ -71,6 +71,8 @@ def compute_classnumber_matches(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> ClassNumberMatchResult:
     """Split one KLARF DefectTable by classnumber and score each split."""
     match_mode = _normalize_match_mode(match_mode)
@@ -151,6 +153,8 @@ def compute_classnumber_matches(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+                moment_sim_floor=moment_sim_floor,
+                geometry_sim_floor=geometry_sim_floor,
             )
             partial = count_explanation["result"]
             partial_matched_only = count_explanation["result_matched_only"]
@@ -184,6 +188,8 @@ def compute_classnumber_matches(
                 ring_max_radial_std=ring_max_radial_std,
                 ring_max_defect_ratio=ring_max_defect_ratio,
                 ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+                moment_sim_floor=moment_sim_floor,
+                geometry_sim_floor=geometry_sim_floor,
             )
 
         rank_score = _rank_score(partial, binary, match_mode)
@@ -296,6 +302,8 @@ def compute_binary_class_score(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> tuple[LocalMatchResult, LocalMatchResult]:
     """Score a classnumber split using binary-token partial matching. Returns (result, result_matched_only)."""
     explanation = explain_binary_partial_match(
@@ -327,6 +335,8 @@ def compute_binary_class_score(
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
     )
     return explanation["result"], explanation["result_matched_only"]
 

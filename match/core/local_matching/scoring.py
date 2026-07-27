@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Dict
+import argparse
+from typing import Any, Dict
 
 import numpy as np
 
@@ -19,10 +20,46 @@ DEFAULT_SCALE_PCA_WEIGHT = 0.70
 DEFAULT_SCALE_RATIO_MIN = 0.20
 PCA_LONG_EXTENT_WEIGHT = 0.75
 PCA_SHORT_EXTENT_WEIGHT = 0.25
-MOMENT_SIM_FLOOR = 0.60
 MOMENT_SIM_GAMMA = 2.0
-GEOMETRY_SIM_FLOOR = 0.45
 GEOMETRY_SIM_GAMMA = 1.5
+
+
+def score_kwargs_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    """从 CLI args 提取 explain_count_partial_match / explain_binary_partial_match 的参数。"""
+    return dict(
+        min_area=args.proposal_min_area,
+        top_k=args.proposal_top_k,
+        token_match_top_k=args.token_match_top_k,
+        map_match_top_k=args.map_match_top_k,
+        sigma_pos=args.token_sigma_pos,
+        sigma_scale=args.token_sigma_scale,
+        proposal_mode=args.proposal_mode,
+        rotation_tolerance=args.proposal_rotation_tolerance,
+        min_token_score=args.token_min_score,
+        score_shape_weight=args.token_score_shape_weight,
+        score_position_weight=args.token_score_position_weight,
+        score_scale_weight=args.token_score_scale_weight,
+        min_relative_token_area=args.proposal_min_relative_token_area,
+        scale_area_weight=args.token_scale_area_weight,
+        scale_pca_weight=args.token_scale_pca_weight,
+        scale_ratio_min=args.token_scale_ratio_min,
+        density_sigmas=tuple(args.density_sigmas),
+        density_threshold=args.density_threshold,
+        density_min_raw_points=args.density_min_raw_points,
+        density_min_raw_mass=args.density_min_raw_mass,
+        density_merge_iou=args.density_merge_iou,
+        density_weight_transform=args.density_weight_transform,
+        ring_min_area=args.ring_min_area,
+        ring_edge_r_min=args.ring_edge_r_min,
+        ring_band_width=args.ring_band_width,
+        ring_min_angular_coverage=args.ring_min_angular_coverage,
+        ring_angular_bins=args.ring_angular_bins,
+        ring_max_radial_std=args.ring_max_radial_std,
+        ring_max_defect_ratio=args.ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+        moment_sim_floor=args.moment_sim_floor,
+        geometry_sim_floor=args.geometry_sim_floor,
+    )
 
 
 def compute_count_partial_match(
@@ -58,40 +95,36 @@ def compute_count_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
-        reference,
-        candidate,
-        min_area=min_area,
-        top_k=top_k,
-        token_match_top_k=token_match_top_k,
-        map_match_top_k=map_match_top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
+        reference, candidate,
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
         min_relative_token_area=min_relative_token_area,
-        scale_area_weight=scale_area_weight,
-        scale_pca_weight=scale_pca_weight,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
         scale_ratio_min=scale_ratio_min,
-        density_sigmas=density_sigmas,
-        density_threshold=density_threshold,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
-        ring_min_area=ring_min_area,
-        ring_edge_r_min=ring_edge_r_min,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
         ring_band_width=ring_band_width,
         ring_min_angular_coverage=ring_min_angular_coverage,
         ring_angular_bins=ring_angular_bins,
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
     )
     return explanation["result"]
 
@@ -129,40 +162,36 @@ def compute_binary_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
-        reference,
-        candidate,
-        min_area=min_area,
-        top_k=top_k,
-        token_match_top_k=token_match_top_k,
-        map_match_top_k=map_match_top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
+        reference, candidate,
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
         min_relative_token_area=min_relative_token_area,
-        scale_area_weight=scale_area_weight,
-        scale_pca_weight=scale_pca_weight,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
         scale_ratio_min=scale_ratio_min,
-        density_sigmas=density_sigmas,
-        density_threshold=density_threshold,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
-        ring_min_area=ring_min_area,
-        ring_edge_r_min=ring_edge_r_min,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
         ring_band_width=ring_band_width,
         ring_min_angular_coverage=ring_min_angular_coverage,
         ring_angular_bins=ring_angular_bins,
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
     )
     return explanation["result"]
 
@@ -200,48 +229,48 @@ def explain_count_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
     wdm_count = np.where(valid_mask, candidate.count_map, 0).astype(np.float32)
     wdm_mask = wdm_count > 0
 
-    return _explain_local_partial_match(
-        reference=reference,
-        wbm_mask=wbm_mask & valid_mask,
-        wdm_mask=wdm_mask & valid_mask,
-        wdm_weight_map=wdm_count,
-        valid_mask=valid_mask,
-        min_area=min_area,
-        top_k=top_k,
-        token_match_top_k=token_match_top_k,
-        map_match_top_k=map_match_top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
+    config = dict(
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
         min_relative_token_area=min_relative_token_area,
-        scale_area_weight=scale_area_weight,
-        scale_pca_weight=scale_pca_weight,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
         scale_ratio_min=scale_ratio_min,
-        density_sigmas=density_sigmas,
-        density_threshold=density_threshold,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
-        ring_min_area=ring_min_area,
-        ring_edge_r_min=ring_edge_r_min,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
         ring_band_width=ring_band_width,
         ring_min_angular_coverage=ring_min_angular_coverage,
         ring_angular_bins=ring_angular_bins,
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
+    )
+    return _explain_local_partial_match(
+        reference=reference,
+        wbm_mask=wbm_mask & valid_mask,
+        wdm_mask=wdm_mask & valid_mask,
+        wdm_weight_map=wdm_count,
+        valid_mask=valid_mask,
+        config=config,
     )
 
 
@@ -278,48 +307,48 @@ def explain_binary_partial_match(
     ring_max_radial_std: float | None = None,
     ring_max_defect_ratio: float | None = None,
     ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
     wdm_mask = (candidate.binary_map > 0) & valid_mask
     wdm_weight_map = wdm_mask.astype(np.float32)
 
-    return _explain_local_partial_match(
-        reference=reference,
-        wbm_mask=wbm_mask & valid_mask,
-        wdm_mask=wdm_mask,
-        wdm_weight_map=wdm_weight_map,
-        valid_mask=valid_mask,
-        min_area=min_area,
-        top_k=top_k,
-        token_match_top_k=token_match_top_k,
-        map_match_top_k=map_match_top_k,
-        sigma_pos=sigma_pos,
-        sigma_scale=sigma_scale,
-        proposal_mode=proposal_mode,
-        rotation_tolerance=rotation_tolerance,
+    config = dict(
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
         min_relative_token_area=min_relative_token_area,
-        scale_area_weight=scale_area_weight,
-        scale_pca_weight=scale_pca_weight,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
         scale_ratio_min=scale_ratio_min,
-        density_sigmas=density_sigmas,
-        density_threshold=density_threshold,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
         density_min_raw_points=density_min_raw_points,
         density_min_raw_mass=density_min_raw_mass,
         density_merge_iou=density_merge_iou,
         density_weight_transform=density_weight_transform,
-        ring_min_area=ring_min_area,
-        ring_edge_r_min=ring_edge_r_min,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
         ring_band_width=ring_band_width,
         ring_min_angular_coverage=ring_min_angular_coverage,
         ring_angular_bins=ring_angular_bins,
         ring_max_radial_std=ring_max_radial_std,
         ring_max_defect_ratio=ring_max_defect_ratio,
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
+    )
+    return _explain_local_partial_match(
+        reference=reference,
+        wbm_mask=wbm_mask & valid_mask,
+        wdm_mask=wdm_mask,
+        wdm_weight_map=wdm_weight_map,
+        valid_mask=valid_mask,
+        config=config,
     )
 
 
@@ -329,64 +358,36 @@ def _explain_local_partial_match(
     wdm_mask: np.ndarray,
     wdm_weight_map: np.ndarray,
     valid_mask: np.ndarray,
-    min_area: int,
-    top_k: int,
-    token_match_top_k: int,
-    map_match_top_k: int,
-    sigma_pos: float,
-    sigma_scale: float,
-    proposal_mode: str,
-    rotation_tolerance: bool,
-    min_token_score: float,
-    score_shape_weight: float,
-    score_position_weight: float,
-    score_scale_weight: float,
-    min_relative_token_area: float,
-    scale_area_weight: float,
-    scale_pca_weight: float,
-    scale_ratio_min: float,
-    density_sigmas: tuple[float, ...],
-    density_threshold: float,
-    density_min_raw_points: int,
-    density_min_raw_mass: float,
-    density_merge_iou: float,
-    density_weight_transform: str,
-    ring_min_area: int | None,
-    ring_edge_r_min: float | None,
-    ring_band_width: float | None,
-    ring_min_angular_coverage: float | None,
-    ring_angular_bins: int | None,
-    ring_max_radial_std: float | None,
-    ring_max_defect_ratio: float | None,
-    ring_min_edge_defect_fraction: float | None,
+    config: Dict,
 ) -> Dict:
+    """Core matching logic. ``config`` contains all scoring/proposal parameters."""
     proposal_config = _proposal_config(
         reference.status_map.shape,
         int(valid_mask.sum()),
-        min_area,
-        top_k,
+        config["min_area"],
+        config["top_k"],
         proposal_mode=(
             "sparse-density"
-            if proposal_mode == "auto" and _should_use_sparse_density(
-                wbm_mask, wdm_mask, valid_mask, density_min_raw_points
+            if config["proposal_mode"] == "auto" and _should_use_sparse_density(
+                wbm_mask, wdm_mask, valid_mask, config["density_min_raw_points"]
             )
-            else ("cc" if proposal_mode == "auto" else proposal_mode)
+            else ("cc" if config["proposal_mode"] == "auto" else config["proposal_mode"])
         ),
-        rotation_tolerance=rotation_tolerance,
-        density_sigmas=density_sigmas,
-        density_threshold=density_threshold,
-        density_min_raw_points=density_min_raw_points,
-        density_min_raw_mass=density_min_raw_mass,
-        density_merge_iou=density_merge_iou,
-        density_weight_transform=density_weight_transform,
-        ring_min_area=ring_min_area,
-        ring_edge_r_min=ring_edge_r_min,
-        ring_band_width=ring_band_width,
-        ring_min_angular_coverage=ring_min_angular_coverage,
-        ring_angular_bins=ring_angular_bins,
-        ring_max_radial_std=ring_max_radial_std,
-        ring_max_defect_ratio=ring_max_defect_ratio,
-        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        rotation_tolerance=config["rotation_tolerance"],
+        density_sigmas=config["density_sigmas"],
+        density_threshold=config["density_threshold"],
+        density_min_raw_points=config["density_min_raw_points"],
+        density_min_raw_mass=config["density_min_raw_mass"],
+        density_merge_iou=config["density_merge_iou"],
+        density_weight_transform=config["density_weight_transform"],
+        ring_min_area=config["ring_min_area"],
+        ring_edge_r_min=config["ring_edge_r_min"],
+        ring_band_width=config["ring_band_width"],
+        ring_min_angular_coverage=config["ring_min_angular_coverage"],
+        ring_angular_bins=config["ring_angular_bins"],
+        ring_max_radial_std=config["ring_max_radial_std"],
+        ring_max_defect_ratio=config["ring_max_defect_ratio"],
+        ring_min_edge_defect_fraction=config["ring_min_edge_defect_fraction"],
     )
     proposal_debug = {"proposal_mode": proposal_config.proposal_mode}
     sparse_density_mode = proposal_config.proposal_mode == "sparse-density"
@@ -399,7 +400,7 @@ def _explain_local_partial_match(
             proposal_debug=proposal_debug,
         )
         raw_wdm_weight_map = wdm_weight_map
-        wdm_weight_map = _density_weight_map(wdm_weight_map, density_weight_transform)
+        wdm_weight_map = _density_weight_map(wdm_weight_map, config["density_weight_transform"])
     else:
         wbm_tokens = _tokens_from_mask(
             wbm_mask & valid_mask,
@@ -439,17 +440,17 @@ def _explain_local_partial_match(
         }
 
     all_pairs = []
-    min_token_score = max(float(min_token_score), 0.0)
-    min_relative_token_area = max(float(min_relative_token_area), 0.0)
-    scale_ratio_min = min(max(float(scale_ratio_min), 0.0), 1.0)
+    min_token_score = max(float(config["min_token_score"]), 0.0)
+    min_relative_token_area = max(float(config["min_relative_token_area"]), 0.0)
+    scale_ratio_min = min(max(float(config["scale_ratio_min"]), 0.0), 1.0)
     score_weights = _normalized_score_weights(
-        score_shape_weight,
-        score_position_weight,
-        score_scale_weight,
+        config["score_shape_weight"],
+        config["score_position_weight"],
+        config["score_scale_weight"],
     )
     scale_component_weights = _normalized_pair_weights(
-        scale_area_weight,
-        scale_pca_weight,
+        config["scale_area_weight"],
+        config["scale_pca_weight"],
         default_a=DEFAULT_SCALE_AREA_WEIGHT,
         default_b=DEFAULT_SCALE_PCA_WEIGHT,
     )
@@ -469,19 +470,21 @@ def _explain_local_partial_match(
             comp = _token_match_components(
                 qt,
                 ct,
-                sigma_pos=sigma_pos,
-                sigma_scale=sigma_scale,
+                sigma_pos=config["sigma_pos"],
+                sigma_scale=config["sigma_scale"],
                 score_weights=score_weights,
                 scale_component_weights=scale_component_weights,
                 scale_ratio_min=scale_ratio_min,
+                moment_sim_floor=config["moment_sim_floor"],
+                geometry_sim_floor=config["geometry_sim_floor"],
             )
             passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
             if passes_score_gate:
                 all_pairs.append(_pair_record(query_id, candidate_id, qt, ct, comp))
     all_pairs.sort(key=lambda item: item[0], reverse=True)
 
-    map_topk_matches = _ranked_matches(all_pairs[:max(int(map_match_top_k), 0)])
-    token_topk_matches = _token_topk_matches(all_pairs, len(wbm_tokens), max(int(token_match_top_k), 0))
+    map_topk_matches = _ranked_matches(all_pairs[:max(int(config["map_match_top_k"]), 0)])
+    token_topk_matches = _token_topk_matches(all_pairs, len(wbm_tokens), max(int(config["token_match_top_k"]), 0))
 
     # Evidence tables keep top-k candidates, but summary scoring uses a
     # one-to-one greedy match so neither WBM nor WDM tokens are counted twice.
@@ -651,8 +654,10 @@ def _token_match_components(
     score_weights: tuple[float, float, float],
     scale_component_weights: tuple[float, float],
     scale_ratio_min: float,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
 ) -> Dict:
-    shape_parts = _shape_similarity_components(query, candidate)
+    shape_parts = _shape_similarity_components(query, candidate, moment_sim_floor, geometry_sim_floor)
     shape_sim = shape_parts["shape_sim"]
     pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
     position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
@@ -729,15 +734,16 @@ def _scale_ratio_components(query: Dict, candidate: Dict) -> Dict[str, float]:
     }
 
 
-def _shape_similarity_components(query: Dict, candidate: Dict) -> Dict:
+def _shape_similarity_components(query: Dict, candidate: Dict,
+                                 moment_sim_floor: float = 0.0,
+                                 geometry_sim_floor: float = 0.0) -> Dict:
     q_parts = query.get("descriptor_parts")
     c_parts = candidate.get("descriptor_parts")
     if q_parts and c_parts and q_parts.get("kind") == c_parts.get("kind") == "zernike_geometry":
         moment_sim_raw = _cosine_sim(q_parts.get("moment"), c_parts.get("moment"))
         geometry_sim_raw = _geometry_sim(q_parts.get("geometry"), c_parts.get("geometry"))
-        # For the unscaled debug run, keep the raw similarities.
-        moment_sim = float(np.clip(moment_sim_raw, 0.0, 1.0))
-        geometry_sim = float(np.clip(geometry_sim_raw, 0.0, 1.0))
+        moment_sim = _contrast_sim(moment_sim_raw, moment_sim_floor, MOMENT_SIM_GAMMA)
+        geometry_sim = _contrast_sim(geometry_sim_raw, geometry_sim_floor, GEOMETRY_SIM_GAMMA)
         moment_weight = float(q_parts.get("moment_weight", 0.75))
         geometry_weight = float(q_parts.get("geometry_weight", 0.25))
         total = max(moment_weight + geometry_weight, 1e-6)
