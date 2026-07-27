@@ -71,7 +71,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--proposal-mode",
         choices=("cc", "compact", "arc", "arc-band-residual", "arc-ring-residual", "tangential-ring", "sparse-density", "auto"),
-        default="compact",
+        default="arc-ring-residual",
     )
     parser.add_argument("--min-area", type=int, default=5)
     parser.add_argument("--top-k-proposals", type=int, default=6)

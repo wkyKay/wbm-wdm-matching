@@ -952,43 +952,46 @@ def save_summary_figures(args, ref_gm, rows, log_dir: Path) -> None:
     # ── Row 3: proposal-steps (compact) ──
     gs_r3 = gs_outer[2].subgridspec(2, n_cols, height_ratios=[2, 1], hspace=0.12, wspace=0.06)
 
-    # WBM reference column: original + cluster color map
+    # WBM reference column: original + cluster
     _draw_wbm_ref_cell(fig, gs_r3[0, 0], ref_gm, "WBM")
     ax_wbm_cluster = fig.add_subplot(gs_r3[1, 0])
+    # Use first candidate's explanation to extract WBM tokens once
+    ref_wbm_tokens: list = []
     try:
-        from ..core.local_matching.proposal import _tokens_from_mask
-        wbm_tokens = _tokens_from_mask(
-            (ref_gm.status_map == VALID_HAS_DEFECT),
-            min_area=args.proposal_min_area,
-            top_k=args.proposal_top_k,
-            connectivity=4,
-            proposal_config=None,
-        )
-        _plot_cluster_color_map(ax_wbm_cluster, ref_gm, wbm_tokens, "WBM cluster")
+        if top_records:
+            first_gm = top_records[0][1]
+            ref_explanation = explain_count_partial_match(ref_gm, first_gm, **score_kwargs_from_args(args))
+            ref_wbm_tokens = ref_explanation.get("wbm_tokens", [])
     except Exception:
+        pass
+    if ref_wbm_tokens:
+        _plot_cluster_color_map(ax_wbm_cluster, ref_gm.status_map, ref_wbm_tokens, "WBM cluster", source="wbm")
+    else:
         ax_wbm_cluster.axis("off")
 
     for idx, (fname, gm, _score) in enumerate(top_records):
-        ax_wbm = fig.add_subplot(gs_r3[0, idx + 1])
-        ax_wdm = fig.add_subplot(gs_r3[1, idx + 1])
+        ax_wdm_orig = fig.add_subplot(gs_r3[0, idx + 1])
+        ax_wdm_cluster = fig.add_subplot(gs_r3[1, idx + 1])
 
         try:
             explanation = explain_count_partial_match(
                 ref_gm, gm,
                 **score_kwargs_from_args(args),
             )
-            wbm_tokens_ex = explanation.get("wbm_tokens", [])
-            wdm_tokens_ex = explanation.get("wdm_tokens", [])
+            wdm_tokens = explanation.get("wdm_tokens", [])
 
-            _plot_cluster_color_map(ax_wbm, ref_gm, wbm_tokens_ex,
-                                     f"#{idx + 1} WBM token")
-            _plot_cluster_color_map(ax_wdm, gm, wdm_tokens_ex,
-                                     f"#{idx + 1} WDM token")
+            _plot_wdm_original(ax_wdm_orig, gm, ref_gm.status_map,
+                               f"#{idx + 1} WDM ({representation})",
+                               map_mode=representation)
+            _plot_cluster_color_map(ax_wdm_cluster, ref_gm.status_map, wdm_tokens,
+                                     f"#{idx + 1} WDM cluster", source="wdm",
+                                     count_map=gm.count_map,
+                                     map_mode=representation)
         except Exception as e:
-            ax_wbm.text(0.5, 0.5, f"ERR: {e}", transform=ax_wbm.transAxes,
-                        ha="center", va="center", fontsize=8)
-            ax_wbm.axis("off")
-            ax_wdm.axis("off")
+            ax_wdm_orig.text(0.5, 0.5, f"ERR: {e}", transform=ax_wdm_orig.transAxes,
+                             ha="center", va="center", fontsize=8)
+            ax_wdm_orig.axis("off")
+            ax_wdm_cluster.axis("off")
 
     # ── Row 4: WDM raw ──
     gs_r4 = gs_outer[3].subgridspec(1, n_cols, wspace=0.06)
@@ -1115,17 +1118,18 @@ def save_classnumber_summary_figures(args, ref_gm, rows, log_dir: Path) -> None:
 
     _draw_wbm_ref_cell(fig, gs_r3[0, 0], ref_gm, "WBM")
     ax_wbm_cluster = fig.add_subplot(gs_r3[1, 0])
+    # Use first candidate's explanation to extract WBM tokens once
+    ref_wbm_tokens: list = []
     try:
-        from ..core.local_matching.proposal import _tokens_from_mask
-        wbm_tokens = _tokens_from_mask(
-            (ref_gm.status_map == VALID_HAS_DEFECT),
-            min_area=args.proposal_min_area,
-            top_k=args.proposal_top_k,
-            connectivity=4,
-            proposal_config=None,
-        )
-        _plot_cluster_color_map(ax_wbm_cluster, ref_gm, wbm_tokens, "WBM cluster")
+        if top_records:
+            first_gm = top_records[0]["grid_maps"]
+            ref_explanation = explain_count_partial_match(ref_gm, first_gm, **score_kwargs_from_args(args))
+            ref_wbm_tokens = ref_explanation.get("wbm_tokens", [])
     except Exception:
+        pass
+    if ref_wbm_tokens:
+        _plot_cluster_color_map(ax_wbm_cluster, ref_gm.status_map, ref_wbm_tokens, "WBM cluster", source="wbm")
+    else:
         ax_wbm_cluster.axis("off")
 
     for idx, rec in enumerate(top_records):
@@ -1140,10 +1144,10 @@ def save_classnumber_summary_figures(args, ref_gm, rows, log_dir: Path) -> None:
             wbm_tokens_ex = explanation.get("wbm_tokens", [])
             wdm_tokens_ex = explanation.get("wdm_tokens", [])
 
-            _plot_cluster_color_map(ax_wbm, ref_gm, wbm_tokens_ex,
-                                     f"#{idx + 1} WBM token")
-            _plot_cluster_color_map(ax_wdm, rec["grid_maps"], wdm_tokens_ex,
-                                     f"#{idx + 1} WDM token / cl {rec['classnumber']}")
+            _plot_cluster_color_map(ax_wbm, ref_gm.status_map, wbm_tokens_ex,
+                                     f"#{idx + 1} WBM token", source="wbm")
+            _plot_cluster_color_map(ax_wdm, ref_gm.status_map, wdm_tokens_ex,
+                                     f"#{idx + 1} WDM token / cl {rec['classnumber']}", source="wdm")
         except Exception as e:
             ax_wbm.text(0.5, 0.5, f"ERR: {e}", transform=ax_wbm.transAxes,
                         ha="center", va="center", fontsize=8)
