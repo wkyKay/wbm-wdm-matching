@@ -149,6 +149,8 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             "count-partial-mo-scale": partial_mo.mean_scale,
             "count-partial-mo-type": partial_mo.mean_type,
             "count-partial-mo-tokens": partial_mo,
+            "_wbm_tokens": explanation.get("wbm_tokens", []),
+            "_wdm_tokens": explanation.get("wdm_tokens", []),
             "_token_topk_matches": explanation.get("token_topk_matches", []),
             "_map_topk_matches": explanation.get("map_topk_matches", []),
         }

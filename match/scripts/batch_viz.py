@@ -842,3 +842,414 @@ def _mo_split_rank_score(split, match_mode: str) -> float:
             return float(split.binary_matched_only.score)
         return float(split.binary.score) if split.binary is not None else float("-inf")
     return float("-inf")
+
+
+def save_summary_figure(args, rows: list, log_dir: Path) -> None:
+    """生成 count-partial 模式 4×(topk+1) 汇总大图。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+
+    from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP, _cluster_color_image, _draw_token_ids
+
+    top_k = max(getattr(args, "review_top_k", 3), 1)
+    representation = getattr(args, "representation", "count")
+    cmap = COUNT_PARTIAL_CMAP if representation in ("count", "density") else ("gray" if representation == "binary" else "hot")
+
+    # ── 收集 WBM reference ──
+    ref_gm = _ref_from_rows(rows)
+    if ref_gm is None:
+        print("Summary figure skipped: no reference in rows")
+        return
+    wbm_status = ref_gm.status_map
+
+    # ── Row 1 IoU 排序 & Row 2 count-partial 排序 ──
+    iou_scored, cp_scored, cp_token_map = _score_rows_count_partial(rows)
+    iou_top = iou_scored[:top_k]
+    cp_top = cp_scored[:top_k]
+
+    # ── WBM token cluster ──
+    wbm_tokens = _first_wbm_tokens(rows)
+
+    n_cols = 1 + len(iou_top)
+    fig, axes = plt.subplots(4, n_cols, figsize=(5 * n_cols, 26))
+    if n_cols == 1:
+        axes = axes.reshape(4, 1)
+
+    # Col 0: WBM
+    for row_idx in (0, 1, 3):
+        _render_wbm_base_cell(axes[row_idx, 0], wbm_status, title="WBM Reference" if row_idx == 0 else None)
+    _render_wbm_token_cell(axes[2, 0], ref_gm, wbm_tokens)
+
+    # Col 1..k: WDM
+    for col_idx, (name, gm, score) in enumerate(iou_top):
+        col = col_idx + 1
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            axes[0, col].imshow(_render_wdm_baseline(rep_map, wbm_status, cmap), aspect="equal", interpolation="nearest")
+        axes[0, col].set_title(f"IoU #{col_idx + 1}\n{_safe_name(name)}\nIoU={score:.4f}", fontsize=9)
+        axes[0, col].axis("off")
+
+    for col_idx, (name, gm, score) in enumerate(cp_top):
+        col = col_idx + 1
+        rep_map = gm.representation_maps.get(representation)
+        if rep_map is not None:
+            axes[1, col].imshow(_render_wdm_baseline(rep_map, wbm_status, cmap), aspect="equal", interpolation="nearest")
+        mode_label = getattr(args, "mode", "count-partial")
+        axes[1, col].set_title(f"{mode_label} #{col_idx + 1}\n{_safe_name(name)}\ncp={score:.4f}", fontsize=9)
+        axes[1, col].axis("off")
+
+    for col_idx, (name, gm, _score) in enumerate(cp_top):
+        col = col_idx + 1
+        wdm_tokens = cp_token_map.get(name, [])
+        image = _cluster_color_image(wbm_status, wdm_tokens, source="wdm", count_map=gm.count_map, map_mode="count", show_kde_support=True)
+        axes[2, col].imshow(image, interpolation="nearest")
+        _draw_token_ids(axes[2, col], wdm_tokens)
+        axes[2, col].set_title(f"WDM #{col_idx + 1}\n{_safe_name(name)}", fontsize=9)
+        axes[2, col].axis("off")
+
+    cp_top_scored = cp_scored[:top_k]
+    for col_idx, (name, gm, score) in enumerate(cp_top_scored):
+        col = col_idx + 1
+        klarf_path = gm.metadata.get("klarf_path", "")
+        _render_physical_scatter_cell(axes[3, col], klarf_path, name, score)
+        axes[3, col].set_title(f"Raw #{col_idx + 1}\n{_safe_name(name)}", fontsize=9)
+
+    # 行标签
+    row_labels = ["Baseline (IoU)", "Count-Partial TopK", "Token Clusters", "Physical Coordinates"]
+    for idx, label in enumerate(row_labels):
+        axes[idx, 0].set_ylabel(label, fontsize=12, fontweight="bold", rotation=90, va="center", labelpad=15)
+
+    plt.tight_layout()
+    out_dir = log_dir / "sum"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_path = out_dir / "summary.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Summary figure saved: {save_path}")
+
+
+def save_classnumber_summary_figure(args, rows: list, log_dir: Path) -> None:
+    """生成 classnumber 模式 4×(topk+1) 汇总大图。"""
+    ensure_mpl()
+    import matplotlib.pyplot as plt
+
+    from ..core.classnumber_matching import split_score
+    from ..core.local_matching import explain_count_partial_match, explain_binary_partial_match
+    from ..viz.count_partial_visualization import COUNT_PARTIAL_CMAP, _cluster_color_image, _draw_token_ids
+    from ..viz.classnumber_visualization import CLASSNUMBER_CMAP
+
+    top_k = max(getattr(args, "review_top_k", 3), 1)
+    representation = getattr(args, "representation", "count")
+    rank_by = derive_classnumber_match_mode(representation)
+    cmap = CLASSNUMBER_CMAP if rank_by == "binary" else COUNT_PARTIAL_CMAP
+    explain_fn = explain_binary_partial_match if rank_by == "binary" else explain_count_partial_match
+
+    ref_gm = _ref_from_rows(rows)
+    if ref_gm is None:
+        print("Classnumber summary figure skipped: no reference in rows")
+        return
+    wbm_status = ref_gm.status_map
+
+    # ── 收集 classnumber splits ──
+    split_records = _collect_classnumber_splits(rows)
+    if not split_records:
+        print("Classnumber summary figure skipped: no splits")
+        return
+    split_records.sort(key=lambda item: split_score(item["split"], rank_by), reverse=True)
+    top_splits = split_records[:top_k]
+
+    # ── Row 1 IoU 排序（best split 的 grid_maps + representation IoU）──
+    iou_top = _classnumber_iou_top(rows, representation, top_k)
+
+    # ── WBM token cluster (use ref_gm via classnumber explain) ──
+    wbm_tokens: list = []
+    try:
+        wbm_exp = explain_fn(
+            ref_gm, ref_gm,
+            min_area=args.proposal_min_area, top_k=args.proposal_top_k,
+            proposal_mode=args.proposal_mode, rotation_tolerance=args.proposal_rotation_tolerance,
+            min_token_score=args.token_min_score, score_shape_weight=args.token_score_shape_weight,
+            score_position_weight=args.token_score_position_weight, score_scale_weight=args.token_score_scale_weight,
+            min_relative_token_area=args.proposal_min_relative_token_area,
+            scale_area_weight=args.token_scale_area_weight, scale_pca_weight=args.token_scale_pca_weight,
+            density_sigmas=tuple(args.density_sigmas), density_threshold=args.density_threshold,
+            density_min_raw_points=args.density_min_raw_points, density_min_raw_mass=args.density_min_raw_mass,
+            density_merge_iou=args.density_merge_iou, density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area, ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width, ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins, ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio, ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+        )
+        wbm_tokens = wbm_exp.get("wbm_tokens", [])
+    except Exception:
+        pass
+
+    # ── Row 3 token clusters: recompute for each split ──
+    split_token_map: dict[str, list] = {}
+    for rec in top_splits:
+        try:
+            exp = explain_fn(
+                ref_gm, rec["grid_maps"],
+                min_area=args.proposal_min_area, top_k=args.proposal_top_k,
+                proposal_mode=args.proposal_mode, rotation_tolerance=args.proposal_rotation_tolerance,
+                min_token_score=args.token_min_score, score_shape_weight=args.token_score_shape_weight,
+                score_position_weight=args.token_score_position_weight, score_scale_weight=args.token_score_scale_weight,
+                min_relative_token_area=args.proposal_min_relative_token_area,
+                scale_area_weight=args.token_scale_area_weight, scale_pca_weight=args.token_scale_pca_weight,
+                density_sigmas=tuple(args.density_sigmas), density_threshold=args.density_threshold,
+                density_min_raw_points=args.density_min_raw_points, density_min_raw_mass=args.density_min_raw_mass,
+                density_merge_iou=args.density_merge_iou, density_weight_transform=args.density_weight_transform,
+                ring_min_area=args.ring_min_area, ring_edge_r_min=args.ring_edge_r_min,
+                ring_band_width=args.ring_band_width, ring_min_angular_coverage=args.ring_min_angular_coverage,
+                ring_angular_bins=args.ring_angular_bins, ring_max_radial_std=args.ring_max_radial_std,
+                ring_max_defect_ratio=args.ring_max_defect_ratio, ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+            )
+            split_token_map[rec["file"]] = exp.get("wdm_tokens", [])
+        except Exception:
+            split_token_map[rec["file"]] = []
+
+    n_cols = 1 + max(len(iou_top), len(top_splits))
+    fig, axes = plt.subplots(4, n_cols, figsize=(5 * n_cols, 26))
+    if n_cols == 1:
+        axes = axes.reshape(4, 1)
+
+    # Col 0: WBM
+    for row_idx in (0, 1, 3):
+        _render_wbm_base_cell(axes[row_idx, 0], wbm_status, title="WBM Reference" if row_idx == 0 else None)
+    _render_wbm_token_cell(axes[2, 0], ref_gm, wbm_tokens)
+
+    # Row 1: IoU baseline
+    for col_idx, (name, gm, score) in enumerate(iou_top):
+        col = col_idx + 1
+        rep = gm.representation_maps.get(representation)
+        if rep is not None:
+            axes[0, col].imshow(_render_wdm_baseline(rep, wbm_status, cmap), aspect="equal", interpolation="nearest")
+        axes[0, col].set_title(f"IoU #{col_idx + 1}\n{_safe_name(name)}\nIoU={score:.4f}", fontsize=9)
+        axes[0, col].axis("off")
+
+    # Row 2: Classnumber split topk
+    for col_idx, rec in enumerate(top_splits):
+        col = col_idx + 1
+        gm = rec["grid_maps"]
+        rep = gm.representation_maps.get(rank_by)
+        if rep is not None:
+            axes[1, col].imshow(_render_wdm_baseline(rep, wbm_status, cmap), aspect="equal", interpolation="nearest")
+        s = split_score(rec["split"], rank_by)
+        axes[1, col].set_title(f"Split #{col_idx + 1}\n{_safe_name(rec['file'])} cls={rec['classnumber']}\nscore={s:.4f}", fontsize=9)
+        axes[1, col].axis("off")
+
+    # Row 3: Token clusters
+    for col_idx, rec in enumerate(top_splits):
+        col = col_idx + 1
+        gm = rec["grid_maps"]
+        wdm_tokens = split_token_map.get(rec["file"], [])
+        image = _cluster_color_image(wbm_status, wdm_tokens, source="wdm", count_map=gm.count_map, map_mode=rank_by, show_kde_support=True)
+        axes[2, col].imshow(image, interpolation="nearest")
+        _draw_token_ids(axes[2, col], wdm_tokens)
+        axes[2, col].set_title(f"Tokens #{col_idx + 1}\n{_safe_name(rec['file'])} cls={rec['classnumber']}", fontsize=9)
+        axes[2, col].axis("off")
+
+    # Row 4: Physical coordinates
+    for col_idx, rec in enumerate(top_splits):
+        col = col_idx + 1
+        klarf_path = rec.get("klarf_path", "")
+        _render_classnumber_physical_cell(axes[3, col], klarf_path, rec["classnumber"], rec["file"], split_score(rec["split"], rank_by))
+        axes[3, col].set_title(f"Raw #{col_idx + 1} cls={rec['classnumber']}\n{_safe_name(rec['file'])}", fontsize=9)
+
+    row_labels = ["Baseline (Best Split IoU)", "Classnumber Split TopK", "Token Clusters", "Physical Coordinates"]
+    for idx, label in enumerate(row_labels):
+        axes[idx, 0].set_ylabel(label, fontsize=12, fontweight="bold", rotation=90, va="center", labelpad=15)
+
+    plt.tight_layout()
+    out_dir = log_dir / "sum"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_path = out_dir / "summary_classnumber.png"
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Classnumber summary figure saved: {save_path}")
+
+
+# ── helpers ──
+
+def _ref_from_rows(rows: list):
+    for _fname, res in rows:
+        gm = res.get("_grid_maps")
+        if gm is not None:
+            return gm
+    return None
+
+
+def _first_wbm_tokens(rows: list) -> list:
+    for _fname, res in rows:
+        tokens = res.get("_wbm_tokens")
+        if tokens:
+            return tokens
+    return []
+
+
+def _score_rows_count_partial(rows: list):
+    iou_scored = []
+    cp_scored = []
+    cp_token_map = {}
+    for fname, res in rows:
+        gm = res.get("_grid_maps")
+        if gm is None:
+            continue
+        iou_val = res.get("iou")
+        if hasattr(iou_val, "score"):
+            iou_val = iou_val.score
+        if isinstance(iou_val, (float, int)):
+            iou_scored.append((fname, gm, float(iou_val)))
+        cp_val = res.get("count-partial")
+        if isinstance(cp_val, (float, int)):
+            cp_scored.append((fname, gm, float(cp_val)))
+            wdm_tokens = res.get("_wdm_tokens", [])
+            if wdm_tokens:
+                cp_token_map[fname] = wdm_tokens
+    iou_scored.sort(key=lambda item: item[2], reverse=True)
+    cp_scored.sort(key=lambda item: item[2], reverse=True)
+    return iou_scored, cp_scored, cp_token_map
+
+
+def _collect_classnumber_splits(rows: list) -> list:
+    from pathlib import Path
+    records = []
+    for fname, res in rows:
+        gm = res.get("_grid_maps")
+        class_result = res.get("_classnumber_result")
+        if gm is None or class_result is None or not class_result.splits:
+            continue
+        klarf_path = gm.metadata.get("klarf_path", "")
+        file_stem = Path(fname).stem
+        for split in class_result.splits:
+            records.append({
+                "file": file_stem,
+                "file_name": fname,
+                "classnumber": split.classnumber,
+                "split": split,
+                "grid_maps": split.grid_maps,
+                "klarf_path": klarf_path,
+            })
+    return records
+
+
+def _classnumber_iou_top(rows: list, representation: str, top_k: int):
+    from ..core.similarity import compute_similarity
+    scored = []
+    for fname, res in rows:
+        class_result = res.get("_classnumber_result")
+        ref_gm = res.get("_grid_maps")
+        if class_result is None or class_result.best is None or ref_gm is None:
+            continue
+        best_gm = class_result.best.grid_maps
+        iou = compute_similarity(
+            ref_gm.representation_map,
+            best_gm.representation_map,
+            method="iou",
+            reference_status=ref_gm.status_map,
+            candidate_status=best_gm.status_map,
+        )
+        if hasattr(iou, "score"):
+            iou = iou.score
+        if isinstance(iou, (float, int)):
+            scored.append((fname, best_gm, float(iou)))
+    scored.sort(key=lambda item: item[2], reverse=True)
+    return scored[:top_k]
+
+
+def _render_wbm_base_cell(ax, status_map, title=None):
+    import numpy as np
+    from ..core.models import BACKGROUND, VALID_HAS_DEFECT
+    h, w = status_map.shape
+    img = np.zeros((h, w, 3), dtype=np.uint8)
+    img[status_map == BACKGROUND] = [0, 0, 0]
+    valid = status_map != BACKGROUND
+    img[valid] = [127, 127, 127]
+    img[status_map == VALID_HAS_DEFECT] = [255, 255, 255]
+    ax.imshow(img, aspect="equal", interpolation="nearest")
+    if title:
+        ax.set_title(title, fontsize=10)
+    ax.axis("off")
+
+
+def _render_wbm_token_cell(ax, ref_gm, wbm_tokens: list):
+    from ..core.models import VALID_HAS_DEFECT, VALID_NO_DEFECT
+    from ..viz.count_partial_visualization import _cluster_color_image, _draw_token_ids
+    import numpy as np
+    status_map = ref_gm.status_map
+    if not wbm_tokens:
+        h, w = status_map.shape
+        img = np.zeros((h, w, 3), dtype=np.float32)
+        valid = (status_map == VALID_NO_DEFECT) | (status_map == VALID_HAS_DEFECT)
+        img[valid] = [0.5, 0.5, 0.5]
+        img[status_map == VALID_HAS_DEFECT] = [0.95, 0.95, 0.95]
+        ax.imshow(img, interpolation="nearest")
+    else:
+        image = _cluster_color_image(status_map, wbm_tokens, source="wbm", show_kde_support=True)
+        ax.imshow(image, interpolation="nearest")
+        _draw_token_ids(ax, wbm_tokens)
+    ax.set_title("WBM Tokens", fontsize=10)
+    ax.axis("off")
+
+
+def _render_physical_scatter_cell(ax, klarf_path, _name, _score):
+    from ..viz.klarfkit import WaferMap
+    try:
+        wm = WaferMap.read_klarf(klarf_path)
+    except Exception:
+        ax.text(0.5, 0.5, "N/A", transform=ax.transAxes, ha="center", va="center")
+        ax.axis("off")
+        return
+    df = wm.defect_list
+    cls_col = None
+    for col in df.columns:
+        if col.upper() == "CLASSNUMBER":
+            cls_col = col
+            break
+    _draw_wafer_base(wm, ax)
+    x = df["_XACTUAL"].to_numpy()
+    y = df["_YACTUAL"].to_numpy()
+    if cls_col is not None:
+        class_vals = df[cls_col].to_numpy()
+        mask_zero = class_vals == 0
+        mask_nonzero = ~mask_zero
+        if mask_zero.any():
+            ax.scatter(x[mask_zero], y[mask_zero], color="red", s=6, zorder=10)
+        if mask_nonzero.any():
+            ax.scatter(x[mask_nonzero], y[mask_nonzero], color="blue", s=6, zorder=10)
+    else:
+        ax.scatter(x, y, color="red", s=6, zorder=10)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+
+def _render_classnumber_physical_cell(ax, klarf_path, target_class, _name, _score):
+    from ..viz.klarfkit import WaferMap
+    try:
+        wm = WaferMap.read_klarf(klarf_path)
+    except Exception:
+        ax.text(0.5, 0.5, "N/A", transform=ax.transAxes, ha="center", va="center")
+        ax.axis("off")
+        return
+    df = wm.defect_list
+    cls_col = None
+    for col in df.columns:
+        if col.upper() == "CLASSNUMBER":
+            cls_col = col
+            break
+    if cls_col is not None:
+        mask = df[cls_col].to_numpy() == target_class
+        df_filtered = df[mask]
+    else:
+        df_filtered = df
+    if df_filtered.empty:
+        _draw_wafer_base(wm, ax)
+    else:
+        wm_tmp = WaferMap(defect_record=df_filtered.copy(), die_pitch=wm.die_pitch,
+                         sample_center_location=wm.center_location, sample_size=wm.sample_size)
+        _draw_wafer_base(wm_tmp, ax)
+        ax.scatter(wm_tmp.defect_list["_XACTUAL"].to_numpy(),
+                    wm_tmp.defect_list["_YACTUAL"].to_numpy(),
+                    color="blue", s=6, zorder=10)
+    ax.set_aspect("equal")
+    ax.axis("off")

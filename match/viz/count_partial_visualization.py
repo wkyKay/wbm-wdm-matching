@@ -296,7 +296,7 @@ def _plot_cluster_color_map(
     count_map: np.ndarray | None = None,
     map_mode: str = "count",
 ) -> None:
-    image = _cluster_color_image(reference_status, tokens, source=source, count_map=count_map, map_mode=map_mode)
+    image = _cluster_color_image(reference_status, tokens, source=source, count_map=count_map, map_mode=map_mode, show_kde_support=True)
     ax.imshow(image, interpolation="nearest")
     ax.set_title(title, fontsize=10)
     ax.axis("off")
@@ -309,6 +309,7 @@ def _cluster_color_image(
     source: str,
     count_map: np.ndarray | None = None,
     map_mode: str = "count",
+    show_kde_support: bool = False,
 ) -> np.ndarray:
     h, w = reference_status.shape
     image = np.zeros((h, w, 3), dtype=np.float32)
@@ -329,7 +330,32 @@ def _cluster_color_image(
             cc = int(c)
             if 0 <= rr < h and 0 <= cc < w:
                 image[rr, cc] = color
+
+    if show_kde_support:
+        _overlay_kde_support(image, tokens)
+
     return image
+
+
+def _overlay_kde_support(image: np.ndarray, tokens: List[Dict], alpha: float = 0.30) -> None:
+    """对于 sparse-density token，用淡色半透明层标注 KDE support 区域，展示像素是如何被选中的。"""
+    h, w = image.shape[:2]
+    for idx, token in enumerate(tokens):
+        kde_pixels = token.get("kde_support_pixels")
+        if not kde_pixels or token.get("proposal_source") != "sparse_density":
+            continue
+        base = np.array(to_rgb(TOKEN_COLORS[idx % len(TOKEN_COLORS)]), dtype=np.float32)
+        pastel = _pastel_color(base, lightness=0.55)
+        for r, c in kde_pixels:
+            rr, cc = int(r), int(c)
+            if 0 <= rr < h and 0 <= cc < w:
+                image[rr, cc] = image[rr, cc] * (1 - alpha) + pastel * alpha
+
+
+def _pastel_color(base: np.ndarray, lightness: float = 0.50) -> np.ndarray:
+    """将颜色与白色混合，生成淡色版本。lightness 控制白色比例（0=原色, 1=纯白）。"""
+    white = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+    return base * (1 - lightness) + white * lightness
 
 
 def _wdm_status_image(candidate: GridMaps, reference_status: np.ndarray, map_mode: str = "count") -> np.ndarray:
