@@ -1,0 +1,899 @@
+from __future__ import annotations
+
+import argparse
+from typing import Any, Dict
+
+import numpy as np
+
+from .models import LocalMatchResult
+from .proposal import (_proposal_config, _tokens_from_mask, _tokens_from_weighted_mask,)
+from .descriptors import DEFAULT_GEOMETRY_WEIGHT, DEFAULT_MOMENT_WEIGHT
+
+
+MIN_SHAPE_SIM_FOR_MATCH = 0.30
+MIN_TOKEN_SCORE_FOR_MATCH = 0.30
+DEFAULT_SHAPE_SCORE_WEIGHT = 0.60
+DEFAULT_POSITION_SCORE_WEIGHT = 0.25
+DEFAULT_SCALE_SCORE_WEIGHT = 0.15
+DEFAULT_MIN_RELATIVE_TOKEN_AREA = 0.10
+DEFAULT_SCALE_AREA_WEIGHT = 0.30
+DEFAULT_SCALE_PCA_WEIGHT = 0.70
+DEFAULT_SCALE_RATIO_MIN = 0.20
+PCA_LONG_EXTENT_WEIGHT = 0.75
+PCA_SHORT_EXTENT_WEIGHT = 0.25
+MOMENT_SIM_GAMMA = 2.0
+GEOMETRY_SIM_GAMMA = 1.5
+EDGE_EXTENT_R_MIN = 0.60
+EDGE_EXTENT_MIN_COVERAGE = 0.25
+EDGE_EXTENT_SIGMA = 0.20
+
+
+def score_kwargs_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+    """从 CLI args 提取 explain_count_partial_match / explain_binary_partial_match 的参数。"""
+    return dict(
+        min_area=args.proposal_min_area,
+        top_k=args.proposal_top_k,
+        token_match_top_k=args.token_match_top_k,
+        map_match_top_k=args.map_match_top_k,
+        sigma_pos=args.token_sigma_pos,
+        sigma_scale=args.token_sigma_scale,
+        proposal_mode=args.proposal_mode,
+        rotation_tolerance=args.proposal_rotation_tolerance,
+        min_token_score=args.token_min_score,
+        score_shape_weight=args.token_score_shape_weight,
+        score_position_weight=args.token_score_position_weight,
+        score_scale_weight=args.token_score_scale_weight,
+        min_relative_token_area=args.proposal_min_relative_token_area,
+        scale_area_weight=args.token_scale_area_weight,
+        scale_pca_weight=args.token_scale_pca_weight,
+        scale_ratio_min=args.token_scale_ratio_min,
+        density_sigmas=tuple(args.density_sigmas),
+        density_threshold=args.density_threshold,
+        density_min_raw_points=args.density_min_raw_points,
+        density_min_raw_mass=args.density_min_raw_mass,
+        density_merge_iou=args.density_merge_iou,
+        density_weight_transform=args.density_weight_transform,
+        ring_min_area=args.ring_min_area,
+        ring_edge_r_min=args.ring_edge_r_min,
+        ring_band_width=args.ring_band_width,
+        ring_min_angular_coverage=args.ring_min_angular_coverage,
+        ring_angular_bins=args.ring_angular_bins,
+        ring_max_radial_std=args.ring_max_radial_std,
+        ring_max_defect_ratio=args.ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+        moment_sim_floor=args.moment_sim_floor,
+        geometry_sim_floor=args.geometry_sim_floor,
+        moment_weight=args.moment_weight,
+        geometry_weight=args.geometry_weight,
+    )
+
+
+def compute_count_partial_match(
+    reference,
+    candidate,
+    min_area: int = 5,
+    top_k: int = 6,
+    token_match_top_k: int = 3,
+    map_match_top_k: int = 20,
+    sigma_pos: float = 0.35,
+    sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
+) -> LocalMatchResult:
+    explanation = explain_count_partial_match(
+        reference, candidate,
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
+    )
+    return explanation["result"]
+
+
+def compute_binary_partial_match(
+    reference,
+    candidate,
+    min_area: int = 5,
+    top_k: int = 6,
+    token_match_top_k: int = 3,
+    map_match_top_k: int = 20,
+    sigma_pos: float = 0.35,
+    sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
+) -> LocalMatchResult:
+    explanation = explain_binary_partial_match(
+        reference, candidate,
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
+    )
+    return explanation["result"]
+
+
+def explain_count_partial_match(
+    reference,
+    candidate,
+    min_area: int = 5,
+    top_k: int = 6,
+    token_match_top_k: int = 3,
+    map_match_top_k: int = 20,
+    sigma_pos: float = 0.35,
+    sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
+) -> Dict:
+    valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
+    wbm_mask = reference.status_map == 2
+    wdm_count = np.where(valid_mask, candidate.count_map, 0).astype(np.float32)
+    wdm_mask = wdm_count > 0
+
+    config = dict(
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
+    )
+    return _explain_local_partial_match(
+        reference=reference,
+        wbm_mask=wbm_mask & valid_mask,
+        wdm_mask=wdm_mask & valid_mask,
+        wdm_weight_map=wdm_count,
+        valid_mask=valid_mask,
+        config=config,
+    )
+
+
+def explain_binary_partial_match(
+    reference,
+    candidate,
+    min_area: int = 5,
+    top_k: int = 6,
+    token_match_top_k: int = 3,
+    map_match_top_k: int = 20,
+    sigma_pos: float = 0.35,
+    sigma_scale: float = 1.5,
+    proposal_mode: str = "cc",
+    rotation_tolerance: bool = False,
+    min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
+    score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
+    score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
+    min_relative_token_area: float = DEFAULT_MIN_RELATIVE_TOKEN_AREA,
+    scale_area_weight: float = DEFAULT_SCALE_AREA_WEIGHT,
+    scale_pca_weight: float = DEFAULT_SCALE_PCA_WEIGHT,
+    scale_ratio_min: float = DEFAULT_SCALE_RATIO_MIN,
+    density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
+    density_threshold: float = 0.20,
+    density_min_raw_points: int = 3,
+    density_min_raw_mass: float = 3.0,
+    density_merge_iou: float = 0.60,
+    density_weight_transform: str = "sqrt",
+    ring_min_area: int | None = None,
+    ring_edge_r_min: float | None = None,
+    ring_band_width: float | None = None,
+    ring_min_angular_coverage: float | None = None,
+    ring_angular_bins: int | None = None,
+    ring_max_radial_std: float | None = None,
+    ring_max_defect_ratio: float | None = None,
+    ring_min_edge_defect_fraction: float | None = None,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
+) -> Dict:
+    valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
+    wbm_mask = reference.status_map == 2
+    wdm_mask = (candidate.binary_map > 0) & valid_mask
+    wdm_weight_map = wdm_mask.astype(np.float32)
+
+    config = dict(
+        min_area=min_area, top_k=top_k,
+        token_match_top_k=token_match_top_k, map_match_top_k=map_match_top_k,
+        sigma_pos=sigma_pos, sigma_scale=sigma_scale,
+        proposal_mode=proposal_mode, rotation_tolerance=rotation_tolerance,
+        min_token_score=min_token_score,
+        score_shape_weight=score_shape_weight,
+        score_position_weight=score_position_weight,
+        score_scale_weight=score_scale_weight,
+        min_relative_token_area=min_relative_token_area,
+        scale_area_weight=scale_area_weight, scale_pca_weight=scale_pca_weight,
+        scale_ratio_min=scale_ratio_min,
+        density_sigmas=density_sigmas, density_threshold=density_threshold,
+        density_min_raw_points=density_min_raw_points,
+        density_min_raw_mass=density_min_raw_mass,
+        density_merge_iou=density_merge_iou,
+        density_weight_transform=density_weight_transform,
+        ring_min_area=ring_min_area, ring_edge_r_min=ring_edge_r_min,
+        ring_band_width=ring_band_width,
+        ring_min_angular_coverage=ring_min_angular_coverage,
+        ring_angular_bins=ring_angular_bins,
+        ring_max_radial_std=ring_max_radial_std,
+        ring_max_defect_ratio=ring_max_defect_ratio,
+        ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
+        moment_sim_floor=moment_sim_floor,
+        geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
+    )
+    return _explain_local_partial_match(
+        reference=reference,
+        wbm_mask=wbm_mask & valid_mask,
+        wdm_mask=wdm_mask,
+        wdm_weight_map=wdm_weight_map,
+        valid_mask=valid_mask,
+        config=config,
+    )
+
+
+def _explain_local_partial_match(
+    reference,
+    wbm_mask: np.ndarray,
+    wdm_mask: np.ndarray,
+    wdm_weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    config: Dict,
+) -> Dict:
+    """Core matching logic. ``config`` contains all scoring/proposal parameters."""
+    proposal_config = _proposal_config(
+        reference.status_map.shape,
+        int(valid_mask.sum()),
+        config["min_area"],
+        config["top_k"],
+        proposal_mode=(
+            "sparse-density"
+            if config["proposal_mode"] == "auto" and _should_use_sparse_density(
+                wbm_mask, wdm_mask, valid_mask, config["density_min_raw_points"]
+            )
+            else ("cc" if config["proposal_mode"] == "auto" else config["proposal_mode"])
+        ),
+        rotation_tolerance=config["rotation_tolerance"],
+        density_sigmas=config["density_sigmas"],
+        density_threshold=config["density_threshold"],
+        density_min_raw_points=config["density_min_raw_points"],
+        density_min_raw_mass=config["density_min_raw_mass"],
+        density_merge_iou=config["density_merge_iou"],
+        density_weight_transform=config["density_weight_transform"],
+        ring_min_area=config["ring_min_area"],
+        ring_edge_r_min=config["ring_edge_r_min"],
+        ring_band_width=config["ring_band_width"],
+        ring_min_angular_coverage=config["ring_min_angular_coverage"],
+        ring_angular_bins=config["ring_angular_bins"],
+        ring_max_radial_std=config["ring_max_radial_std"],
+        ring_max_defect_ratio=config["ring_max_defect_ratio"],
+        ring_min_edge_defect_fraction=config["ring_min_edge_defect_fraction"],
+        moment_weight=config["moment_weight"],
+        geometry_weight=config["geometry_weight"],
+    )
+    proposal_debug = {"proposal_mode": proposal_config.proposal_mode}
+    sparse_density_mode = proposal_config.proposal_mode == "sparse-density"
+    if sparse_density_mode:
+        wbm_tokens = _tokens_from_weighted_mask(
+            wbm_mask & valid_mask,
+            valid_mask,
+            (wbm_mask & valid_mask).astype(np.float32),
+            proposal_config=proposal_config,
+            proposal_debug=proposal_debug,
+        )
+        raw_wdm_weight_map = wdm_weight_map
+        wdm_weight_map = _density_weight_map(wdm_weight_map, config["density_weight_transform"])
+    else:
+        wbm_tokens = _tokens_from_mask(
+            wbm_mask & valid_mask,
+            valid_mask,
+            proposal_config=proposal_config,
+            proposal_debug=proposal_debug,
+        )
+    wdm_tokens = _tokens_from_weighted_mask(
+        wdm_mask & valid_mask,
+        valid_mask,
+        wdm_weight_map.astype(np.float32),
+        proposal_config=proposal_config,
+        raw_weight_map=raw_wdm_weight_map if sparse_density_mode else None,
+        proposal_debug=proposal_debug,
+    )
+
+    empty_result = LocalMatchResult(
+        score=0.0,
+        mean_shape=0.0,
+        mean_position=0.0,
+        mean_scale=0.0,
+        mean_type=0.0,
+        matched_tokens=0,
+        wbm_tokens=len(wbm_tokens),
+        wdm_tokens=len(wdm_tokens),
+    )
+    if not wbm_tokens or not wdm_tokens:
+        return {
+            "result": empty_result,
+            "result_matched_only": empty_result,
+            "wbm_tokens": wbm_tokens,
+            "wdm_tokens": wdm_tokens,
+            "matches": [],
+            "token_topk_matches": [],
+            "map_topk_matches": [],
+            "proposal_debug": proposal_debug,
+        }
+
+    all_pairs = []
+    min_token_score = max(float(config["min_token_score"]), 0.0)
+    min_relative_token_area = max(float(config["min_relative_token_area"]), 0.0)
+    scale_ratio_min = min(max(float(config["scale_ratio_min"]), 0.0), 1.0)
+    score_weights = _normalized_score_weights(
+        config["score_shape_weight"],
+        config["score_position_weight"],
+        config["score_scale_weight"],
+    )
+    scale_component_weights = _normalized_pair_weights(
+        config["scale_area_weight"],
+        config["scale_pca_weight"],
+        default_a=DEFAULT_SCALE_AREA_WEIGHT,
+        default_b=DEFAULT_SCALE_PCA_WEIGHT,
+    )
+    wbm_max_area = _max_token_area(wbm_tokens)
+    wdm_max_area = _max_token_area(wdm_tokens)
+    scored_query_ids = {
+        query_id
+        for query_id, token in enumerate(wbm_tokens)
+        if _relative_area(token, wbm_max_area) >= min_relative_token_area
+    }
+    for query_id, qt in enumerate(wbm_tokens):
+        if query_id not in scored_query_ids:
+            continue
+        for candidate_id, ct in enumerate(wdm_tokens):
+            if _relative_area(ct, wdm_max_area) < min_relative_token_area:
+                continue
+            comp = _token_match_components(
+                qt,
+                ct,
+                sigma_pos=config["sigma_pos"],
+                sigma_scale=config["sigma_scale"],
+                score_weights=score_weights,
+                scale_component_weights=scale_component_weights,
+                scale_ratio_min=scale_ratio_min,
+                moment_sim_floor=config["moment_sim_floor"],
+                geometry_sim_floor=config["geometry_sim_floor"],
+            )
+            passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
+            if passes_score_gate:
+                all_pairs.append(_pair_record(query_id, candidate_id, qt, ct, comp))
+    all_pairs.sort(key=lambda item: item[0], reverse=True)
+
+    map_topk_matches = _ranked_matches(all_pairs[:max(int(config["map_match_top_k"]), 0)])
+    token_topk_matches = _token_topk_matches(all_pairs, len(wbm_tokens), max(int(config["token_match_top_k"]), 0))
+
+    # Evidence tables keep top-k candidates, but summary scoring uses a
+    # one-to-one greedy match so neither WBM nor WDM tokens are counted twice.
+    matches = _greedy_one_to_one_matches(all_pairs)
+
+    weighted_scores = []
+    weights = []
+    best_components = []
+    for query_id, qt in enumerate(wbm_tokens):
+        if query_id not in scored_query_ids:
+            continue
+        weight = float(np.sqrt(max(qt["area"], 1.0)))
+        weights.append(weight)
+        match = next((m for m in matches if m["query_token_id"] == query_id), None)
+        if match:
+            weighted_scores.append(match["score"] * weight)
+            best_components.append({k: match[k] for k in ("score", "shape_sim", "position_affinity", "scale_affinity", "type_affinity")})
+        else:
+            weighted_scores.append(0.0)
+            best_components.append({"score": 0.0, "shape_sim": 0.0, "position_affinity": 0.0, "scale_affinity": 0.0, "type_affinity": 0.0})
+
+    score = float(np.sum(weighted_scores) / max(np.sum(weights), 1e-6))
+    comp_weights = np.asarray(weights, dtype=np.float32)
+
+    def _weighted_mean(name: str) -> float:
+        vals = np.asarray([c[name] for c in best_components], dtype=np.float32)
+        return float((vals * comp_weights).sum() / max(comp_weights.sum(), 1e-6))
+
+    result = LocalMatchResult(
+        score=score,
+        mean_shape=_weighted_mean("shape_sim"),
+        mean_position=_weighted_mean("position_affinity"),
+        mean_scale=_weighted_mean("scale_affinity"),
+        mean_type=_weighted_mean("type_affinity"),
+        matched_tokens=len(matches),
+        wbm_tokens=len(wbm_tokens),
+        wdm_tokens=len(wdm_tokens),
+    )
+
+    # --- matched-only scoring: only matched tokens contribute to the weighted average ---
+    matched_weighted_scores = []
+    matched_weights = []
+    matched_components = []
+    for query_id, qt in enumerate(wbm_tokens):
+        if query_id not in scored_query_ids:
+            continue
+        weight = float(np.sqrt(max(qt["area"], 1.0)))
+        match = next((m for m in matches if m["query_token_id"] == query_id), None)
+        if match:
+            matched_weighted_scores.append(match["score"] * weight)
+            matched_weights.append(weight)
+            matched_components.append({k: match[k] for k in ("score", "shape_sim", "position_affinity", "scale_affinity", "type_affinity")})
+    mo_total_weight = float(np.sum(matched_weights))
+    score_mo = float(np.sum(matched_weighted_scores) / max(mo_total_weight, 1e-6)) if matched_weights else 0.0
+    mo_weights_arr = np.asarray(matched_weights, dtype=np.float32)
+
+    def _mo_weighted_mean(name: str) -> float:
+        if mo_weights_arr.size == 0:
+            return 0.0
+        vals = np.asarray([c[name] for c in matched_components], dtype=np.float32)
+        return float((vals * mo_weights_arr).sum() / max(mo_weights_arr.sum(), 1e-6))
+
+    result_matched_only = LocalMatchResult(
+        score=score_mo,
+        mean_shape=_mo_weighted_mean("shape_sim"),
+        mean_position=_mo_weighted_mean("position_affinity"),
+        mean_scale=_mo_weighted_mean("scale_affinity"),
+        mean_type=_mo_weighted_mean("type_affinity"),
+        matched_tokens=len(matches),
+        wbm_tokens=len(wbm_tokens),
+        wdm_tokens=len(wdm_tokens),
+    )
+
+    return {
+        "result": result,
+        "result_matched_only": result_matched_only,
+        "wbm_tokens": wbm_tokens,
+        "wdm_tokens": wdm_tokens,
+        "matches": matches,
+        "token_topk_matches": token_topk_matches,
+        "map_topk_matches": map_topk_matches,
+        "proposal_debug": proposal_debug,
+    }
+
+
+def _max_token_area(tokens: list[Dict]) -> float:
+    if not tokens:
+        return 0.0
+    return float(max(float(token.get("area", 0.0)) for token in tokens))
+
+
+def _relative_area(token: Dict, max_area: float) -> float:
+    if max_area <= 1e-8:
+        return 0.0
+    return float(token.get("area", 0.0)) / max_area
+
+
+def _density_weight_map(weight_map: np.ndarray, transform: str) -> np.ndarray:
+    weights = np.maximum(weight_map.astype(np.float32), 0.0)
+    if transform == "count":
+        return weights
+    if transform == "sqrt":
+        return np.sqrt(weights).astype(np.float32)
+    if transform == "log1p":
+        return np.log1p(weights).astype(np.float32)
+    raise ValueError(f"Unsupported density weight transform: {transform}")
+
+
+def _should_use_sparse_density(
+    wbm_mask: np.ndarray,
+    wdm_mask: np.ndarray,
+    valid_mask: np.ndarray,
+    min_raw_points: int,
+) -> bool:
+    """Select a shared sparse representation when either side is fragmented."""
+    return _is_fragmented_sparse_map(wbm_mask & valid_mask, min_raw_points) or _is_fragmented_sparse_map(
+        wdm_mask & valid_mask, min_raw_points
+    )
+
+
+def _is_fragmented_sparse_map(mask: np.ndarray, min_raw_points: int) -> bool:
+    point_count = int(mask.sum())
+    if point_count < max(int(min_raw_points), 1):
+        return False
+    from .morphology import _connected_components
+
+    components = _connected_components(mask, connectivity=8)
+    if len(components) < 2:
+        return False
+    largest = max(len(component) for component in components)
+    return largest < min_raw_points or largest / point_count <= 0.5
+
+
+def _normalized_score_weights(
+    shape_weight: float,
+    position_weight: float,
+    scale_weight: float,
+) -> tuple[float, float, float]:
+    weights = np.asarray([shape_weight, position_weight, scale_weight], dtype=np.float32)
+    weights = np.maximum(weights, 0.0)
+    total = float(weights.sum())
+    if total <= 1e-8:
+        return (
+            DEFAULT_SHAPE_SCORE_WEIGHT,
+            DEFAULT_POSITION_SCORE_WEIGHT,
+            DEFAULT_SCALE_SCORE_WEIGHT,
+        )
+    weights = weights / total
+    return float(weights[0]), float(weights[1]), float(weights[2])
+
+
+def _normalized_pair_weights(a: float, b: float, default_a: float, default_b: float) -> tuple[float, float]:
+    weights = np.asarray([a, b], dtype=np.float32)
+    weights = np.maximum(weights, 0.0)
+    total = float(weights.sum())
+    if total <= 1e-8:
+        return float(default_a), float(default_b)
+    weights = weights / total
+    return float(weights[0]), float(weights[1])
+
+
+def _token_match_components(
+    query: Dict,
+    candidate: Dict,
+    sigma_pos: float,
+    sigma_scale: float,
+    score_weights: tuple[float, float, float],
+    scale_component_weights: tuple[float, float],
+    scale_ratio_min: float,
+    moment_sim_floor: float = 0.0,
+    geometry_sim_floor: float = 0.0,
+) -> Dict:
+    shape_parts = _shape_similarity_components(query, candidate, moment_sim_floor, geometry_sim_floor)
+    edge_extent_affinity = _edge_extent_affinity(query, candidate)
+    shape_sim = shape_parts["shape_sim"] * edge_extent_affinity
+    pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
+    position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
+    support_area_affinity = _support_area_affinity(query, candidate, sigma_scale)
+    pca_extent_affinity = _pca_extent_affinity(query, candidate, sigma_scale)
+    scale_ratios = _scale_ratio_components(query, candidate)
+    area_weight, pca_weight = scale_component_weights
+    scale_affinity = area_weight * support_area_affinity + pca_weight * pca_extent_affinity
+    # geometry_type remains an explanation/diversity label; shape matching lives in descriptor space.
+    type_affinity = 1.0
+    scale_gate_pass = (
+        scale_ratio_min <= 0.0
+        or (
+            scale_ratios["area_ratio"] >= scale_ratio_min
+            and scale_ratios["long_ratio"] >= scale_ratio_min
+            and scale_ratios["short_ratio"] >= scale_ratio_min
+        )
+    )
+    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH or not scale_gate_pass:
+        score = 0.0
+    else:
+        w_shape, w_position, w_scale = score_weights
+        score = w_shape * shape_sim + w_position * position_affinity + w_scale * scale_affinity
+    return {
+        "score": float(score),
+        "shape_sim": shape_sim,
+        "moment_sim": shape_parts["moment_sim"],
+        "geometry_sim": shape_parts["geometry_sim"],
+        "edge_extent_affinity": edge_extent_affinity,
+        "moment_sim_raw": shape_parts["moment_sim_raw"],
+        "geometry_sim_raw": shape_parts["geometry_sim_raw"],
+        "scale_area_ratio": scale_ratios["area_ratio"],
+        "scale_long_ratio": scale_ratios["long_ratio"],
+        "scale_short_ratio": scale_ratios["short_ratio"],
+        "position_affinity": position_affinity,
+        "scale_affinity": scale_affinity,
+        "support_area_affinity": support_area_affinity,
+        "pca_extent_affinity": pca_extent_affinity,
+        "type_affinity": type_affinity,
+    }
+
+
+def _edge_extent_affinity(query: Dict, candidate: Dict) -> float:
+    if (
+        float(query.get("radial_distance_norm", 0.0)) < EDGE_EXTENT_R_MIN
+        or float(candidate.get("radial_distance_norm", 0.0)) < EDGE_EXTENT_R_MIN
+    ):
+        return 1.0
+    q_extent = _angular_extent(query)
+    c_extent = _angular_extent(candidate)
+    if max(q_extent, c_extent) < EDGE_EXTENT_MIN_COVERAGE:
+        return 1.0
+    return float(np.exp(-abs(q_extent - c_extent) / max(EDGE_EXTENT_SIGMA, 1e-6)))
+
+
+def _angular_extent(token: Dict) -> float:
+    values = (
+        token.get("ring_arc_angular_coverage"),
+        token.get("ring_contour_angular_coverage"),
+        token.get("max_angular_run_coverage"),
+        token.get("angular_coverage"),
+    )
+    for value in values:
+        if value is not None:
+            return float(value)
+    return 0.0
+
+
+def _support_area_affinity(query: Dict, candidate: Dict, sigma_scale: float) -> float:
+    q_scale = max(float(query.get("support_area_ratio", 0.0)), 1e-12)
+    c_scale = max(float(candidate.get("support_area_ratio", 0.0)), 1e-12)
+    return float(np.exp(-abs(np.log(q_scale / c_scale)) / max(sigma_scale, 1e-6)))
+
+
+def _pca_extent_affinity(query: Dict, candidate: Dict, sigma_scale: float) -> float:
+    q_long, q_short = _pca_extents(query)
+    c_long, c_short = _pca_extents(candidate)
+    long_delta = abs(np.log(q_long / c_long))
+    short_delta = abs(np.log(q_short / c_short))
+    weighted_delta = PCA_LONG_EXTENT_WEIGHT * long_delta + PCA_SHORT_EXTENT_WEIGHT * short_delta
+    return float(np.exp(-weighted_delta / max(sigma_scale, 1e-6)))
+
+
+def _pca_extents(token: Dict) -> tuple[float, float]:
+    long_extent = float(np.sqrt(max(float(token.get("pca_lambda1", 0.0)), 0.0) + 1.0))
+    short_extent = float(np.sqrt(max(float(token.get("pca_lambda2", 0.0)), 0.0) + 1.0))
+    if short_extent > long_extent:
+        return short_extent, long_extent
+    return long_extent, short_extent
+
+
+def _scale_ratio_components(query: Dict, candidate: Dict) -> Dict[str, float]:
+    q_area = max(float(query.get("area", 0.0)), 1e-12)
+    c_area = max(float(candidate.get("area", 0.0)), 1e-12)
+    q_long, q_short = _pca_extents(query)
+    c_long, c_short = _pca_extents(candidate)
+    return {
+        "area_ratio": float(min(q_area, c_area) / max(q_area, c_area)),
+        "long_ratio": float(min(q_long, c_long) / max(q_long, c_long)),
+        "short_ratio": float(min(q_short, c_short) / max(q_short, c_short)),
+    }
+
+
+def _shape_similarity_components(query: Dict, candidate: Dict,
+                                 moment_sim_floor: float = 0.0,
+                                 geometry_sim_floor: float = 0.0) -> Dict:
+    q_parts = query.get("descriptor_parts")
+    c_parts = candidate.get("descriptor_parts")
+    if q_parts and c_parts and q_parts.get("kind") == c_parts.get("kind") == "zernike_geometry":
+        moment_sim_raw = _cosine_sim(q_parts.get("moment"), c_parts.get("moment"))
+        geometry_sim_raw = _geometry_sim(q_parts.get("geometry"), c_parts.get("geometry"))
+        moment_sim = _contrast_sim(moment_sim_raw, moment_sim_floor, MOMENT_SIM_GAMMA)
+        geometry_sim = _contrast_sim(geometry_sim_raw, geometry_sim_floor, GEOMETRY_SIM_GAMMA)
+        moment_weight = float(q_parts.get("moment_weight", 0.75))
+        geometry_weight = float(q_parts.get("geometry_weight", 0.25))
+        total = max(moment_weight + geometry_weight, 1e-6)
+        shape_sim = (moment_weight * moment_sim + geometry_weight * geometry_sim) / total
+        return {
+            "shape_sim": float(np.clip(shape_sim, 0.0, 1.0)),
+            "moment_sim": float(moment_sim),
+            "geometry_sim": float(geometry_sim),
+            "moment_sim_raw": float(moment_sim_raw),
+            "geometry_sim_raw": float(geometry_sim_raw),
+        }
+
+    shape_sim = max(float(np.dot(query["descriptor"], candidate["descriptor"])), 0.0)
+    return {
+        "shape_sim": float(np.clip(shape_sim, 0.0, 1.0)),
+        "moment_sim": float(shape_sim),
+        "geometry_sim": 0.0,
+        "moment_sim_raw": float(shape_sim),
+        "geometry_sim_raw": 0.0,
+    }
+
+
+def _contrast_sim(value: float, floor: float, gamma: float) -> float:
+    value = float(np.clip(value, 0.0, 1.0))
+    floor = float(np.clip(floor, 0.0, 0.999999))
+    gamma = max(float(gamma), 1e-6)
+    if value <= floor:
+        return 0.0
+    scaled = (value - floor) / (1.0 - floor)
+    return float(np.clip(scaled**gamma, 0.0, 1.0))
+
+
+def _cosine_sim(a, b) -> float:
+    av = np.asarray(a, dtype=np.float32)
+    bv = np.asarray(b, dtype=np.float32)
+    if av.size == 0 or bv.size == 0 or av.size != bv.size:
+        return 0.0
+    denom = float(np.linalg.norm(av) * np.linalg.norm(bv))
+    if denom <= 1e-8:
+        return 0.0
+    return float(np.clip(np.dot(av, bv) / denom, 0.0, 1.0))
+
+
+def _geometry_sim(a, b) -> float:
+    av = np.asarray(a, dtype=np.float32)
+    bv = np.asarray(b, dtype=np.float32)
+    if av.size == 0 or bv.size == 0 or av.size != bv.size:
+        return 0.0
+    mean_abs_diff = float(np.mean(np.abs(av - bv)))
+    return float(np.exp(-mean_abs_diff / 0.25))
+
+
+def _pair_record(query_id: int, candidate_id: int, query: Dict, candidate: Dict, comp: Dict) -> tuple:
+    return (
+        float(comp["score"]),
+        int(query_id),
+        int(candidate_id),
+        query,
+        candidate,
+        comp,
+    )
+
+
+def _ranked_matches(pair_records: list[tuple]) -> list[Dict]:
+    matches = []
+    for rank, (_, query_id, candidate_id, qt, ct, comp) in enumerate(pair_records, 1):
+        matches.append({
+            "rank": rank,
+            "query_token_id": query_id,
+            "candidate_token_id": candidate_id,
+            "query_token": qt,
+            "candidate_token": ct,
+            **comp,
+        })
+    return matches
+
+
+def _token_topk_matches(pair_records: list[tuple], query_count: int, top_k: int) -> list[list[Dict]]:
+    if top_k <= 0:
+        return [[] for _ in range(query_count)]
+    grouped = [[] for _ in range(query_count)]
+    for record in pair_records:
+        _, query_id, _, _, _, _ = record
+        if len(grouped[query_id]) >= top_k:
+            continue
+        grouped[query_id].append(record)
+    return [_ranked_matches(items) for items in grouped]
+
+
+def _greedy_one_to_one_matches(pair_records: list[tuple]) -> list[Dict]:
+    matched_queries = set()
+    matched_candidates = set()
+    selected = []
+    for record in pair_records:
+        _, query_id, candidate_id, _, _, _ = record
+        if query_id in matched_queries or candidate_id in matched_candidates:
+            continue
+        matched_queries.add(query_id)
+        matched_candidates.add(candidate_id)
+        selected.append(record)
+    return _ranked_matches(selected)

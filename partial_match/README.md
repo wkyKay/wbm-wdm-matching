@@ -44,7 +44,6 @@ partial_match/
     ├── __init__.py
     ├── run_proposal_local_retrieval.py
     ├── evaluate_proposal_retrieval.py
-    ├── visualize_retrieval_compact_steps.py
     └── visualize_topk_retrieval.py
 ```
 
@@ -213,7 +212,7 @@ python3 partial_match/cluster_test/compare_all_methods.py
 
 ## Proposal-based Local Retrieval 系统测试
 
-当前 proposal retrieval baseline 使用 `retrieval_compact` proposal、手工描述子和局部 token matching。推荐使用一键入口完成检索、评估和 TopK review 图生成：
+当前 proposal retrieval baseline 使用 `arc-ring-residual` proposal、Zernike/几何描述子、硬门槛和贪心一对一局部匹配。推荐使用一键入口完成检索和 TopK review 图生成：
 
 ```bash
 cd wbm-wdm-matching
@@ -252,19 +251,12 @@ candidate pool = artifacts/splits/wm38k_seed2026_test_candidates_1000.csv 中每
 official metrics = label_metrics.json / label_metrics_flat.csv
 ```
 
-如果需要同时生成 proposal 分步图，增加：
-
-```bash
---save-step-figures --step-samples 24
-```
-
 上述 pipeline 会依次调用 `scripts/` 下的 helper：
 
 ```text
 run_proposal_local_retrieval.py
 evaluate_proposal_retrieval.py
 visualize_topk_retrieval.py
-visualize_retrieval_compact_steps.py
 ```
 
 输出目录示例：

@@ -647,16 +647,6 @@ clusters = cluster(
 )
 ```
 
-逐步可视化由 root pipeline 可选生成：
-
-```bash
-python3 partial_match/run_proposal_retrieval_pipeline.py \
-  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
-  --out-dir ../artifacts/proposal_based/system_test_512_stratified \
-  --save-step-figures \
-  --step-samples 24
-```
-
 ## 12. Ablation：Group Then Adhesion
 
 `group_then_adhesion` 仍保留为 ablation，但不再作为默认方案。它使用 dilation grouping，容易把相近但不同的 pattern 连成一个 group。

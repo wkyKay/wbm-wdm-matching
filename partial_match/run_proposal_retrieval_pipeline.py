@@ -2,9 +2,8 @@
 """Run the proposal-based local retrieval pipeline (evaluation is done separately).
 
 Pipeline:
-  1) proposal extraction + handcrafted descriptors + local retrieval rankings
+  1) arc-ring proposal extraction + local retrieval rankings
   2) query + top-k retrieved result visualization
-  3) optional retrieval_compact proposal step visualization
 """
 
 import argparse
@@ -17,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # from partial_match.scripts.evaluate_proposal_retrieval import evaluate_proposal_retrieval
 from partial_match.scripts.run_proposal_local_retrieval import run_proposal_local_retrieval
-from partial_match.scripts.visualize_retrieval_compact_steps import visualize_retrieval_compact_steps
 from partial_match.scripts.visualize_topk_retrieval import visualize_topk_retrieval
 # from evaluation.experiment_a.evaluate_rankings import evaluate_rankings_from_files
 
@@ -84,12 +82,6 @@ def main():
     )
 
     parser.add_argument(
-        '--method',
-        type=str,
-        default='retrieval_compact',
-        help='Proposal method passed to partial_match.core.clustering.cluster. Default is retrieval_compact.',
-    )
-    parser.add_argument(
         '--min-area',
         type=int,
         default=5,
@@ -98,14 +90,8 @@ def main():
     parser.add_argument(
         '--top-k-proposals',
         type=int,
-        default=6,
+        default=5,
         help='Maximum number of proposal tokens retained per wafer map.',
-    )
-    parser.add_argument(
-        '--topk-match',
-        type=int,
-        default=1,
-        help='For each query token, average the top-k matched candidate tokens when computing map similarity.',
     )
     parser.add_argument(
         '--sigma-pos',
@@ -113,29 +99,18 @@ def main():
         default=0.35,
         help='Position affinity bandwidth for token matching. Larger values make matching less sensitive to location shifts.',
     )
-    parser.add_argument(
-        '--sigma-area',
-        type=float,
-        default=1.0,
-        help='Area affinity bandwidth for token matching. Larger values make matching less sensitive to area differences.',
-    )
-    parser.add_argument(
-        '--disable-ring-aware',
-        action='store_true',
-        help='Disable the ring-aware proposal token extraction stage.',
-    )
-    parser.add_argument(
-        '--max-defect-ratio-for-ring',
-        type=float,
-        default=0.45,
-        help='Skip ring-aware extraction when defect pixels occupy more than this fraction of the valid wafer area.',
-    )
-    parser.add_argument(
-        '--min-edge-defect-fraction-for-ring',
-        type=float,
-        default=0.45,
-        help='Require at least this fraction of defect pixels to lie near the wafer edge before ring-aware extraction is attempted.',
-    )
+    parser.add_argument('--min-token-score', type=float, default=0.30)
+    parser.add_argument('--min-relative-token-area', type=float, default=0.10)
+    parser.add_argument('--scale-ratio-min', type=float, default=0.50)
+    parser.add_argument('--sigma-scale', type=float, default=1.5)
+    parser.add_argument('--score-shape-weight', type=float, default=0.60)
+    parser.add_argument('--score-position-weight', type=float, default=0.25)
+    parser.add_argument('--score-scale-weight', type=float, default=0.15)
+    parser.add_argument('--scale-area-weight', type=float, default=0.30)
+    parser.add_argument('--scale-pca-weight', type=float, default=0.70)
+    parser.add_argument('--moment-weight', type=float, default=0.75)
+    parser.add_argument('--geometry-weight', type=float, default=0.25)
+    parser.add_argument('--rotation-tolerance', action='store_true')
 
     parser.add_argument(
         '--metric-k',
@@ -186,24 +161,6 @@ def main():
         action='store_true',
         help='Skip generation of query plus TopK retrieval review figures.',
     )
-    parser.add_argument(
-        '--save-step-figures',
-        action='store_true',
-        help='Generate proposal step debugging figures showing raw mask, denoising, ring mask, residual, and final tokens.',
-    )
-    parser.add_argument(
-        '--step-samples',
-        type=int,
-        default=24,
-        help='Maximum number of proposal step figures to generate when save-step-figures is enabled.',
-    )
-    parser.add_argument(
-        '--step-sample-ids',
-        type=int,
-        nargs='*',
-        default=None,
-        help='Optional explicit original dataset ids for proposal step figures. If set, overrides step-samples selection.',
-    )
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
@@ -214,9 +171,7 @@ def main():
     # metrics_path = out_dir / 'metrics_summary.json'
     # label_metrics_path = out_dir / 'label_metrics.json'
     review_dir = out_dir / f'top{args.review_top_k}_review'
-    steps_dir = out_dir / 'proposal_steps'
-
-    print('\n[1/3] Running proposal extraction, descriptors, and local retrieval...', flush=True)
+    print('\n[1/2] Running proposal extraction, descriptors, and local retrieval...', flush=True)
     run_proposal_local_retrieval(argparse.Namespace(
         data_file=args.data_file,
         out=str(rankings_path),
@@ -227,15 +182,21 @@ def main():
         query_manifest=args.query_manifest,
         candidate_manifest=args.candidate_manifest,
         split=args.split,
-        method=args.method,
         min_area=args.min_area,
         top_k_proposals=args.top_k_proposals,
-        topk_match=args.topk_match,
         sigma_pos=args.sigma_pos,
-        sigma_area=args.sigma_area,
-        disable_ring_aware=args.disable_ring_aware,
-        max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-        min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
+        min_token_score=args.min_token_score,
+        min_relative_token_area=args.min_relative_token_area,
+        scale_ratio_min=args.scale_ratio_min,
+        sigma_scale=args.sigma_scale,
+        score_shape_weight=args.score_shape_weight,
+        score_position_weight=args.score_position_weight,
+        score_scale_weight=args.score_scale_weight,
+        scale_area_weight=args.scale_area_weight,
+        scale_pca_weight=args.scale_pca_weight,
+        moment_weight=args.moment_weight,
+        geometry_weight=args.geometry_weight,
+        rotation_tolerance=args.rotation_tolerance,
         save_token_details=True,
         save_match_details=args.save_match_details,
         match_detail_top_queries=args.match_detail_top_queries,
@@ -270,7 +231,7 @@ def main():
     #     print(f'Saved official label metrics to {label_metrics_path}')
 
     if not args.skip_review:
-        print('\n[2/3] Rendering top-k retrieval review figures...', flush=True)
+        print('\n[2/2] Rendering top-k retrieval review figures...', flush=True)
         visualize_topk_retrieval(argparse.Namespace(
             data_file=args.data_file,
             rankings=str(rankings_path),
@@ -280,30 +241,6 @@ def main():
             query_ids=args.review_query_ids,
             min_area=args.min_area,
             top_k_proposals=args.top_k_proposals,
-            disable_ring_aware=args.disable_ring_aware,
-            max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-            min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
-        ))
-
-    if args.save_step_figures:
-        print('\n[3/3] Rendering proposal step figures...', flush=True)
-        visualize_retrieval_compact_steps(argparse.Namespace(
-            data_file=args.data_file,
-            out_dir=str(steps_dir),
-            samples=args.step_samples,
-            sample_ids=args.step_sample_ids,
-            seed=args.seed,
-            min_area=args.min_area,
-            top_k=args.top_k_proposals,
-            edge_r_min=0.65,
-            ring_band_width=0.10,
-            min_ring_area=12,
-            min_ring_angular_coverage=0.16,
-            min_ring_area_ratio=0.12,
-            max_ring_radial_std=0.12,
-            max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-            min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
-            disable_ring_aware=args.disable_ring_aware,
         ))
 
     print('Pipeline finished.')
@@ -314,8 +251,6 @@ def main():
     #     print(f'Official label metrics: {label_metrics_path}')
     if not args.skip_review:
         print(f'Review figures: {review_dir}')
-    if args.save_step_figures:
-        print(f'Proposal step figures: {steps_dir}')
 
 # def _write_flat_metrics(metrics_path, out_path):
 #     metrics = json.loads(metrics_path.read_text())

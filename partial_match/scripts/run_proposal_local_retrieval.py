@@ -10,8 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
-from partial_match.core.clustering import cluster
-from partial_match.core.descriptors import clusters_to_records, explain_map_similarity, map_similarity
+from partial_match.core.arc_ring_retrieval import ArcRingConfig, prepare_tokens, score_tokens, token_row as arc_ring_token_row
 from partial_match.data.data_io import filter_valid_samples, load_wm38k
 from shared.wm38k.candidates import load_candidate_manifest
 from shared.wm38k.manifest import load_query_ids, load_split_manifest
@@ -33,15 +32,21 @@ def parse_args():
     parser.add_argument('--query-manifest', type=str, default=None)
     parser.add_argument('--candidate-manifest', type=str, default=None)
     parser.add_argument('--split', type=str, default='test', choices=['train', 'valid', 'test', 'all'])
-    parser.add_argument('--method', type=str, default='retrieval_compact')
     parser.add_argument('--min-area', type=int, default=5)
-    parser.add_argument('--top-k-proposals', type=int, default=6)
-    parser.add_argument('--topk-match', type=int, default=1)
+    parser.add_argument('--top-k-proposals', type=int, default=5)
     parser.add_argument('--sigma-pos', type=float, default=0.35)
-    parser.add_argument('--sigma-area', type=float, default=1.0)
-    parser.add_argument('--disable-ring-aware', action='store_true')
-    parser.add_argument('--max-defect-ratio-for-ring', type=float, default=0.45)
-    parser.add_argument('--min-edge-defect-fraction-for-ring', type=float, default=0.45)
+    parser.add_argument('--min-token-score', type=float, default=0.30)
+    parser.add_argument('--min-relative-token-area', type=float, default=0.10)
+    parser.add_argument('--scale-ratio-min', type=float, default=0.50)
+    parser.add_argument('--sigma-scale', type=float, default=1.5)
+    parser.add_argument('--score-shape-weight', type=float, default=0.60)
+    parser.add_argument('--score-position-weight', type=float, default=0.25)
+    parser.add_argument('--score-scale-weight', type=float, default=0.15)
+    parser.add_argument('--scale-area-weight', type=float, default=0.30)
+    parser.add_argument('--scale-pca-weight', type=float, default=0.70)
+    parser.add_argument('--moment-weight', type=float, default=0.75)
+    parser.add_argument('--geometry-weight', type=float, default=0.25)
+    parser.add_argument('--rotation-tolerance', action='store_true')
     parser.add_argument('--save-token-details', action='store_true')
     parser.add_argument('--save-match-details', action='store_true')
     parser.add_argument('--match-detail-top-queries', type=int, default=20)
@@ -70,27 +75,18 @@ def run_proposal_local_retrieval(args):
         labels = labels[sample_indices]
         original_indices = original_indices[sample_indices]
 
+    arc_config = _arc_ring_config(args)
     records = []
     descriptor_arrays = {}
     token_rows = []
     for i, raw in enumerate(maps):
         defect_mask = raw == 2
         valid_mask = (raw == 1) | (raw == 2)
-        clusters = cluster(
-            defect_mask,
-            valid_mask,
-            method=args.method,
-            min_area=args.min_area,
-            top_k=args.top_k_proposals,
-            enable_ring_aware=not args.disable_ring_aware,
-            max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-            min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
-        )
-        tokens = clusters_to_records(clusters, raw.shape)
-        for token in tokens:
-            key = f'{int(original_indices[i])}_{token["token_id"]}'
+        tokens = prepare_tokens(defect_mask, valid_mask, arc_config)
+        for token_id, token in enumerate(tokens):
+            key = f'{int(original_indices[i])}_{token_id}'
             descriptor_arrays[key] = token['descriptor'].astype(np.float32)
-            token_rows.append(_token_row(int(original_indices[i]), token))
+            token_rows.append(arc_ring_token_row(int(original_indices[i]), token_id, token))
         records.append({
             'idx': int(original_indices[i]),
             'tokens': tokens,
@@ -109,13 +105,7 @@ def run_proposal_local_retrieval(args):
             candidate = records[j]
             if i == j:
                 continue
-            scores[qi, j] = map_similarity(
-                query['tokens'],
-                candidate['tokens'],
-                sigma_pos=args.sigma_pos,
-                sigma_area=args.sigma_area,
-                topk=args.topk_match,
-            )
+            scores[qi, j] = score_tokens(query['tokens'], candidate['tokens'], arc_config)['score']
         if (qi + 1) % 50 == 0:
             print(f'Scored {qi + 1}/{len(query_positions)} queries')
 
@@ -146,9 +136,7 @@ def run_proposal_local_retrieval(args):
             query_positions,
             rankings,
             scores,
-            sigma_pos=args.sigma_pos,
-            sigma_area=args.sigma_area,
-            topk_match=args.topk_match,
+            arc_config=arc_config,
             max_queries=args.match_detail_top_queries,
             max_candidates=args.match_detail_top_candidates,
         )
@@ -158,6 +146,26 @@ def run_proposal_local_retrieval(args):
         'tokens_path': out_path.parent / 'tokens.csv',
         'descriptors_path': out_path.parent / 'descriptors.npz',
     }
+
+
+def _arc_ring_config(args):
+    return ArcRingConfig(
+        min_area=args.min_area,
+        top_k=args.top_k_proposals,
+        sigma_pos=args.sigma_pos,
+        sigma_scale=getattr(args, 'sigma_scale', 1.5),
+        min_token_score=getattr(args, 'min_token_score', 0.30),
+        min_relative_token_area=getattr(args, 'min_relative_token_area', 0.10),
+        scale_ratio_min=getattr(args, 'scale_ratio_min', 0.50),
+        shape_weight=getattr(args, 'score_shape_weight', 0.60),
+        position_weight=getattr(args, 'score_position_weight', 0.25),
+        scale_weight=getattr(args, 'score_scale_weight', 0.15),
+        scale_area_weight=getattr(args, 'scale_area_weight', 0.30),
+        scale_pca_weight=getattr(args, 'scale_pca_weight', 0.70),
+        moment_weight=getattr(args, 'moment_weight', 0.75),
+        geometry_weight=getattr(args, 'geometry_weight', 0.25),
+        rotation_tolerance=getattr(args, 'rotation_tolerance', False),
+    )
 
 
 def _query_positions(records, query_original_ids):
@@ -213,32 +221,6 @@ def _sample_indices(labels, max_samples, strategy, seed):
     return np.asarray(sorted(selected), dtype=np.int64)
 
 
-def _token_row(map_id, token):
-    cluster = token['cluster']
-    return {
-        'map_id': map_id,
-        'token_id': int(token['token_id']),
-        'geometry_type': token['geometry_type'],
-        'area': float(token['area']),
-        'area_ratio': float(token['area_ratio']),
-        'centroid_row': float(cluster.get('centroid_row', 0.0)),
-        'centroid_col': float(cluster.get('centroid_col', 0.0)),
-        'bbox_row_min': int(cluster.get('bbox_row_min', 0)),
-        'bbox_col_min': int(cluster.get('bbox_col_min', 0)),
-        'bbox_row_max': int(cluster.get('bbox_row_max', 0)),
-        'bbox_col_max': int(cluster.get('bbox_col_max', 0)),
-        'bbox_height': int(cluster.get('bbox_height', 0)),
-        'bbox_width': int(cluster.get('bbox_width', 0)),
-        'compactness': float(cluster.get('compactness', 0.0)),
-        'orientation': float(cluster.get('orientation', 0.0)),
-        'radial_distance_norm': float(cluster.get('radial_distance_norm', 0.0)),
-        'proposal_type': cluster.get('proposal_type', ''),
-        'proposal_source': cluster.get('proposal_source', ''),
-        'angular_coverage': float(cluster.get('angular_coverage', 0.0)),
-        'radial_std': float(cluster.get('radial_std', 0.0)),
-    }
-
-
 def _save_token_details(out_dir, token_rows, descriptor_arrays):
     token_path = out_dir / 'tokens.csv'
     fieldnames = list(token_rows[0].keys()) if token_rows else ['map_id', 'token_id']
@@ -251,8 +233,7 @@ def _save_token_details(out_dir, token_rows, descriptor_arrays):
     print(f'Saved token details to {token_path}')
 
 
-def _save_match_details(out_dir, records, query_positions, rankings, scores, sigma_pos, sigma_area, topk_match,
-                        max_queries, max_candidates):
+def _save_match_details(out_dir, records, query_positions, rankings, scores, arc_config, max_queries, max_candidates):
     path = out_dir / 'match_details.csv'
     fieldnames = [
         'query_id',
@@ -283,14 +264,9 @@ def _save_match_details(out_dir, records, query_positions, rankings, scores, sig
                 if query_pos == cj:
                     continue
                 candidate = records[int(cj)]
-                explanation = explain_map_similarity(
-                    query['tokens'],
-                    candidate['tokens'],
-                    sigma_pos=sigma_pos,
-                    sigma_area=sigma_area,
-                    topk=topk_match,
-                )
-                for match in explanation['matches']:
+                explanation = score_tokens(query['tokens'], candidate['tokens'], arc_config)
+                matches = _legacy_match_rows(explanation['matches'])
+                for match in matches:
                     row = {
                         'query_id': query['idx'],
                         'candidate_id': candidate['idx'],
@@ -303,6 +279,28 @@ def _save_match_details(out_dir, records, query_positions, rankings, scores, sig
                 if rank_out > max_candidates:
                     break
     print(f'Saved match details to {path}')
+
+
+def _legacy_match_rows(matches):
+    rows = []
+    for match in matches:
+        query = match['query_token']
+        candidate = match['candidate_token']
+        rows.append({
+            'query_token_id': int(match['query_token_id']),
+            'candidate_token_id': int(match['candidate_token_id']),
+            'match_rank': int(match['rank']),
+            'query_type': query.get('geometry_type', 'irregular'),
+            'candidate_type': candidate.get('geometry_type', 'irregular'),
+            'query_area': float(query.get('area', 0.0)),
+            'candidate_area': float(candidate.get('area', 0.0)),
+            'score': float(match['score']),
+            'shape_sim': float(match['shape_sim']),
+            'position_affinity': float(match['position_affinity']),
+            'scale_affinity': float(match['scale_affinity']),
+            'type_affinity': float(match['type_affinity']),
+        })
+    return rows
 
 
 if __name__ == '__main__':

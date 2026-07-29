@@ -37,7 +37,7 @@ CLASS_NAMES = (
     "near-full",
 )
 DEFAULT_DATA_FILE = WORKSPACE_ROOT / "data" / "wm38k" / "Wafer_Map_Datasets.npz"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "mixed38k_same_label_retrieval_10_geometry"
+DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "mixed38k_same_label_retrieval_10_moment_fix"
 TOP_KS = (10, 5, 3, 1)
 TOKEN_COLORS = (    
     "#2563eb",

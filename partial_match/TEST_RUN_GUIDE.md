@@ -32,22 +32,6 @@ python3 partial_match/run_proposal_retrieval_pipeline.py \
   --metric-k 1 3 5 10
 ```
 
-Also generate proposal step figures:
-
-```bash
-python3 partial_match/run_proposal_retrieval_pipeline.py \
-  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
-  --out-dir ../artifacts/proposal_based/system_test_512_stratified \
-  --max-samples 512 \
-  --sample-strategy stratified \
-  --seed 42 \
-  --review-max-queries 64 \
-  --review-top-k 3 \
-  --metric-k 1 3 5 10 \
-  --save-step-figures \
-  --step-samples 24
-```
-
 Output files:
 
 ```text
@@ -58,7 +42,7 @@ Output files:
 ├── metrics_summary.json
 ├── metrics_summary_flat.csv
 ├── top3_review/
-└── proposal_steps/          # only when --save-step-figures is used
+└── top3_review/
 ```
 
 Run help:
@@ -109,17 +93,6 @@ python3 partial_match/scripts/visualize_topk_retrieval.py \
   --top-k 3
 ```
 
-### C-4. Proposal Step Figures
-
-Generate proposal debugging figures:
-
-```bash
-python3 partial_match/scripts/visualize_retrieval_compact_steps.py \
-  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
-  --out-dir ../artifacts/proposal_based/system_test_512_stratified/proposal_steps \
-  --samples 24
-```
-
 ## D. Common Options
 
 Change the retrieval pool size:
@@ -138,10 +111,4 @@ Show query + Top5 instead of query + Top3:
 
 ```bash
 --review-top-k 5
-```
-
-Generate proposal step figures for specific original sample ids:
-
-```bash
---save-step-figures --step-sample-ids 141 437 491
 ```

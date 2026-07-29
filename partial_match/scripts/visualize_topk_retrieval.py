@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from partial_match.core.clustering import cluster
+from partial_match.core.arc_ring_retrieval import ArcRingConfig, prepare_tokens
 from partial_match.data.data_io import CLASS_NAMES, filter_valid_samples, load_wm38k
 
 
@@ -34,10 +34,7 @@ def parse_args():
     parser.add_argument('--max-queries', type=int, default=50)
     parser.add_argument('--query-ids', type=int, nargs='*', default=None)
     parser.add_argument('--min-area', type=int, default=5)
-    parser.add_argument('--top-k-proposals', type=int, default=6)
-    parser.add_argument('--disable-ring-aware', action='store_true')
-    parser.add_argument('--max-defect-ratio-for-ring', type=float, default=0.45)
-    parser.add_argument('--min-edge-defect-fraction-for-ring', type=float, default=0.45)
+    parser.add_argument('--top-k-proposals', type=int, default=5)
     return parser.parse_args()
 
 
@@ -120,15 +117,10 @@ def _clusters_for_map(map_id, raw, token_cache, args):
         return token_cache[map_id]
     defect_mask = raw == 2
     valid_mask = (raw == 1) | (raw == 2)
-    clusters = cluster(
+    clusters = prepare_tokens(
         defect_mask,
         valid_mask,
-        method='retrieval_compact',
-        min_area=args.min_area,
-        top_k=args.top_k_proposals,
-        enable_ring_aware=not args.disable_ring_aware,
-        max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-        min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
+        ArcRingConfig(min_area=args.min_area, top_k=args.top_k_proposals),
     )
     token_cache[map_id] = clusters
     return clusters

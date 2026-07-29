@@ -28,15 +28,21 @@ def main():
         query_manifest=args.b_queries,
         candidate_manifest=args.b_candidates,
         split='test',
-        method=args.method,
         min_area=args.min_area,
         top_k_proposals=args.top_k_proposals,
-        topk_match=args.topk_match,
         sigma_pos=args.sigma_pos,
-        sigma_area=args.sigma_area,
-        disable_ring_aware=args.disable_ring_aware,
-        max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-        min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
+        min_token_score=args.min_token_score,
+        min_relative_token_area=args.min_relative_token_area,
+        scale_ratio_min=args.scale_ratio_min,
+        sigma_scale=args.sigma_scale,
+        score_shape_weight=args.score_shape_weight,
+        score_position_weight=args.score_position_weight,
+        score_scale_weight=args.score_scale_weight,
+        scale_area_weight=args.scale_area_weight,
+        scale_pca_weight=args.scale_pca_weight,
+        moment_weight=args.moment_weight,
+        geometry_weight=args.geometry_weight,
+        rotation_tolerance=args.rotation_tolerance,
         save_token_details=args.save_token_details,
         save_match_details=args.save_match_details,
         match_detail_top_queries=args.match_detail_top_queries,
@@ -62,15 +68,21 @@ def parse_args():
     parser.add_argument('--b-preferences', type=str, required=True)
     parser.add_argument('--out-dir', type=str, default='artifacts/preference_b/partial_match')
     parser.add_argument('--seed', type=int, default=2026)
-    parser.add_argument('--method', type=str, default='retrieval_compact')
     parser.add_argument('--min-area', type=int, default=5)
-    parser.add_argument('--top-k-proposals', type=int, default=6)
-    parser.add_argument('--topk-match', type=int, default=1)
+    parser.add_argument('--top-k-proposals', type=int, default=5)
     parser.add_argument('--sigma-pos', type=float, default=0.35)
-    parser.add_argument('--sigma-area', type=float, default=1.0)
-    parser.add_argument('--disable-ring-aware', action='store_true')
-    parser.add_argument('--max-defect-ratio-for-ring', type=float, default=0.45)
-    parser.add_argument('--min-edge-defect-fraction-for-ring', type=float, default=0.45)
+    parser.add_argument('--min-token-score', type=float, default=0.30)
+    parser.add_argument('--min-relative-token-area', type=float, default=0.10)
+    parser.add_argument('--scale-ratio-min', type=float, default=0.50)
+    parser.add_argument('--sigma-scale', type=float, default=1.5)
+    parser.add_argument('--score-shape-weight', type=float, default=0.60)
+    parser.add_argument('--score-position-weight', type=float, default=0.25)
+    parser.add_argument('--score-scale-weight', type=float, default=0.15)
+    parser.add_argument('--scale-area-weight', type=float, default=0.30)
+    parser.add_argument('--scale-pca-weight', type=float, default=0.70)
+    parser.add_argument('--moment-weight', type=float, default=0.75)
+    parser.add_argument('--geometry-weight', type=float, default=0.25)
+    parser.add_argument('--rotation-tolerance', action='store_true')
     parser.add_argument('--save-token-details', action='store_true')
     parser.add_argument('--save-match-details', action='store_true')
     parser.add_argument('--match-detail-top-queries', type=int, default=20)
