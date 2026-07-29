@@ -283,9 +283,9 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--proposal-mode",
-        choices=("cc", "compact", "tangential-ring", "sparse-density", "auto"),
+        choices=("cc", "compact", "arc-ring-residual", "tangential-ring", "sparse-density", "auto"),
         default="cc",
-        help="Proposal mode: cc, compact, tangential-ring for raw-pixel rings with short angular-gap bridging, sparse-density, or auto.",
+        help="Proposal mode: cc, compact, arc-ring-residual, tangential-ring for raw-pixel rings with short angular-gap bridging, sparse-density, or auto.",
     )
     parser.add_argument(
         "--proposal-rotation-tolerance",
