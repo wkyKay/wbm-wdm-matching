@@ -69,7 +69,7 @@ def write_patch_manifest(path, tokens, patch_config):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open('w', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=['map_id', 'token_id', 'proposal_signature', 'patch_size', 'window_size'])
+        writer = csv.DictWriter(f, fieldnames=['map_id', 'token_id', 'proposal_signature', 'patch_size'])
         writer.writeheader()
         for token in tokens:
             writer.writerow({
@@ -77,5 +77,4 @@ def write_patch_manifest(path, tokens, patch_config):
                 'token_id': token.token_id,
                 'proposal_signature': token.proposal_signature,
                 'patch_size': patch_config.patch_size,
-                'window_size': patch_config.window_size,
             })

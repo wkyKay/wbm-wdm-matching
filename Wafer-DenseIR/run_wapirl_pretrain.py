@@ -7,34 +7,25 @@ import sys
 import numpy as np
 import torch
 
-from configs.network_configs import RESNET_BACKBONE_CONFIGS, VIT_BACKBONE_CONFIGS
 from configs.task_configs import WaPIRLPretrainConfig
 from datasets.wapirl_wm38k import WM38KForWaPIRL
-from models.head import LinearHead, MLPHead
-from models.resnet import ResNetBackbone
-from models.vit import ViTTinyBackbone
-from tasks.wapirl_pretrain import MemoryBank, WaPIRLPretrain
+from models.proposed_encoder import build_dense_encoder
 from utils.logging import get_logger
-from utils.loss import WaPIRLLoss
-from utils.optimization import get_optimizer, get_scheduler
 
-
-PROJECTOR_TYPES = {
-    'linear': LinearHead,
-    'mlp': MLPHead,
-}
+from proposed.models.head import MLPHead
+from proposed.tasks.cluster_pretrain import ClusterPretrainTask, MemoryBank
+from proposed.utils.loss import ClusterNCELoss
+from proposed.utils.optimization import get_optimizer, get_scheduler
 
 
 def main():
     config = WaPIRLPretrainConfig.parse_arguments()
-    _normalize_backbone_config(config)
     _seed_everything(config.seed)
     config.save()
 
     device = _get_device(config.device)
     _configure_cuda(device)
     data_file = _resolve_path(config.data_file)
-    in_channels = 2 if config.decouple_input else 1
 
     train_set = _build_dataset(config, data_file, split='train')
     valid_set = _build_dataset(config, data_file, split='valid')
@@ -45,10 +36,11 @@ def main():
         valid_set = _build_dataset(config, data_file, split='valid')
         setattr(config, 'quality_filter', True)
 
-    backbone = _build_backbone(config, in_channels)
-    projector = PROJECTOR_TYPES[config.projector_type](backbone.out_channels, config.projector_size)
+    backbone = build_dense_encoder(config.encoder, config.embedding_dim, config.encoder_width)
+    projector = MLPHead(config.embedding_dim, config.projector_size)
     if config.pretrained_model_file is not None:
-        backbone.load_weights_from_checkpoint(config.pretrained_model_file, key=config.pretrained_model_key)
+        from models.proposed_encoder import load_encoder_checkpoint
+        load_encoder_checkpoint(backbone, config.pretrained_model_file, key=config.pretrained_model_key)
 
     params = [{'params': backbone.parameters()}, {'params': projector.parameters()}]
     optimizer = get_optimizer(
@@ -70,26 +62,25 @@ def main():
         device=device,
         weight=config.memory_momentum,
     )
-    task = WaPIRLPretrain(
-        backbone=backbone,
+    task = ClusterPretrainTask(
+        encoder=backbone,
         projector=projector,
         memory=memory,
         optimizer=optimizer,
         scheduler=scheduler,
-        loss_function=WaPIRLLoss(temperature=config.temperature),
+        loss_function=ClusterNCELoss(temperature=config.temperature),
         device=device,
         output_dir=config.output_dir,
         loss_weight=config.loss_weight,
         num_negatives=config.num_negatives,
-        write_summary=config.write_summary,
     )
 
     logger = get_logger(os.path.join(config.output_dir, 'main.log'))
     logger.info(f'Data file: {data_file}')
     logger.info(f'Train samples after filtering: {len(train_set)}')
     logger.info(f'Valid samples after filtering: {len(valid_set)}')
-    logger.info(f'Backbone: {config.model_name}')
-    logger.info(f'Projector: {config.projector_type}.{config.projector_size}')
+    logger.info(f'Encoder: {config.model_name}.{config.embedding_dim}')
+    logger.info(f'Projector: mlp.{config.projector_size}')
     logger.info(f'Device: {device}')
     logger.info(f'Output directory: {config.output_dir}')
     print(f'[Device] {device}')
@@ -118,11 +109,6 @@ def _build_dataset(config, data_file, split):
         valid_ratio=config.valid_ratio,
         seed=config.seed,
         max_samples=config.max_samples if split == 'train' else None,
-        decouple_input=config.decouple_input,
-        augmentation=config.augmentation,
-        crop_min_scale=config.crop_min_scale,
-        noise_prob=config.noise_prob,
-        rotate_prob=config.rotate_prob,
         quality_filter=config.quality_filter,
         min_defect_pixels=config.min_defect_pixels,
         min_defect_ratio=config.min_defect_ratio,
@@ -151,23 +137,6 @@ def _configure_cuda(device):
         return
     torch.backends.cudnn.benchmark = True
     torch.cuda.set_device(device.index if device.index is not None else 0)
-
-
-def _build_backbone(config, in_channels):
-    if config.backbone_type == 'resnet':
-        return ResNetBackbone(RESNET_BACKBONE_CONFIGS[config.backbone_config], in_channels=in_channels)
-    if config.backbone_type == 'vit':
-        return ViTTinyBackbone(
-            VIT_BACKBONE_CONFIGS[config.backbone_config],
-            in_channels=in_channels,
-            img_size=config.input_size,
-        )
-    raise ValueError(f'Unknown backbone_type: {config.backbone_type}')
-
-
-def _normalize_backbone_config(config):
-    if config.backbone_type == 'vit' and config.backbone_config == '18':
-        config.backbone_config = 'tiny'
 
 
 def _resolve_path(path):

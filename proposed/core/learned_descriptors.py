@@ -55,11 +55,24 @@ def token_to_record(token: ClusterToken, embedding: np.ndarray):
         'map_id': int(token.map_id),
         'token_id': int(token.token_id),
         'embedding': embedding.astype(np.float32),
+        'descriptor': embedding.astype(np.float32),
         'shape_descriptor': embedding.astype(np.float32),
         'area': float(token.area),
         'area_ratio': float(token.area_ratio),
-        'pos': np.asarray([token.centroid_row / 52.0, token.centroid_col / 52.0], dtype=np.float32),
+        'support_area_ratio': float(token.area_ratio),
+        'pca_lambda1': float(token.pca_lambda1),
+        'pca_lambda2': float(token.pca_lambda2),
+        'pos': np.asarray([
+            token.centroid_row / max(token.map_height, 1),
+            token.centroid_col / max(token.map_width, 1),
+        ], dtype=np.float32),
         'geometry_type': token.geometry_type,
+        'radial_distance_norm': float(token.radial_distance_norm),
+        'angular_coverage': float(token.angular_coverage),
+        'max_angular_run_coverage': float(token.max_angular_run_coverage),
+        'radial_std': float(token.radial_std),
+        'ring_arc_angular_coverage': float(token.ring_arc_angular_coverage),
+        'ring_contour_angular_coverage': float(token.ring_contour_angular_coverage),
         'cluster': token,
     }
 
@@ -90,6 +103,8 @@ def token_rows(records):
             'token_id': token.token_id,
             'area': token.area,
             'area_ratio': token.area_ratio,
+            'pca_lambda1': token.pca_lambda1,
+            'pca_lambda2': token.pca_lambda2,
             'centroid_row': token.centroid_row,
             'centroid_col': token.centroid_col,
             'bbox_row_min': token.bbox_row_min,
@@ -105,4 +120,3 @@ def token_rows(records):
             'proposal_signature': token.proposal_signature,
         })
     return rows
-

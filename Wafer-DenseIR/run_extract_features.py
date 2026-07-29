@@ -6,17 +6,14 @@ import sys
 import numpy as np
 import torch
 
-from configs.network_configs import RESNET_BACKBONE_CONFIGS, VIT_BACKBONE_CONFIGS
 from configs.task_configs import DenseRetrievalConfig
 from datasets.wm38k import WM38K
-from models.resnet import ResNetBackbone
-from models.vit import ViTTinyBackbone
+from models.proposed_encoder import build_dense_encoder, load_encoder_checkpoint
 from tasks.dense_retrieval import DenseRetrieval
 
 
 def main():
     config = DenseRetrievalConfig.parse_arguments()
-    _normalize_backbone_config(config)
     config.save()
     device = _get_device(config.device)
     data_file = _resolve_path(config.data_file)
@@ -29,14 +26,12 @@ def main():
         valid_ratio=config.valid_ratio,
         seed=config.seed,
         max_samples=config.max_samples,
-        decouple_input=config.decouple_input,
         split_manifest=_resolve_optional_path(config.split_manifest),
         query_manifest=_resolve_optional_path(config.query_manifest),
     )
-    in_channels = 2 if config.decouple_input else 1
-    backbone = _build_backbone(config, in_channels)
+    backbone = build_dense_encoder(config.encoder, config.embedding_dim, config.encoder_width)
     if config.pretrained_model_file is not None:
-        backbone.load_weights_from_checkpoint(config.pretrained_model_file, key=config.pretrained_model_key)
+        load_encoder_checkpoint(backbone, config.pretrained_model_file, key=config.pretrained_model_key)
 
     task = DenseRetrieval(backbone=backbone, device=device, output_dir=config.output_dir)
     records = task.extract_features(
@@ -49,18 +44,6 @@ def main():
     )
     task.save_features(records)
     print(f'Feature file: {os.path.join(config.output_dir, "dense_features.npz")}')
-
-
-def _build_backbone(config, in_channels):
-    if config.backbone_type == 'resnet':
-        return ResNetBackbone(RESNET_BACKBONE_CONFIGS[config.backbone_config], in_channels=in_channels)
-    if config.backbone_type == 'vit':
-        return ViTTinyBackbone(
-            VIT_BACKBONE_CONFIGS[config.backbone_config],
-            in_channels=in_channels,
-            img_size=config.input_size,
-        )
-    raise ValueError(f'Unknown backbone_type: {config.backbone_type}')
 
 
 def _get_device(name):
@@ -76,11 +59,6 @@ def _get_device(name):
     else:
         print('[Device] GPU not available, falling back to CPU')
     return device
-
-
-def _normalize_backbone_config(config):
-    if config.backbone_type == 'vit' and config.backbone_config == '18':
-        config.backbone_config = 'tiny'
 
 
 def _resolve_path(path):

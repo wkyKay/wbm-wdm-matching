@@ -11,6 +11,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from tasks.base import Task
+from models.proposed_encoder import extract_dense_features
 from utils.matching import dense_match, dense_tokenize, make_heatmap, _pair_score_gpu
 from utils.metrics import retrieval_metrics
 from utils.visualization import save_retrieval_explanation
@@ -37,7 +38,7 @@ class DenseRetrieval(Task):
         start_time = time.time()
         for batch in tqdm(loader, desc='Extracting features', unit='batch', ncols=100, leave=False):
             x = batch['x'].to(self.device, non_blocking=use_pin)
-            fmap = self.backbone(x).detach().cpu()
+            fmap = extract_dense_features(self.backbone, x).detach().cpu()
             for i in range(fmap.shape[0]):
                 tokens = dense_tokenize(
                     fmap[i],

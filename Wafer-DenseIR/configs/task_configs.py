@@ -58,7 +58,7 @@ class ConfigBase(object):
 
     @property
     def model_name(self):
-        return f'{self.backbone_type}.{self.backbone_config}'
+        return self.encoder
 
     @property
     def output_dir(self):
@@ -83,7 +83,7 @@ class ConfigBase(object):
         parser = argparse.ArgumentParser("Data", add_help=False)
         parser.add_argument('--data', type=str, default='wm38k')
         parser.add_argument('--data_file', type=str, default='data/wm38k/Wafer_Map_Datasets.npz')
-        parser.add_argument('--input_size', type=int, default=96)
+        parser.add_argument('--input_size', type=int, default=64)
         parser.add_argument('--split', type=str, default='test', choices=('train', 'valid', 'test', 'all'))
         parser.add_argument('--train_ratio', type=float, default=0.7)
         parser.add_argument('--valid_ratio', type=float, default=0.1)
@@ -97,11 +97,9 @@ class ConfigBase(object):
     @staticmethod
     def model_parser():
         parser = argparse.ArgumentParser("Backbone", add_help=False)
-        parser.add_argument('--backbone_type', type=str, default='resnet', choices=('resnet', 'vit'))
-        parser.add_argument('--backbone_config', type=str, default='18')
-        parser.add_argument('--decouple_input', dest='decouple_input', action='store_true')
-        parser.add_argument('--no_decouple_input', dest='decouple_input', action='store_false')
-        parser.set_defaults(decouple_input=True)
+        parser.add_argument('--encoder', type=str, default='resnet18', choices=('simple', 'resnet18'))
+        parser.add_argument('--embedding_dim', type=int, default=256)
+        parser.add_argument('--encoder_width', type=int, default=32)
         parser.add_argument('--pretrained_model_file', type=str, default=None)
         parser.add_argument('--pretrained_model_key', type=str, default=None)
         parser.add_argument('--device', type=str, default='cuda')
@@ -174,25 +172,19 @@ class WaPIRLPretrainConfig(ConfigBase):
     @staticmethod
     def augmentation_parser():
         parser = argparse.ArgumentParser("WaPIRL augmentation", add_help=False)
-        parser.add_argument('--augmentation', type=str, default='crop_noise_rotate',
-                            choices=('none', 'crop', 'crop_noise', 'crop_rotate', 'crop_noise_rotate'))
-        parser.add_argument('--crop_min_scale', type=float, default=0.85)
-        parser.add_argument('--noise_prob', type=float, default=0.002)
-        parser.add_argument('--rotate_prob', type=float, default=0.5)
         return parser
 
     @staticmethod
     def optimization_parser():
         parser = argparse.ArgumentParser("WaPIRL optimization", add_help=False)
         parser.add_argument('--epochs', type=int, default=100)
-        parser.add_argument('--learning_rate', type=float, default=0.03)
+        parser.add_argument('--learning_rate', type=float, default=1e-3)
         parser.add_argument('--weight_decay', type=float, default=1e-4)
         parser.add_argument('--momentum', type=float, default=0.9)
-        parser.add_argument('--optimizer', type=str, default='sgd', choices=('sgd', 'adamw'))
-        parser.add_argument('--scheduler', type=str, default='cosine', choices=('none', 'cosine'))
-        parser.add_argument('--warmup_epochs', type=int, default=5)
-        parser.add_argument('--projector_type', type=str, default='mlp', choices=('linear', 'mlp'))
-        parser.add_argument('--projector_size', type=int, default=128)
+        parser.add_argument('--optimizer', type=str, default='adamw', choices=('sgd', 'adam', 'adamw'))
+        parser.add_argument('--scheduler', type=str, default='cosine', choices=('none', 'cosine', 'step'))
+        parser.add_argument('--warmup_epochs', type=int, default=0)
+        parser.add_argument('--projector_size', type=int, default=256)
         parser.add_argument('--temperature', type=float, default=0.07)
         parser.add_argument('--loss_weight', type=float, default=0.5)
         parser.add_argument('--num_negatives', type=int, default=1024)

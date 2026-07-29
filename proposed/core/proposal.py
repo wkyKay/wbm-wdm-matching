@@ -12,17 +12,13 @@ from typing import Iterable, List, Sequence, Tuple
 
 import numpy as np
 
-from partial_match.core.clustering import cluster
+from partial_match.core.arc_ring_retrieval import ArcRingConfig, prepare_tokens
 
 
 @dataclass(frozen=True)
 class ProposalConfig:
-    method: str = 'retrieval_compact'
     min_area: int = 5
-    top_k: int = 6
-    enable_ring_aware: bool = True
-    max_defect_ratio_for_ring: float = 0.45
-    min_edge_defect_fraction_for_ring: float = 0.45
+    top_k: int = 5
 
 
 @dataclass(frozen=True)
@@ -30,8 +26,12 @@ class ClusterToken:
     map_id: int
     token_id: int
     pixels: Tuple[Tuple[int, int], ...]
+    map_height: int
+    map_width: int
     area: float
     area_ratio: float
+    pca_lambda1: float
+    pca_lambda2: float
     centroid_row: float
     centroid_col: float
     bbox_row_min: int
@@ -41,6 +41,12 @@ class ClusterToken:
     bbox_height: int
     bbox_width: int
     geometry_type: str
+    radial_distance_norm: float
+    angular_coverage: float
+    max_angular_run_coverage: float
+    radial_std: float
+    ring_arc_angular_coverage: float
+    ring_contour_angular_coverage: float
     proposal_method: str
     proposal_type: str
     proposal_source: str
@@ -57,11 +63,7 @@ class ProposalProvider:
 
 
 class PartialMatchProposalProvider(ProposalProvider):
-    """Adapter around partial_match proposal code.
-
-    This is the only proposed-method module that should call
-    partial_match.core.clustering.cluster directly.
-    """
+    """Adapter around the shared arc-ring proposal protocol."""
 
     def __init__(self, config: ProposalConfig):
         self.config = config
@@ -69,24 +71,18 @@ class PartialMatchProposalProvider(ProposalProvider):
     def extract(self, map_id: int, raw_map: np.ndarray) -> List[ClusterToken]:
         defect_mask = raw_map == 2
         valid_mask = (raw_map == 1) | (raw_map == 2)
-        clusters = cluster(
+        proposals = prepare_tokens(
             defect_mask,
             valid_mask,
-            method=self.config.method,
-            min_area=self.config.min_area,
-            top_k=self.config.top_k,
-            enable_ring_aware=self.config.enable_ring_aware,
-            max_defect_ratio_for_ring=self.config.max_defect_ratio_for_ring,
-            min_edge_defect_fraction_for_ring=self.config.min_edge_defect_fraction_for_ring,
+            ArcRingConfig(min_area=self.config.min_area, top_k=self.config.top_k),
         )
-        h, w = raw_map.shape
-        return [cluster_to_token(map_id, idx, item, (h, w), self.config.method) for idx, item in enumerate(clusters)]
+        return [cluster_to_token(map_id, idx, item, raw_map.shape) for idx, item in enumerate(proposals)]
 
 
-def cluster_to_token(map_id: int, token_id: int, item: dict, map_shape, proposal_method: str) -> ClusterToken:
+def cluster_to_token(map_id: int, token_id: int, item: dict, map_shape) -> ClusterToken:
     pixels = _normalize_pixels(item)
-    h, w = map_shape
     area = float(item.get('area', len(pixels)))
+    proposal_method = 'arc-ring-residual'
     signature = proposal_signature(
         map_id=map_id,
         token_id=token_id,
@@ -99,8 +95,12 @@ def cluster_to_token(map_id: int, token_id: int, item: dict, map_shape, proposal
         map_id=int(map_id),
         token_id=int(token_id),
         pixels=tuple(pixels),
+        map_height=int(map_shape[0]),
+        map_width=int(map_shape[1]),
         area=area,
-        area_ratio=area / max(float(h * w), 1.0),
+        area_ratio=float(item.get('support_area_ratio', 0.0)),
+        pca_lambda1=float(item.get('pca_lambda1', 0.0)),
+        pca_lambda2=float(item.get('pca_lambda2', 0.0)),
         centroid_row=float(item.get('centroid_row', 0.0)),
         centroid_col=float(item.get('centroid_col', 0.0)),
         bbox_row_min=int(item.get('bbox_row_min', 0)),
@@ -110,6 +110,12 @@ def cluster_to_token(map_id: int, token_id: int, item: dict, map_shape, proposal
         bbox_height=int(item.get('bbox_height', 0)),
         bbox_width=int(item.get('bbox_width', 0)),
         geometry_type=str(item.get('geometry_type', 'irregular')),
+        radial_distance_norm=float(item.get('radial_distance_norm', 0.0)),
+        angular_coverage=float(item.get('angular_coverage', 0.0)),
+        max_angular_run_coverage=float(item.get('max_angular_run_coverage', 0.0)),
+        radial_std=float(item.get('radial_std', 0.0)),
+        ring_arc_angular_coverage=float(item.get('ring_arc_angular_coverage', 0.0)),
+        ring_contour_angular_coverage=float(item.get('ring_contour_angular_coverage', 0.0)),
         proposal_method=str(proposal_method),
         proposal_type=str(item.get('proposal_type', '')),
         proposal_source=str(item.get('proposal_source', '')),
@@ -165,8 +171,12 @@ def token_from_row(row: dict) -> ClusterToken:
         map_id=int(row['map_id']),
         token_id=int(row['token_id']),
         pixels=pixels,
+        map_height=int(row.get('map_height', 52)),
+        map_width=int(row.get('map_width', 52)),
         area=float(row['area']),
         area_ratio=float(row['area_ratio']),
+        pca_lambda1=float(row.get('pca_lambda1', 0.0)),
+        pca_lambda2=float(row.get('pca_lambda2', 0.0)),
         centroid_row=float(row['centroid_row']),
         centroid_col=float(row['centroid_col']),
         bbox_row_min=int(row['bbox_row_min']),
@@ -176,6 +186,12 @@ def token_from_row(row: dict) -> ClusterToken:
         bbox_height=int(row['bbox_height']),
         bbox_width=int(row['bbox_width']),
         geometry_type=row['geometry_type'],
+        radial_distance_norm=float(row.get('radial_distance_norm', 0.0)),
+        angular_coverage=float(row.get('angular_coverage', 0.0)),
+        max_angular_run_coverage=float(row.get('max_angular_run_coverage', 0.0)),
+        radial_std=float(row.get('radial_std', 0.0)),
+        ring_arc_angular_coverage=float(row.get('ring_arc_angular_coverage', 0.0)),
+        ring_contour_angular_coverage=float(row.get('ring_contour_angular_coverage', 0.0)),
         proposal_method=row['proposal_method'],
         proposal_type=row.get('proposal_type', ''),
         proposal_source=row.get('proposal_source', ''),
@@ -205,8 +221,9 @@ def _normalize_pixels(item: dict) -> Tuple[Tuple[int, int], ...]:
 
 def _token_columns():
     return [
-        'map_id', 'token_id', 'pixels', 'area', 'area_ratio', 'centroid_row', 'centroid_col',
+        'map_id', 'token_id', 'pixels', 'map_height', 'map_width', 'area', 'area_ratio', 'pca_lambda1', 'pca_lambda2', 'centroid_row', 'centroid_col',
         'bbox_row_min', 'bbox_row_max', 'bbox_col_min', 'bbox_col_max', 'bbox_height', 'bbox_width',
-        'geometry_type', 'proposal_method', 'proposal_type', 'proposal_source', 'proposal_signature',
+        'geometry_type', 'radial_distance_norm', 'angular_coverage', 'max_angular_run_coverage', 'radial_std',
+        'ring_arc_angular_coverage', 'ring_contour_angular_coverage',
+        'proposal_method', 'proposal_type', 'proposal_source', 'proposal_signature',
     ]
-

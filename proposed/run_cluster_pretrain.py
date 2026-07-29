@@ -17,7 +17,7 @@ from proposed.core.cluster_patches import PatchBuilder, PatchConfig
 from proposed.core.proposal import PartialMatchProposalProvider, ProposalConfig, save_proposal_config
 from proposed.datasets.cluster_contrastive import ClusterContrastiveDataset, write_patch_manifest
 from proposed.datasets.wm38k_maps import load_split_records
-from proposed.models.encoder import ClusterEncoder
+from proposed.models.encoder import build_encoder
 from proposed.models.head import MLPHead
 from proposed.tasks.cluster_pretrain import ClusterPretrainTask, MemoryBank
 from proposed.utils.logging import get_logger
@@ -33,14 +33,10 @@ def main():
     _save_config(out_dir / 'configs.json', vars(args))
 
     proposal_config = ProposalConfig(
-        method=args.proposal_method,
         min_area=args.min_area,
         top_k=args.top_k_proposals,
-        enable_ring_aware=not args.disable_ring_aware,
-        max_defect_ratio_for_ring=args.max_defect_ratio_for_ring,
-        min_edge_defect_fraction_for_ring=args.min_edge_defect_fraction_for_ring,
     )
-    patch_config = PatchConfig(patch_size=args.patch_size, window_size=args.patch_window_size)
+    patch_config = PatchConfig(patch_size=args.patch_size)
     save_proposal_config(out_dir / 'proposal_config.json', proposal_config)
     _save_config(out_dir / 'patch_config.json', asdict(patch_config))
 
@@ -75,7 +71,7 @@ def main():
 
     print('Initializing model and optimizer...', flush=True)
     device = _get_device(args.device)
-    encoder = ClusterEncoder(in_channels=3, embedding_dim=args.embedding_dim, width=args.encoder_width)
+    encoder = build_encoder(args.encoder, in_channels=3, embedding_dim=args.embedding_dim, width=args.encoder_width)
     projector = MLPHead(args.embedding_dim, args.projector_size)
     optimizer = get_optimizer(
         [{'params': encoder.parameters()}, {'params': projector.parameters()}],
@@ -121,16 +117,12 @@ def parse_args():
     parser.add_argument('--split-manifest', type=str, required=True)
     parser.add_argument('--split', type=str, default='train')
     parser.add_argument('--valid-split', type=str, default='valid')
-    parser.add_argument('--proposal-method', type=str, default='retrieval_compact')
     parser.add_argument('--min-area', type=int, default=5)
-    parser.add_argument('--top-k-proposals', type=int, default=6)
-    parser.add_argument('--disable-ring-aware', action='store_true')
-    parser.add_argument('--max-defect-ratio-for-ring', type=float, default=0.45)
-    parser.add_argument('--min-edge-defect-fraction-for-ring', type=float, default=0.45)
-    parser.add_argument('--patch-size', type=int, default=96)
-    parser.add_argument('--patch-window-size', type=int, default=52)
+    parser.add_argument('--top-k-proposals', type=int, default=5)
+    parser.add_argument('--patch-size', type=int, default=64)
+    parser.add_argument('--encoder', choices=['simple', 'resnet18'], default='simple')
     parser.add_argument('--embedding-dim', type=int, default=256)
-    parser.add_argument('--encoder-width', type=int, default=32)
+    parser.add_argument('--encoder-width', type=int, default=32, help='Base width for --encoder simple only.')
     parser.add_argument('--projector-size', type=int, default=256)
     parser.add_argument('--max-train-clusters', type=int, default=None)
     parser.add_argument('--max-valid-clusters', type=int, default=None)

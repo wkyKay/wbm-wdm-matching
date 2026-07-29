@@ -13,8 +13,7 @@ from proposed.core.proposal import ClusterToken
 
 @dataclass(frozen=True)
 class PatchConfig:
-    patch_size: int = 96
-    window_size: int = 52
+    patch_size: int = 64
     channels: int = 3
 
 
@@ -39,8 +38,7 @@ class PatchBuilder:
             if 0 <= r < proposal.shape[0] and 0 <= c < proposal.shape[1]:
                 proposal[r, c] = 1.0
         channels = np.stack([local_defect, proposal, valid], axis=0)
-        crop = _crop_centered(channels, token.centroid_row, token.centroid_col, self.config.window_size)
-        patch = _resize_nearest(crop, self.config.patch_size)
+        patch = _crop_centered(channels, token.centroid_row, token.centroid_col, self.config.patch_size)
         return PatchSample(
             x=patch.astype(np.float32),
             map_id=token.map_id,
@@ -69,9 +67,9 @@ def augment_patch(x: np.ndarray, rng: np.random.Generator, rotate: bool = True, 
     return out.astype(np.float32)
 
 
-def _crop_centered(channels: np.ndarray, center_row: float, center_col: float, window_size: int) -> np.ndarray:
+def _crop_centered(channels: np.ndarray, center_row: float, center_col: float, patch_size: int) -> np.ndarray:
     _, h, w = channels.shape
-    size = int(window_size)
+    size = int(patch_size)
     half = size // 2
     cr = int(round(center_row))
     cc = int(round(center_col))
@@ -87,17 +85,6 @@ def _crop_centered(channels: np.ndarray, center_row: float, center_col: float, w
     if src_r1 > src_r0 and src_c1 > src_c0:
         out[:, dst_r0:dst_r0 + (src_r1 - src_r0), dst_c0:dst_c0 + (src_c1 - src_c0)] = channels[:, src_r0:src_r1, src_c0:src_c1]
     return out
-
-
-def _resize_nearest(x: np.ndarray, size: int) -> np.ndarray:
-    _, h, w = x.shape
-    rr = np.floor(np.arange(size) * h / size).astype(np.int64)
-    cc = np.floor(np.arange(size) * w / size).astype(np.int64)
-    rr = np.clip(rr, 0, h - 1)
-    cc = np.clip(cc, 0, w - 1)
-    return x[:, rr][:, :, cc]
-
-
 def _shift_zero(x: np.ndarray, dr: int, dc: int) -> np.ndarray:
     out = np.zeros_like(x)
     _, h, w = x.shape
@@ -110,4 +97,3 @@ def _shift_zero(x: np.ndarray, dr: int, dc: int) -> np.ndarray:
     if src_r1 > src_r0 and src_c1 > src_c0:
         out[:, dst_r0:dst_r0 + (src_r1 - src_r0), dst_c0:dst_c0 + (src_c1 - src_c0)] = x[:, src_r0:src_r1, src_c0:src_c1]
     return out
-

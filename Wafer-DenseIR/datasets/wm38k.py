@@ -128,6 +128,13 @@ class WM38K(Dataset):
     def _resize_nearest(raw, size):
         if raw.shape[-2:] == (size, size):
             return raw
+        h, w = raw.shape[-2:]
+        if h <= size and w <= size:
+            out = torch.zeros((size, size), dtype=raw.dtype, device=raw.device)
+            r0 = (size - h) // 2
+            c0 = (size - w) // 2
+            out[r0:r0 + h, c0:c0 + w] = raw
+            return out
         x = raw.unsqueeze(0).unsqueeze(0)
         x = F.interpolate(x, size=(size, size), mode='nearest')
         return x.squeeze(0).squeeze(0)
@@ -136,7 +143,8 @@ class WM38K(Dataset):
     def decouple_mask(x):
         valid = x.gt(0).float()
         defect = torch.clamp(x - 1, min=0., max=1.)
-        return torch.stack([defect, valid], dim=0)
+        # DenseIR has no selected proposal; the full defect mask occupies that channel.
+        return torch.stack([defect, defect, valid], dim=0)
 
 
 def _load_manifest_rows(path, split=None):

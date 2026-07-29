@@ -1,204 +1,25 @@
 # Proposed Local Learned Cluster Retrieval
 
-本文档是主方法的内部实现设计文档，用于约束后续代码实现、实验调用和与 baseline 的公平对比；主方法的核心边界是：proposal、显式几何特征和 local token matching 与 `partial_match` 保持一致，cluster embedding 使用 WaPIRL-style 自监督对比学习重新实现，不直接调用 `WaPIRL/` 目录中的代码。
+主方法将每张 wafer map 表示为少量局部缺陷 Token：使用 `arc-ring-residual` proposal 分离外围环/弧与内部残差缺陷，为每个 Token 学习局部形状嵌入，再结合显式位置和尺度信息进行贪心一对一匹配。相较于 `partial_match`，主方法只替换形状描述子：传统基线使用手工 Zernike/moment 与几何描述子，主方法使用 WaPIRL-style 自监督学习的 Token embedding。
 
-## Method Logic
+当前实现复用 `partial_match` 的 `arc-ring-residual` proposal、局部评分函数和 WM38K 数据读取器；对比学习、局部图块构造、编码器及检索入口实现在本目录中。因此 `proposed/` 当前不能在删除 `partial_match/` 后独立运行。
 
-主方法对应 `tasks/plan.md` 中的 `Proposed, local learned cluster retrieval`，目标是在 wafer map 中先提取少量稳定的 defect cluster proposal，再把每张 map 表示成 cluster token set，最后通过局部 token matching 得到 map-level retrieval score。它和 `partial_match` 的差异只应该集中在 cluster 的 shape representation：`partial_match` 使用 handcrafted descriptor，主方法使用 learned cluster embedding，因此 proposal 方法、cluster 的 `area / centroid / bbox / geometry_type` 等显式字段、`area_affinity`、`position_affinity`、`type_affinity`、query-token 加权聚合方式都应保持一致。
+## Run Commands
 
-对比学习部分采用 WaPIRL-style 思路，但训练对象从 whole wafer map 改成由同一个 proposal token 派生出的固定尺寸 masked patch。每个 cluster 生成两种增强视图作为正样本，memory bank 或 batch 内其他 cluster embedding 作为负样本，训练 `encoder + projection head`，保存 checkpoint 时保留 `encoder` 和 `projector`，retrieval 阶段只使用 `encoder` 产生 cluster embedding。该实现应在 `proposed/` 内独立复写，允许参考 `Wafer-DenseIR/tasks/wapirl_pretrain.py` 的训练流程和 `utils/loss.py` 的 NCE 形式，但不要直接 import `WaPIRL/` 或 `Wafer-DenseIR/` 的训练任务代码。
+所有命令从仓库根目录执行。训练与检索必须使用相同的 `--min-area`、`--top-k-proposals`、`--patch-size`、`--encoder` 和 `--embedding-dim`；改变 proposal、局部图块或 encoder 后，应重新训练 checkpoint。
 
-## Data Protocol
-
-所有正式实验必须使用 `shared/` 已经冻结的 manifest，避免每个方法单独抽样导致评价不可比。训练阶段只读取 train split 中的 wafer maps 来生成 cluster crops，并且不使用 pattern label；validation split 用于选择 checkpoint、matching 权重和 proposal 超参数；test split 只用于最终 retrieval ranking，并且必须使用相同的 query manifest 和 candidate manifest。
-
-默认正式 manifest：
-
-```text
-artifacts/splits/wm38k_seed2026_sig_70_10_20.csv
-artifacts/splits/wm38k_seed2026_test_queries_2000.csv
-artifacts/splits/wm38k_seed2026_test_candidates_1000.csv
-```
-
-正式 ranking 输出 schema 与其他方法一致：
-
-```text
-query_id,rank,candidate_id,similarity_score
-```
-
-## Code Structure
-
-建议实现为以下文件结构，其中 `core/proposal.py` 只做轻量 adapter，直接调用 `partial_match.core.clustering.cluster` 以保证主方法和传统 baseline 使用完全相同的 proposal 逻辑；如果未来需要把 proposal 抽到更通用的共享包，应先保证 `partial_match` 和 `proposed` 同时切换到同一个共享实现。设计上要把 proposal、patch 构造、对比学习和 retrieval matching 拆成四层，层与层之间只能通过稳定 token schema 传递数据，避免 proposal 后续修改时牵动 encoder 训练代码。
-
-```text
-proposed/
-├── README_INTERNAL.md
-├── __init__.py
-├── configs/
-│   ├── __init__.py
-│   └── task_configs.py
-├── core/
-│   ├── __init__.py
-│   ├── proposal.py
-│   ├── cluster_patches.py
-│   ├── learned_descriptors.py
-│   └── matching.py
-├── datasets/
-│   ├── __init__.py
-│   ├── wm38k_maps.py
-│   └── cluster_contrastive.py
-├── models/
-│   ├── __init__.py
-│   ├── encoder.py
-│   └── head.py
-├── tasks/
-│   ├── __init__.py
-│   ├── cluster_pretrain.py
-│   └── learned_retrieval.py
-├── utils/
-│   ├── __init__.py
-│   ├── loss.py
-│   ├── logging.py
-│   └── optimization.py
-├── run_cluster_pretrain.py
-└── run_learned_retrieval_pipeline.py
-```
-
-## Module Boundaries
-
-主方法的代码边界应按下面的方向依赖组织，除 `core/proposal.py` 之外，对比学习和检索代码都不应直接 import `partial_match.core.clustering`，这样后续替换 proposal 时只需要改 adapter 或配置，不需要改 dataset、encoder、loss 和 matching 逻辑。
-
-```text
-raw wafer map
- -> ProposalProvider
- -> ClusterToken[]
- -> PatchBuilder
- -> ContrastiveDataset / Encoder
- -> LearnedTokenRecord[]
- -> Matcher
- -> rankings.csv
-```
-
-稳定接口一：`ProposalProvider`。输入是 `map_id`、`raw_map` 和 proposal config，输出是 `List[ClusterToken]`。第一版 `PartialMatchProposalProvider` 内部调用 `partial_match.core.clustering.cluster`，未来如果 proposal 改成新版算法，只新增 `NewProposalProvider` 或修改 provider 内部实现，其他模块仍消费同样的 `ClusterToken` schema。
-
-```python
-class ProposalProvider:
-    def extract(self, map_id: int, raw_map: np.ndarray) -> list[ClusterToken]:
-        ...
-```
-
-稳定接口二：`ClusterToken`。这是 proposal 和 learned encoder 之间的唯一契约，字段应完全来自 proposal 输出或由 proposal 输出确定，patch builder 和 encoder 不允许修改这些字段。建议第一版用 dataclass 或 TypedDict 明确字段，至少包含 `map_id`、`token_id`、`pixels`、`area`、`area_ratio`、`centroid_row`、`centroid_col`、`bbox_row_min`、`bbox_row_max`、`bbox_col_min`、`bbox_col_max`、`geometry_type`、`proposal_method`、`proposal_signature`。
-
-```python
-@dataclass(frozen=True)
-class ClusterToken:
-    map_id: int
-    token_id: int
-    pixels: tuple[tuple[int, int], ...]
-    area: float
-    area_ratio: float
-    centroid_row: float
-    centroid_col: float
-    bbox_row_min: int
-    bbox_row_max: int
-    bbox_col_min: int
-    bbox_col_max: int
-    geometry_type: str
-    proposal_method: str
-    proposal_signature: str
-```
-
-稳定接口三：`PatchBuilder`。输入是 `raw_map` 和 `ClusterToken`，输出固定尺寸 tensor 以及可选 patch metadata。它只能读取 token 字段，不能改变 token 字段；如果 patch 策略从 proposal-centered fixed window 改成 full-map masked input，也只替换 `PatchBuilder`，不修改 proposal provider、contrastive loss 或 retrieval matcher。
-
-```python
-class PatchBuilder:
-    def build(self, raw_map: np.ndarray, token: ClusterToken) -> PatchSample:
-        ...
-```
-
-稳定接口四：`LearnedTokenRecord`。这是 retrieval matching 消费的 token 记录，等价于 `partial_match.core.descriptors.clusters_to_records` 的输出，只把 `shape_descriptor` 替换为 learned embedding。它应包含 `embedding`、`shape_descriptor`、`area`、`area_ratio`、`pos`、`geometry_type`、`cluster`，从而让 `core/matching.py` 能复用同一套 area/position/type/matching 语义。
-
-```python
-@dataclass
-class LearnedTokenRecord:
-    map_id: int
-    token_id: int
-    embedding: np.ndarray
-    shape_descriptor: np.ndarray
-    area: float
-    area_ratio: float
-    pos: np.ndarray
-    geometry_type: str
-    cluster: ClusterToken
-```
-
-## Replaceable Proposal Design
-
-为了让 proposal 后续可插拔，proposal 配置要单独序列化，并且每次训练和检索都要保存当前 proposal 配置到 `proposal_config.json`。对比学习 checkpoint 也必须记录训练时使用的 `proposal_config` 和 `patch_config`，因为 cluster-level encoder 学到的是某一种 token 定义下的表示；如果 proposal 发生语义变化，例如 token 数量、ring-aware 逻辑或粘连拆分逻辑改变，原则上应重新训练 cluster encoder，不能直接把旧 checkpoint 当作同一实验条件下的主方法结果。
-
-缓存也要按边界拆开，避免一个 artifact 隐含多个阶段的状态。建议输出：
-
-```text
-proposal_tokens.csv
-proposal_tokens_meta.json
-cluster_patches_manifest.csv
-cluster_pretrain/best_model.pt
-retrieval/tokens.csv
-retrieval/embeddings.npz
-retrieval/rankings.csv
-```
-
-`proposal_tokens.csv` 是 proposal 阶段产物，可被 contrastive pretrain 和 retrieval 共同读取；`cluster_patches_manifest.csv` 只记录 patch 构造参数和 token 引用，不作为新的 token 定义；`embeddings.npz` 只缓存 learned descriptor，不缓存或覆盖 proposal 字段。后续修改 proposal 时，应只删除或重建 proposal/token 相关缓存，encoder 和 retrieval 代码路径不需要改；后续修改 patch 策略或 encoder 时，不应影响 proposal token metadata。
-
-## Consistency Checks
-
-正式比较前必须提供一个一致性检查脚本或 pipeline 子步骤，建议命名为 `proposed/scripts/check_proposal_consistency.py`，输入 `partial_match` 的 `tokens.csv` 和 `proposed` 的 `proposal_tokens.csv`，检查同一 `map_id, token_id` 下的 `area`、`centroid_row`、`centroid_col`、`bbox_*`、`geometry_type`、`proposal_type`、`proposal_source` 是否一致。对于 `pixels` 这类不适合直接放 CSV 的字段，应使用 `proposal_signature`，例如对排序后的 pixel 坐标和关键配置做稳定 hash。
-
-一致性检查失败时，不能把该结果作为“同 proposal”主实验，只能标为 proposal ablation 或先同步修改 `partial_match`，让两个方法重新共享同一个 proposal provider。
-
-### File Responsibilities
-
-`configs/task_configs.py` 负责解析训练和检索参数，包括 `data_file`、`split_manifest`、`query_manifest`、`candidate_manifest`、proposal 参数、patch 参数、encoder 参数、optimizer 参数和输出目录。这里的参数命名尽量与 `partial_match/run_proposal_retrieval_pipeline.py` 以及 `Wafer-DenseIR/run_wapirl_pretrain.py` 对齐，减少实验脚本维护成本。
-
-`core/proposal.py` 负责定义 `ProposalProvider`、`ClusterToken` 和 `PartialMatchProposalProvider`，把 raw wafer map 转换为 `defect_mask / valid_mask`，然后调用 `partial_match.core.clustering.cluster(..., method='retrieval_compact', min_area=5, top_k=6, enable_ring_aware=True, ...)`，返回与 `partial_match` 一致的 cluster token。该文件不要实现新的 proposal 算法，除非是显式 ablation；正式比较时还应保存 `proposal_signature` 或 token metadata 表，用来确认同一 `map_id` 下的 `token_id / pixels / area / centroid / bbox / geometry_type` 与 `partial_match` 完全一致。
-
-`core/cluster_patches.py` 负责根据已经确定的 cluster `pixels / bbox / centroid` 生成固定尺寸 proposal-centered masked patch，例如 `64x64` 或 `96x96` 的模型输入。这个 patch 只是 learned encoder 的输入视图，不是新的 proposal，也不能回写或修改 token 的 `area / centroid / bbox / pixels` 等几何字段。默认输入建议为 `channel 0 = local defect context`、`channel 1 = proposal mask`、`channel 2 = local valid/context mask`；不要把每个 proposal 的最小 bbox 单独 resize 到同一尺寸作为主方案，因为这种 resize 会改变不同 cluster 的相对尺度和形状比例，导致它与 `partial_match` 的显式面积、bbox 和形状统计不再处在同一个处理语义下。
-
-`datasets/cluster_contrastive.py` 负责在 train split 上抽取所有有效 cluster token，并为每个 token返回 `x`、`x_t`、`idx`、`map_id`、`token_id`、`cluster_meta`。增强只作用于 fixed-size masked patch 的图像视图，不改变 proposal token 本身，不改变 label，不读取 test query/candidate manifest。
-
-`models/encoder.py` 和 `models/head.py` 负责 cluster encoder 与 projection head，第一版建议使用小型 ResNet 或轻量 CNN，输入尺寸与 `cluster_patches.py` 固定，输出 embedding 维度如 `128 / 256`。projection head 只用于对比学习，retrieval 阶段使用 encoder 输出或 encoder 后的 normalized embedding，不使用 projector 输出，除非作为 ablation 单独记录。
-
-`utils/loss.py` 复写 WaPIRL-style NCE loss，输入为 `anchors / positives / negatives`，使用 cosine similarity 和 temperature-scaled cross entropy；如果使用 memory bank，负样本来自 train cluster memory，若使用 batch negatives，则要在文档和 config 中明确模式。
-
-`tasks/cluster_pretrain.py` 负责 memory bank 初始化、train/valid epoch、checkpoint 保存、history 输出和 best checkpoint 选择。best checkpoint 只根据 valid contrastive loss 或 valid top1 proxy 指标选择，不能使用 test label metrics。
-
-`core/learned_descriptors.py` 负责加载 checkpoint，对 train/valid/test 中需要参与检索的 map 提取 proposal tokens，并为每个 token 计算 learned embedding，同时保留和 `partial_match` 一致的 `area`、`area_ratio`、`pos`、`geometry_type`、`cluster` 字段。这里必须先固定 proposal token，再从 token 生成 patch 和 embedding；不能先通过 patch、resize 或模型结果反向影响 token 是否保留、token 面积或 token 位置。该模块应支持从已保存的 `proposal_tokens.csv` 读取 token，避免 retrieval 阶段和 pretrain 阶段因为重复运行 proposal 而出现隐性版本差异。
-
-`core/matching.py` 负责主方法的 token matching，建议从 `partial_match.core.descriptors` 的匹配公式复写或封装为同等逻辑，只把 `shape_sim = handcrafted_descriptor_dot` 替换为 `shape_sim = learned_embedding_cosine`。为保证实验解释清楚，`sigma_pos`、`sigma_area`、`topk_match` 和 query token 权重默认值应与 `partial_match` 一致。
-
-`tasks/learned_retrieval.py` 负责在 fixed query/candidate manifest 上生成 `rankings.csv`，并调用 `evaluation/experiment_a/evaluate_rankings.py` 生成 `label_metrics.json` 和 `label_metrics_flat.csv`。它不负责重新划分数据，也不使用 label 控制排序。
-
-`run_cluster_pretrain.py` 是 cluster-level 对比学习入口，输出 checkpoint、history、config、proposal config、patch config 和可选 embedding 诊断图。`run_learned_retrieval_pipeline.py` 是正式检索入口，输出 `proposal_tokens.csv`、`rankings.csv`、`tokens.csv`、`embeddings.npz`、`match_details.csv`、`label_metrics.json` 和 `label_metrics_flat.csv`。
-
-## Implementation Order
-
-第一步先实现 `core/proposal.py`、`core/cluster_patches.py` 和 `datasets/cluster_contrastive.py`，用 train split 跑一个小样本 smoke test，确认每张 map 的 proposal 数量、token metadata 与 `partial_match` 完全一致，同时确认 patch 尺寸统一且只作为 encoder 输入视图。第二步实现 `utils/loss.py`、`models/encoder.py`、`models/head.py` 和 `tasks/cluster_pretrain.py`，先用 `--max-train-clusters 512 --epochs 1 --device cuda` 的小 GPU 配置确认 checkpoint 可保存。第三步实现 `core/learned_descriptors.py`、`core/matching.py` 和 `tasks/learned_retrieval.py`，在 3 个 query、每个 query 5 个 candidate 的临时 manifest 上验证 ranking schema。第四步接入正式 candidate manifest，运行官方 `evaluation/` 指标，并与 `partial_match` 在相同 query/candidate 下比较。
-
-## Commands
-
-Cluster-level contrastive pretraining on the fixed train split:
+### 1. Contrastive pretraining
 
 ```bash
-cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
 python3 proposed/run_cluster_pretrain.py \
   --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
   --split train \
   --valid-split valid \
-  --proposal-method retrieval_compact \
   --min-area 5 \
-  --top-k-proposals 6 \
-  --patch-size 96 \
+  --top-k-proposals 5 \
+  --patch-size 64 \
+  --encoder resnet18 \
   --embedding-dim 256 \
   --projector-size 256 \
   --batch-size 128 \
@@ -210,27 +31,11 @@ python3 proposed/run_cluster_pretrain.py \
   --out-dir artifacts/proposed/cluster_pretrain/wm38k_seed2026_resnet18
 ```
 
-Small GPU smoke pretraining run:
+最小 smoke test：在上述命令中增加 `--max-train-clusters 512 --max-valid-clusters 128 --epochs 1 --batch-size 32`。
+
+### 2. Experiment A retrieval
 
 ```bash
-cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
-python3 proposed/run_cluster_pretrain.py \
-  --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
-  --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
-  --split train \
-  --valid-split valid \
-  --max-train-clusters 512 \
-  --max-valid-clusters 128 \
-  --epochs 1 \
-  --batch-size 32 \
-  --device cuda \
-  --out-dir artifacts/proposed/propsed_pretrain/resnet18
-```
-
-Formal learned local retrieval using the fixed test query set and controlled candidate pool:
-
-```bash
-
 python3 proposed/run_learned_retrieval_pipeline.py \
   --data-file ../data/wm38k/Wafer_Map_Datasets.npz \
   --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
@@ -239,49 +44,227 @@ python3 proposed/run_learned_retrieval_pipeline.py \
   --checkpoint artifacts/proposed/cluster_pretrain/wm38k_seed2026_resnet18/best_model.pt \
   --checkpoint-key encoder \
   --split test \
-  --proposal-method retrieval_compact \
   --min-area 5 \
-  --top-k-proposals 6 \
-  --patch-size 96 \
-  --topk-match 1 \
+  --top-k-proposals 5 \
+  --patch-size 64 \
+  --encoder resnet18 \
+  --embedding-dim 256 \
   --sigma-pos 0.35 \
-  --sigma-area 1.0 \
-  --metric-k 1 5 10 \
+  --sigma-scale 1.5 \
+  --min-token-score 0.30 \
+  --min-relative-token-area 0.10 \
+  --scale-ratio-min 0.20 \
   --device cuda \
-  --out-dir artifacts/proposed/retrieval/wm38k_seed2026_resnet18_test_candidates_1000/7.5
+  --out-dir artifacts/proposed/retrieval/wm38k_seed2026_resnet18_test_candidates_1000
 ```
 
-Expected formal outputs:
-
-```text
-artifacts/proposed/retrieval/wm38k_seed2026_test_candidates_1000/
-├── configs.json
-├── rankings.csv
-├── tokens.csv
-├── embeddings.npz
-├── match_details.csv
-├── label_metrics.json
-└── label_metrics_flat.csv
-```
-
-Official evaluation can also be run independently:
+### 3. Experiment B retrieval
 
 ```bash
-cd /Users/kayw/Documents/trae_projects/match-test/wbm-wdm-matching
-python3 evaluation/experiment_a/evaluate_rankings.py \
-  --rankings artifacts/proposed/retrieval/wm38k_seed2026_test_candidates_1000/rankings.csv \
-  --split-manifest artifacts/splits/wm38k_seed2026_sig_70_10_20.csv \
-  --query-manifest artifacts/splits/wm38k_seed2026_test_queries_2000.csv \
-  --candidate-manifest artifacts/splits/wm38k_seed2026_test_candidates_1000.csv \
-  --out artifacts/proposed/retrieval/wm38k_seed2026_test_candidates_1000/label_metrics.json \
-  --flat-out artifacts/proposed/retrieval/wm38k_seed2026_test_candidates_1000/label_metrics_flat.csv \
-  --k 1 5 10
+python3 proposed/run_retrieval_B.py \
+  --b-data <experiment-b-data.npz> \
+  --b-split-manifest <experiment-b-split.csv> \
+  --b-queries <experiment-b-queries.csv> \
+  --b-candidates <experiment-b-candidates.csv> \
+  --b-preferences <experiment-b-preferences.csv> \
+  --checkpoint artifacts/proposed/cluster_pretrain/wm38k_seed2026_resnet18/best_model.pt \
+  --checkpoint-key encoder \
+  --encoder resnet18 \
+  --embedding-dim 256 \
+  --device cuda \
+  --out-dir artifacts/preference_b/proposed
 ```
 
-## Fairness Constraints
+## Data Protocol
 
-主方法与 `partial_match` 比较时，必须固定相同的 `proposal-method`、`min-area`、`top-k-proposals`、`topk-match`、`sigma-pos`、`sigma-area`、query manifest 和 candidate manifest；若调整其中任何参数，应同时运行 `partial_match` 的对应配置，或者把该结果标为 ablation。固定尺寸 masked patch 只是 learned descriptor 的输入，不属于 proposal 处理，因此它不能改变 token 划分、token 数量、token 几何字段或 candidate/query 选择；正式结果中应保留 token metadata，便于和 `partial_match` 的 `tokens.csv` 做一致性检查。主方法训练只能使用 train/valid split，不允许用 test label 选择 checkpoint；retrieval 阶段可以读取 test map 图像本身生成 proposal 和 embedding，但不能读取 label 参与排序。所有正式结果以 `evaluation/` 的 `label_metrics.json` 为准，方法内部 metric 只能作为诊断。
+正式实验使用冻结的共享 manifest，避免不同方法采用不同抽样：
 
-## Relationship To Baselines
+```text
+artifacts/splits/wm38k_seed2026_sig_70_10_20.csv
+artifacts/splits/wm38k_seed2026_test_queries_2000.csv
+artifacts/splits/wm38k_seed2026_test_candidates_1000.csv
+```
 
-`partial_match` 是同 proposal、同 local matching、不同 embedding 的传统 baseline，因此它回答 learned cluster embedding 是否优于 handcrafted cluster descriptor。`Wafer-DenseIR` 是 whole-map / dense learned retrieval baseline，它回答 proposal-based cluster-set matching 是否比 proposal-free dense/whole-map representation 更适合该检索任务。`WaPIRL/` 是参考论文代码，不属于当前主方法直接依赖；主方法只采用 WaPIRL-style contrastive learning idea，并在 cluster-level 数据对象上独立实现。
+训练仅使用 `train` Token，validation 仅用于 checkpoint 选择，test 仅用于最终检索。类别标签不参与 proposal、训练损失或排序，仅用于检索完成后的官方评价。Experiment A 的 ranking schema 固定为：
+
+```text
+query_id,rank,candidate_id,similarity_score
+```
+
+## End-to-End Method
+
+```text
+raw wafer map
+ -> arc-ring-residual proposal
+ -> immutable ClusterToken[]
+ -> 3-channel 64x64 patch
+ -> self-supervised encoder pretraining
+ -> normalized learned Token embeddings
+ -> hard gates + greedy one-to-one matching
+ -> rankings.csv and label metrics
+```
+
+### 1. Arc-ring-residual proposal
+
+`core/proposal.py` converts raw maps to `defect_mask = (raw_map == 2)` and `valid_mask = (raw_map == 1) | (raw_map == 2)`, then calls `partial_match.core.arc_ring_retrieval.prepare_tokens`.
+
+普通8连通域容易将外缘环带与内部团状或中心缺陷粘连成一个大区域。`arc-ring-residual` 先在晶圆外缘的径向 band 内检测环/弧，再从原始缺陷掩膜中移除这些像素，最后对残差执行8连通域分解。Token 的几何类别包括 `edge_ring`、`ring_arc`、`line`、`blob`、`central` 和 `irregular`。类别用于 proposal 排序、边缘 extent 惩罚和结果解释，不是跨图匹配的类别硬约束。
+
+每个 `ClusterToken` 固化保存像素集合、面积、有效晶圆相对面积、质心、边界框、PCA 特征值、径向位置、角度覆盖、proposal 来源和稳定的 `proposal_signature`。patch 和 encoder 只能读取这些字段，不会反向改变 Token。
+
+| Proposal 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `--min-area` | `5` | 去除面积小于5像素的候选区域 |
+| `--top-k-proposals` | `5` | 每图的目标 Token 数量 |
+
+环/弧优先，剩余名额由残差区域的重要性补充。注意：当前底层实现在有效环/弧多于 `top_k` 时可能返回超过该目标数量的 Token；正式实验应检查生成的 `proposal_tokens.csv`。
+
+### 2. Token patch
+
+`core/cluster_patches.py` 以 Token 质心为中心，直接从原始 $52\times52$ map 裁取固定大小的局部窗口。默认窗口为 $64\times64$，越界位置补0，不 resize Token bbox 或原始窗口。输入为3通道：
+
+1. 通道0：局部全部缺陷掩膜；
+2. 通道1：当前 Token 像素掩膜；
+3. 通道2：晶圆有效区域掩膜。
+
+| Patch 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `--patch-size` | `64` | 直接裁取的局部窗口边长 |
+
+### 3. Contrastive pretraining
+
+训练集的每个 Token 是一个无标签样本。`ClusterContrastiveDataset` 为同一个原始 patch 构造两个独立增强视图 `x` 和 `x_t`；二者均被增强，`x` 不是未增强原图。当前增强及默认值如下：
+
+| 增强 | 默认值 | 作用 |
+|---|---:|---|
+| 旋转 | 从 $0,90,180,270^\circ$ 采样 | 三通道同步 |
+| 平移 | 行、列均在 $[-3,3]$ | 三通道同步，越界补0 |
+| dropout | `0.02` | 仅通道0、1 |
+| 伯努利噪声 | `0.01` | 仅通道0 |
+
+通道2仅跟随几何变换，不加入噪声或 dropout。随机数种子由训练种子和 Token 索引确定，所以同一 Token 在不同 epoch 使用同一对增强结果。
+
+Encoder 输出单位长度 embedding；`simple` 是轻量 CNN，`resnet18` 是针对 $64\times64$ 稀疏 patch 调整的 ResNet-18，使用 $3\times3$、stride 1 stem 且不含初始 max-pool。两者之后接两层 MLP projection head，projection head 仅服务训练，检索阶段只使用 encoder 输出。
+
+训练使用 memory bank，而不是 batch-negative 模式。训练开始前，以全部训练 Token 的投影表示初始化 memory；每一步从其他 Token 的 memory 表示中随机抽取负例。对于当前 Token，memory 以指数移动平均更新：
+
+$$
+\mathbf{m}_i \leftarrow \gamma\mathbf{m}_i+(1-\gamma)\mathbf{z}_i.
+$$
+
+训练损失是两个增强视图相对于同一 memory anchor 的温度缩放 NCE loss 的加权和。validation 不更新 memory，直接计算两个当前视图之间的对比损失。
+
+| Training 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `--encoder` | `simple` | `simple` 或 `resnet18` |
+| `--embedding-dim` | `256` | encoder 输出维度 |
+| `--encoder-width` | `32` | 仅 `simple` 的基础通道数 |
+| `--projector-size` | `256` | projection head 输出维度 / memory bank 宽度 |
+| `--batch-size` | `128` | 每步 Token 数 |
+| `--epochs` | `100` | 训练轮数 |
+| `--num-negatives` | `1024` | 每步 memory-bank 负例数 |
+| `--temperature` | `0.07` | NCE 温度 |
+| `--loss-weight` | `0.5` | `x_t` loss 的权重 |
+| `--memory-momentum` | `0.5` | memory EMA 系数 |
+| `--optimizer` | `adamw` | 可选 `adamw`、`adam`、`sgd` |
+| `--learning-rate` | `1e-3` | 初始学习率 |
+| `--weight-decay` | `1e-4` | 权重衰减 |
+| `--scheduler` | `cosine` | 可选 `cosine`、`step`、`none` |
+| `--warmup-epochs` | `0` | 当前仅影响 cosine 的退火周期，不实现独立 warmup |
+| `--seed` | `2026` | Python、NumPy、PyTorch 及 Token 增强的随机种子 |
+
+最佳 checkpoint 为 `best_model.pt`，依据 validation contrastive loss 选择；`last_model.pt` 是最终 epoch 模型。
+
+### 4. Retrieval embedding
+
+检索阶段不使用随机增强、projection head 或 memory bank。每个 query/candidate Token 经过同一个 encoder 得到单位长度 embedding $\mathbf{e}$，并与 proposal 阶段保存的面积、质心、PCA 和角度统计字段组成 learned Token record。
+
+形状相似度为：
+
+$$
+A_{\mathrm{shape}}(i,j)=\max(0,\mathbf{e}_i^\top\mathbf{e}_j).
+$$
+
+### 5. Token scoring and map matching
+
+对每个 Query--Candidate 图对，枚举两侧 Token 对。位置亲和度为：
+
+$$
+A_{\mathrm{pos}}=\exp\left(-\frac{\|\mathbf{p}_i-\mathbf{p}_j\|_2^2}{\sigma_{\mathrm{pos}}^2}\right),
+$$
+
+其中 $\mathbf{p}$ 是按 map 高、宽归一化的质心。尺度亲和度由有效区域面积比例与 PCA 长短轴尺度共同给出：
+
+$$
+A_{\mathrm{scale}}=0.3A_{\mathrm{area}}+0.7A_{\mathrm{pca}}.
+$$
+
+默认总分为：
+
+$$
+s_{ij}=0.60A_{\mathrm{shape}}+0.25A_{\mathrm{pos}}+0.15A_{\mathrm{scale}}.
+$$
+
+Token 对必须通过以下硬门槛：两侧 Token 均不小于各自图中最大 Token 面积的10%；形状相似度至少为0.30；原始像素面积比、PCA 主轴比和次轴比均至少为0.20；综合分数至少为0.30。尺度比使用 $\min(a,b)/\max(a,b)$，因此 `0.20` 约允许最多5倍尺度差异。外缘且具有明显角度跨度的 Token 还会因角度覆盖不一致而衰减形状相似度。
+
+| Matching 参数 | 默认值 | 含义 |
+|---|---:|---|
+| `--sigma-pos` | `0.35` | 位置偏移容忍尺度 |
+| `--sigma-scale` | `1.5` | 面积与 PCA 尺度容忍尺度 |
+| `--min-token-score` | `0.30` | 综合 Token 分数门槛 |
+| `--min-relative-token-area` | `0.10` | 相对本图最大 Token 面积门槛 |
+| `--scale-ratio-min` | `0.20` | 面积、主轴、次轴比例硬门槛 |
+| `--score-shape-weight` | `0.60` | 形状项权重 |
+| `--score-position-weight` | `0.25` | 位置项权重 |
+| `--score-scale-weight` | `0.15` | 尺度项权重 |
+| `--scale-area-weight` | `0.30` | 尺度项内的面积权重 |
+| `--scale-pca-weight` | `0.70` | 尺度项内的 PCA 权重 |
+
+通过门槛的 Token 对按分数降序执行贪心一对一匹配。一个 Query Token 或 Candidate Token 一旦被选中，便不能再次参与匹配。最终整图分数为所有有效 Query Token 的面积平方根加权平均；未匹配 Token 记为0：
+
+$$
+S(Q,C)=\frac{\sum_i\sqrt{\max(a_i,1)}\,\hat{s}_i}
+{\sum_i\sqrt{\max(a_i,1)}}.
+$$
+
+## Outputs
+
+预训练输出目录包含：
+
+```text
+configs.json
+proposal_config.json
+patch_config.json
+train_proposal_tokens.csv
+valid_proposal_tokens.csv
+train_cluster_patches_manifest.csv
+valid_cluster_patches_manifest.csv
+best_model.pt
+last_model.pt
+best_memory.pt
+last_memory.pt
+history.json
+main.log
+```
+
+Experiment A 检索输出目录包含：
+
+```text
+configs.json
+proposal_config.json
+patch_config.json
+proposal_tokens.csv
+tokens.csv
+embeddings.npz
+rankings.csv
+label_metrics.json
+label_metrics_flat.csv
+```
+
+当前检索流程不输出 `match_details.csv`。若需要逐 Token 匹配解释，应基于 `explain_map_similarity` 单独序列化匹配结果。
+
+## Fair Comparison Requirements
+
+与 `partial_match` 对比时，应固定 query manifest、candidate manifest、proposal 参数、Token patch 配置和匹配参数；否则结果应视为 ablation。尤其不能让 learned patch 或 encoder 结果改变 proposal Token 的像素、面积、质心、边界框或候选集合。
+
+训练只能使用 train/valid split；不得根据 test label 选择 checkpoint、调整超参数或修改排序。`label_metrics.json` 和 `label_metrics_flat.csv` 由 `evaluation/` 在排序完成后生成，是正式指标文件。

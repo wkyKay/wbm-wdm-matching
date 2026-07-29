@@ -13,7 +13,7 @@ import torch
 from evaluation.experiment_a.evaluate_rankings import evaluate_rankings_from_files, write_flat_metrics
 from proposed.core.cluster_patches import PatchBuilder
 from proposed.core.learned_descriptors import extract_learned_records, group_records_by_map, save_embeddings_npz, token_rows
-from proposed.core.matching import map_similarity
+from proposed.core.matching import MatchingConfig, map_similarity
 from proposed.core.proposal import save_tokens_csv
 from shared.wm38k.candidates import load_candidate_manifest
 from shared.wm38k.manifest import load_query_ids
@@ -21,10 +21,11 @@ from shared.wm38k.manifest import load_query_ids
 
 def run_learned_retrieval(records, tokens, patch_builder: PatchBuilder, encoder, device, out_dir,
                           split_manifest, query_manifest, candidate_manifest=None, split='test',
-                          batch_size=128, num_workers=0, topk_match=1, sigma_pos=0.35, sigma_area=1.0,
+                          batch_size=128, num_workers=0, matching_config: MatchingConfig | None = None,
                           metric_k=(1, 5, 10)):
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    matching_config = matching_config or MatchingConfig()
     records_by_map = {int(record['map_id']): record for record in records}
     tokens = [token for token in tokens if int(token.map_id) in records_by_map]
     save_tokens_csv(out_dir / 'proposal_tokens.csv', tokens)
@@ -50,13 +51,7 @@ def run_learned_retrieval(records, tokens, patch_builder: PatchBuilder, encoder,
                 candidate_ids = [cid for cid in all_ids if cid != int(query_id)]
             scored = []
             for candidate_id in candidate_ids:
-                score = map_similarity(
-                    grouped[int(query_id)],
-                    grouped[int(candidate_id)],
-                    sigma_pos=sigma_pos,
-                    sigma_area=sigma_area,
-                    topk=topk_match,
-                )
+                score = map_similarity(grouped[int(query_id)], grouped[int(candidate_id)], matching_config)
                 scored.append((int(candidate_id), float(score)))
             scored.sort(key=lambda item: (-item[1], item[0]))
             for rank, (candidate_id, score) in enumerate(scored, start=1):

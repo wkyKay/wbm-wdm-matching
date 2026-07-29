@@ -27,8 +27,9 @@ def main():
         '--output_root', str(out_root),
         '--hash', hash_name,
         '--device', args.device,
-        '--backbone_type', args.backbone_type,
-        '--backbone_config', args.backbone_config,
+        '--encoder', args.encoder,
+        '--embedding_dim', str(args.embedding_dim),
+        '--encoder_width', str(args.encoder_width),
         '--input_size', str(args.input_size),
         '--batch_size', str(args.batch_size),
         '--num_workers', str(args.num_workers),
@@ -39,10 +40,6 @@ def main():
         '--topk_retrieval', '1', '5', '10',
         '--explain_top_queries', str(args.explain_top_queries),
     ]
-    if args.no_decouple_input:
-        cmd.append('--no_decouple_input')
-    else:
-        cmd.append('--decouple_input')
     if args.pretrained_model_file:
         cmd.extend(['--pretrained_model_file', args.pretrained_model_file])
     if args.pretrained_model_key:
@@ -51,7 +48,7 @@ def main():
         cmd.append('--save_features')
     subprocess.run(cmd, check=True)
 
-    out_dir = out_root / 'wm38k' / 'denseir' / f'{args.backbone_type}.{_normalized_backbone(args)}' / hash_name
+    out_dir = out_root / 'wm38k' / 'denseir' / args.encoder / hash_name
     rankings = out_dir / 'rankings.csv'
     metrics = evaluate_preferences_from_files(str(rankings), args.b_preferences)
     details = metrics.pop('details')
@@ -73,9 +70,10 @@ def parse_args():
     parser.add_argument('--out-root', type=str, default='artifacts/preference_b/denseir')
     parser.add_argument('--hash', type=str, default='experiment_b')
     parser.add_argument('--device', type=str, default='cuda')
-    parser.add_argument('--backbone-type', type=str, default='resnet', choices=['resnet', 'vit'])
-    parser.add_argument('--backbone-config', type=str, default='18')
-    parser.add_argument('--input-size', type=int, default=96)
+    parser.add_argument('--encoder', type=str, default='resnet18', choices=['simple', 'resnet18'])
+    parser.add_argument('--embedding-dim', type=int, default=256)
+    parser.add_argument('--encoder-width', type=int, default=32)
+    parser.add_argument('--input-size', type=int, default=64)
     parser.add_argument('--batch-size', type=int, default=128)
     parser.add_argument('--num-workers', type=int, default=0)
     parser.add_argument('--token-mode', type=str, default='defect_band')
@@ -85,17 +83,8 @@ def parse_args():
     parser.add_argument('--explain-top-queries', type=int, default=0)
     parser.add_argument('--pretrained-model-file', type=str, default=None)
     parser.add_argument('--pretrained-model-key', type=str, default=None)
-    parser.add_argument('--no-decouple-input', action='store_true')
     parser.add_argument('--save-features', action='store_true')
     parser.add_argument('--save-details', action='store_true')
     return parser.parse_args()
-
-
-def _normalized_backbone(args):
-    if args.backbone_type == 'vit' and args.backbone_config == '18':
-        return 'tiny'
-    return args.backbone_config
-
-
 if __name__ == '__main__':
     main()

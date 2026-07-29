@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
 
 import hashlib
+from pathlib import Path
+import sys
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 
 from datasets.wm38k import WM38K
+
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+from proposed.core.cluster_patches import augment_patch
 
 
 class WM38KForWaPIRL(WM38K):
@@ -20,10 +28,6 @@ class WM38KForWaPIRL(WM38K):
         seed: int = 1993,
         max_samples: int = None,
         decouple_input: bool = True,
-        augmentation: str = 'crop_noise_rotate',
-        crop_min_scale: float = 0.85,
-        noise_prob: float = 0.002,
-        rotate_prob: float = 0.5,
         quality_filter: bool = True,
         min_defect_pixels: int = 3,
         min_defect_ratio: float = 1e-4,
@@ -46,10 +50,7 @@ class WM38KForWaPIRL(WM38K):
             split_manifest=split_manifest,
             query_manifest=query_manifest,
         )
-        self.augmentation = augmentation
-        self.crop_min_scale = crop_min_scale
-        self.noise_prob = noise_prob
-        self.rotate_prob = rotate_prob
+        self.seed = int(seed)
         self.indices = self._filter_indices(
             self.indices,
             quality_filter=quality_filter,
@@ -63,22 +64,13 @@ class WM38KForWaPIRL(WM38K):
 
     def __getitem__(self, idx):
         sample = super(WM38KForWaPIRL, self).__getitem__(idx)
-        raw_t = self._augment_raw(sample['raw'].float())
-        x_t = self.decouple_mask(raw_t) if self.decouple_input else raw_t.unsqueeze(0)
-        sample['x_t'] = x_t
+        patch = sample['x'].numpy()
+        rng = np.random.default_rng(self.seed + int(idx) * 1009)
+        sample['x'] = torch.from_numpy(augment_patch(patch, rng))
+        sample['x_t'] = torch.from_numpy(augment_patch(patch, rng))
         sample['idx'] = idx
         sample['original_idx'] = int(self.indices[idx])
         return sample
-
-    def _augment_raw(self, raw):
-        out = raw
-        if self.augmentation in ('crop', 'crop_noise', 'crop_rotate', 'crop_noise_rotate'):
-            out = self._random_resized_crop(out, self.crop_min_scale)
-        if self.augmentation in ('crop_rotate', 'crop_noise_rotate') and torch.rand(()) < self.rotate_prob:
-            out = torch.rot90(out, int(torch.randint(0, 4, ()).item()), dims=(0, 1))
-        if self.augmentation in ('crop_noise', 'crop_noise_rotate') and self.noise_prob > 0:
-            out = self._inject_sparse_noise(out, self.noise_prob)
-        return out
 
     def _filter_indices(self, indices, quality_filter=True, min_defect_pixels=3, min_defect_ratio=1e-4,
                         max_defect_ratio=0.8, min_valid_ratio=0.05, max_valid_ratio=0.98,
@@ -113,26 +105,3 @@ class WM38KForWaPIRL(WM38K):
 
             kept.append(int(original_idx))
         return np.asarray(kept, dtype=np.int64)
-
-    @staticmethod
-    def _random_resized_crop(raw, min_scale):
-        h, w = raw.shape
-        min_scale = min(max(min_scale, 0.1), 1.0)
-        scale = float(torch.empty(()).uniform_(min_scale, 1.0).item())
-        crop_h = max(1, int(round(h * scale)))
-        crop_w = max(1, int(round(w * scale)))
-        top = int(torch.randint(0, h - crop_h + 1, ()).item()) if crop_h < h else 0
-        left = int(torch.randint(0, w - crop_w + 1, ()).item()) if crop_w < w else 0
-        crop = raw[top:top + crop_h, left:left + crop_w]
-        out = F.interpolate(crop[None, None].float(), size=(h, w), mode='nearest')
-        return out.squeeze(0).squeeze(0)
-
-    @staticmethod
-    def _inject_sparse_noise(raw, prob):
-        valid = raw.gt(0)
-        if not valid.any():
-            return raw
-        out = raw.clone()
-        flip = torch.rand_like(out.float()).lt(prob) & valid
-        out[flip] = torch.where(out[flip].eq(2), torch.ones_like(out[flip]), torch.full_like(out[flip], 2.0))
-        return out
