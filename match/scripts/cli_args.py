@@ -300,6 +300,18 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Contrast floor for geometry feature similarity. Raw sim <= floor is set to 0. 0 disables contrast calibration.",
     )
     parser.add_argument(
+        "--moment-weight",
+        type=float,
+        default=0.75,
+        help="Zernike moment weight inside shape similarity.",
+    )
+    parser.add_argument(
+        "--geometry-weight",
+        type=float,
+        default=0.25,
+        help="Geometry feature weight inside shape similarity.",
+    )
+    parser.add_argument(
         "--proposal-mode",
         choices=("cc", "compact", "arc", "arc-band-residual", "arc-ring-residual", "tangential-ring", "sparse-density", "auto"),
         default="cc",

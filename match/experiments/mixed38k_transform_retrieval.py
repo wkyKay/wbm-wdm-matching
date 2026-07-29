@@ -37,14 +37,26 @@ CLASS_NAMES = (
     "near-full",
 )
 DEFAULT_DATA_FILE = WORKSPACE_ROOT / "data" / "wm38k" / "Wafer_Map_Datasets.npz"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "results_of_each_testss"
+DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "results_of_each_tests_100"
 TOP_KS = (10, 5, 3, 1)
-TRANSFORM_TYPES = ("translate", "rotate", "scale", "affine", "corrupted_affine")
-TRANSLATION_MIN_NORM = 3.0
+TRANSFORM_TYPES = ("corrupted_affine", "affine", "scale", "rotate", "translate")
+TRANSLATION_MIN_NORM = 2.0
 TRANSLATION_MAX_NORM = 6.0
 TRANSLATION_RANGE = 6
 ROTATION_ANGLES = (-60, -45, -30, -20, 20, 30, 45, 60)
 SCALE_FACTORS = (0.65, 0.75, 1.30, 1.45)
+TOKEN_COLORS = (
+    "#2563eb",
+    "#dc2626",
+    "#16a34a",
+    "#ca8a04",
+    "#9333ea",
+    "#0891b2",
+    "#ea580c",
+    "#4f46e5",
+    "#65a30d",
+    "#be185d",
+)
 
 
 def main() -> None:
@@ -79,7 +91,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="arc-ring-residual",
     )
     parser.add_argument("--min-area", type=int, default=5)
-    parser.add_argument("--top-k-proposals", type=int, default=6)
+    parser.add_argument("--top-k-proposals", type=int, default=4)
     parser.add_argument("--token-match-top-k", type=int, default=3)
     parser.add_argument("--map-match-top-k", type=int, default=20)
     parser.add_argument("--min-token-score", type=float, default=0.30)
@@ -88,6 +100,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--score-shape-weight", type=float, default=0.60)
     parser.add_argument("--score-position-weight", type=float, default=0.25)
     parser.add_argument("--score-scale-weight", type=float, default=0.15)
+    parser.add_argument("--moment-weight", type=float, default=0.75)
+    parser.add_argument("--geometry-weight", type=float, default=0.25)
     parser.add_argument("--min-relative-token-area", type=float, default=0.10)
     parser.add_argument("--scale-area-weight", type=float, default=0.30)
     parser.add_argument("--scale-pca-weight", type=float, default=0.70)
@@ -225,6 +239,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     mix_total = args.random_negatives + args.same_class_negatives + args.hard_negatives
     if mix_total != args.negatives_per_trial:
         raise ValueError("random/same-class/hard negatives must sum to --negatives-per-trial")
+    if max(args.moment_weight, 0.0) + max(args.geometry_weight, 0.0) <= 0.0:
+        raise ValueError("--moment-weight and --geometry-weight cannot both be non-positive")
 
 
 def _load_mixed38k(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -338,14 +354,15 @@ def _positive_records(
     transform_types = [TRANSFORM_TYPES[idx % len(TRANSFORM_TYPES)] for idx in range(count)]
     for idx, transform_type in enumerate(transform_types, start=1):
         defects, params = _generate_valid_transform(query_defects, valid, transform_type, rng, max_retries)
-        candidate_id = f"map_{source_map_id}_target{idx:02d}_{transform_type}"
+        actual_transform_type = str(params.get("type", transform_type))
+        candidate_id = f"map_{source_map_id}_target{idx:02d}_{actual_transform_type}"
         records.append({
             "candidate_id": candidate_id,
             "source_map_id": source_map_id,
             "class_name": class_name,
             "is_target": True,
             "negative_source": "",
-            "transform_type": transform_type,
+            "transform_type": actual_transform_type,
             "transform_params": json.dumps(params, ensure_ascii=False, sort_keys=True),
             "grid": _grid_from_defects(defects, valid, role="target_transformed", map_id=-idx, class_name=class_name),
         })
@@ -362,25 +379,38 @@ def _generate_valid_transform(
     original_count = int(query_defects.sum())
     valid_area = int(valid.sum())
     min_count = max(3, int(np.ceil(original_count * 0.30)))
-    for _ in range(max(int(max_retries), 1)):
-        params = _sample_transform_params(transform_type, rng)
-        transformed = _apply_transform(query_defects, valid, params)
-        if params.get("dropout_rate", 0.0) > 0.0:
-            transformed = _apply_dropout(transformed, float(params["dropout_rate"]), rng)
-        if params.get("noise_rate", 0.0) > 0.0:
-            noise_count = int(round(original_count * float(params["noise_rate"])))
-            transformed = _add_noise(transformed, valid, noise_count, rng)
-        transformed &= valid
-        count = int(transformed.sum())
-        if count < min_count or count > valid_area * 0.80:
-            continue
-        if _mask_iou(query_defects, transformed) >= 0.98:
-            continue
-        return transformed, params
+    candidate_types = _transform_fallback_order(transform_type)
+    for candidate_type in candidate_types:
+        for _ in range(max(int(max_retries), 1)):
+            params = _sample_transform_params(candidate_type, rng)
+            transformed = _apply_transform(query_defects, valid, params)
+            if params.get("dropout_rate", 0.0) > 0.0:
+                transformed = _apply_dropout(transformed, float(params["dropout_rate"]), rng)
+            if params.get("noise_rate", 0.0) > 0.0:
+                noise_count = int(round(original_count * float(params["noise_rate"])))
+                transformed = _add_noise(transformed, valid, noise_count, rng)
+            transformed &= valid
+            count = int(transformed.sum())
+            if count < min_count or count > valid_area * 0.80:
+                continue
+            if _mask_iou(query_defects, transformed) >= 0.98:
+                continue
+            if candidate_type != transform_type:
+                params = dict(params)
+                params["fallback_from"] = transform_type
+                params["type"] = candidate_type
+            return transformed, params
     params = _sample_transform_params("translate", rng)
-    params.update({"fallback": True, "dx": 3, "dy": -3})
+    params.update({"fallback": True, "fallback_from": transform_type, "dx": 3, "dy": -3})
     transformed = _apply_transform(query_defects, valid, params) & valid
     return transformed, params
+
+
+def _transform_fallback_order(transform_type: str) -> List[str]:
+    ordered = list(TRANSFORM_TYPES)
+    if transform_type in ordered:
+        return [transform_type] + [candidate for candidate in ordered if candidate != transform_type]
+    return ordered
 
 
 def _sample_transform_params(transform_type: str, rng: np.random.Generator) -> Dict:
@@ -686,6 +716,8 @@ def _rank_candidates(query: GridMaps, candidates: List[Dict], args: argparse.Nam
             score_shape_weight=args.score_shape_weight,
             score_position_weight=args.score_position_weight,
             score_scale_weight=args.score_scale_weight,
+            moment_weight=args.moment_weight,
+            geometry_weight=args.geometry_weight,
             min_relative_token_area=args.min_relative_token_area,
             scale_area_weight=args.scale_area_weight,
             scale_pca_weight=args.scale_pca_weight,
@@ -714,6 +746,8 @@ def _rank_candidates(query: GridMaps, candidates: List[Dict], args: argparse.Nam
             "query_tokens": int(result.wbm_tokens),
             "candidate_tokens": int(result.wdm_tokens),
             "_grid": candidate["grid"],
+            "_query_tokens": explanation.get("wbm_tokens", []),
+            "_tokens": explanation.get("wdm_tokens", []),
         })
     ranked.sort(key=lambda row: (-row["score"], str(row["candidate_id"])))
     for rank, row in enumerate(ranked, start=1):
@@ -889,22 +923,43 @@ def _save_trial_figure(path: Path, query: GridMaps, top10: List[Dict], title: st
     _ensure_mpl()
     import matplotlib.pyplot as plt
 
-    panels = [("query", query, False, 0.0, "")] + [
-        (
-            f"#{row['rank']} {row['candidate_class']}",
-            row["_grid"],
-            bool(row["is_target"]),
-            float(row["score"]),
-            str(row.get("transform_type", "")),
-        )
-        for row in top10
-    ]
+    query_tokens = top10[0].get("_query_tokens", []) if top10 else []
+    panels = [{
+        "label": "query",
+        "grid": query,
+        "tokens": query_tokens,
+        "is_target": False,
+        "score": 0.0,
+        "transform_type": "",
+    }]
+    panels.extend({
+        "label": f"#{row['rank']} {row['candidate_class']}",
+        "grid": row["_grid"],
+        "tokens": row.get("_tokens", []),
+        "is_target": bool(row["is_target"]),
+        "score": float(row["score"]),
+        "transform_type": str(row.get("transform_type", "")),
+    } for row in top10)
     cols = len(panels)
-    fig, axes = plt.subplots(1, cols, figsize=(2.25 * cols, 2.95))
-    for ax, (label, grid, is_target, score, transform_type) in zip(np.asarray(axes).reshape(-1), panels):
-        _draw_grid(ax, grid, label, is_target=is_target, score=score, transform_type=transform_type)
+    fig, axes = plt.subplots(2, cols, figsize=(2.25 * cols, 5.25))
+    axes = np.asarray(axes)
+    for col, panel in enumerate(panels):
+        _draw_grid(
+            axes[0, col],
+            panel["grid"],
+            panel["label"],
+            is_target=bool(panel["is_target"]),
+            score=float(panel["score"]),
+            transform_type=str(panel["transform_type"]),
+        )
+        _draw_proposal(
+            axes[1, col],
+            panel["grid"],
+            panel["tokens"],
+            is_target=bool(panel["is_target"]),
+        )
     fig.suptitle(title, fontsize=12)
-    fig.subplots_adjust(left=0.01, right=0.995, bottom=0.04, top=0.78, wspace=0.08)
+    fig.subplots_adjust(left=0.01, right=0.995, bottom=0.03, top=0.88, wspace=0.08, hspace=0.16)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -928,6 +983,56 @@ def _draw_grid(ax, grid: GridMaps, label: str, is_target: bool, score: float, tr
         spine.set_color("#dc2626")
     ax.set_xticks([])
     ax.set_yticks([])
+
+
+def _draw_proposal(ax, grid: GridMaps, tokens: List[Dict], is_target: bool) -> None:
+    image = _proposal_image(grid, tokens)
+    ax.imshow(image, interpolation="nearest")
+    ax.set_title(f"proposal n={len(tokens)}", fontsize=7, color="#b91c1c" if is_target else "black")
+    for spine in ax.spines.values():
+        spine.set_visible(is_target)
+        spine.set_linewidth(2.0)
+        spine.set_color("#dc2626")
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+
+def _proposal_image(grid: GridMaps, tokens: List[Dict]) -> np.ndarray:
+    h, w = grid.status_map.shape
+    image = np.zeros((h, w, 3), dtype=np.float32)
+    valid = (grid.status_map == VALID_NO_DEFECT) | (grid.status_map == VALID_HAS_DEFECT)
+    defects = grid.status_map == VALID_HAS_DEFECT
+    image[valid] = (0.48, 0.48, 0.48)
+    image[defects] = (0.92, 0.92, 0.92)
+    for idx, token in enumerate(tokens):
+        color = np.asarray(_hex_to_rgb(TOKEN_COLORS[idx % len(TOKEN_COLORS)]), dtype=np.float32)
+        support_color = 0.45 * color
+        for row, col in _token_visual_support_pixels(token):
+            if 0 <= row < h and 0 <= col < w:
+                image[row, col] = np.clip(0.55 * image[row, col] + support_color, 0.0, 1.0)
+        for row, col in token.get("pixels", []):
+            row = int(row)
+            col = int(col)
+            if 0 <= row < h and 0 <= col < w:
+                image[row, col] = color
+    return image
+
+
+def _token_visual_support_pixels(token: Dict) -> List[tuple[int, int]]:
+    if token.get("kde_support_pixels"):
+        return [(int(row), int(col)) for row, col in token["kde_support_pixels"]]
+    if token.get("ring_contour_pixels"):
+        return [(int(row), int(col)) for row, col in token["ring_contour_pixels"]]
+    return []
+
+
+def _hex_to_rgb(hex_color: str) -> tuple[float, float, float]:
+    value = hex_color.lstrip("#")
+    return (
+        int(value[0:2], 16) / 255.0,
+        int(value[2:4], 16) / 255.0,
+        int(value[4:6], 16) / 255.0,
+    )
 
 
 def _ensure_mpl() -> None:

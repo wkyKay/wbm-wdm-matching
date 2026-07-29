@@ -9,12 +9,14 @@ import numpy as np
 GEOMETRY_TYPES = ["blob", "line", "edge_ring", "central", "irregular"]
 ZERNIKE_CROP_SIZE = 48
 ZERNIKE_DEGREE = 8
+DEFAULT_MOMENT_WEIGHT = 0.75
+DEFAULT_GEOMETRY_WEIGHT = 0.25
 
 
 def _classify_token(token: Dict) -> str:
     if (
         token.get("radial_distance_norm", 0.0) >= 0.65
-        and token.get("angular_coverage", 0.0) >= 0.16
+        and token.get("angular_coverage", 0.0) >= 0.25
         and token.get("radial_std", 1.0) <= 0.14
     ):
         return "edge_ring"
@@ -49,14 +51,21 @@ def _type_affinity(a: str, b: str) -> float:
     return 0.25
 
 
-def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False) -> np.ndarray:
+def _shape_descriptor(
+    token: Dict,
+    map_shape,
+    mode: str = "normal",
+    rotation_tolerance: bool = False,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
+) -> np.ndarray:
     geometry = _geometry_descriptor(token, include_orientation=not rotation_tolerance and mode != "coarse")
     moment = _zernike_descriptor(token, out_size=ZERNIKE_CROP_SIZE, degree=ZERNIKE_DEGREE)
     token["descriptor_parts"] = {
         "moment": moment,
         "geometry": geometry,
-        "moment_weight": 0.75,
-        "geometry_weight": 0.25,
+        "moment_weight": float(moment_weight),
+        "geometry_weight": float(geometry_weight),
         "kind": "zernike_geometry",
         "zernike_crop_size": ZERNIKE_CROP_SIZE,
         "zernike_degree": ZERNIKE_DEGREE,
@@ -127,13 +136,20 @@ def _geometry_descriptor(token: Dict, include_orientation: bool) -> np.ndarray:
     aspect = max(bbox_h / max(bbox_w, 1.0), bbox_w / max(bbox_h, 1.0))
     elongation = float(token.get("pca_lambda1", 0.0)) / max(float(token.get("pca_lambda2", 0.0)), 1e-6)
     compactness = float(token.get("compactness", 0.0))
+    center_occupancy = _center_occupancy(token)
+    angular_uniformity = 1.0 / (1.0 + max(float(token.get("angular_count_cv", 0.0)), 0.0))
+    gap_completeness = 1.0 - min(max(float(token.get("max_gap_coverage", 1.0)), 0.0), 1.0)
     features = [
         fill_ratio,
         np.log1p(aspect) / np.log(16.0),
         np.log1p(elongation) / np.log(64.0),
         min(compactness / 4.0, 1.0),
         float(token.get("angular_coverage", 0.0)),
+        float(token.get("max_angular_run_coverage", token.get("angular_coverage", 0.0))),
+        angular_uniformity,
+        gap_completeness,
         float(token.get("radial_std", 0.0)),
+        center_occupancy,
     ]
     if include_orientation:
         orientation = float(token.get("orientation", 0.0))
@@ -142,6 +158,20 @@ def _geometry_descriptor(token: Dict, include_orientation: bool) -> np.ndarray:
             0.5 + 0.5 * np.sin(np.deg2rad(orientation)),
         ])
     return np.clip(np.asarray(features, dtype=np.float32), 0.0, 1.0)
+
+
+def _center_occupancy(token: Dict) -> float:
+    mask = _token_crop_mask(token)
+    if mask.size == 0 or not mask.any():
+        return 0.0
+    h, w = mask.shape
+    yy, xx = np.indices((h, w), dtype=np.float32)
+    center = np.array([(h - 1) / 2.0, (w - 1) / 2.0], dtype=np.float32)
+    radius = max(1.0, 0.30 * max(min(h, w) / 2.0, 1.0))
+    center_region = ((yy - center[0]) ** 2 + (xx - center[1]) ** 2) <= radius * radius
+    if not center_region.any():
+        return 0.0
+    return float(mask[center_region].mean())
 
 
 def _zernike_descriptor(token: Dict, out_size: int = 48, degree: int = 8) -> np.ndarray:

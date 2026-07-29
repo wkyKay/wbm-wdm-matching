@@ -21,6 +21,8 @@ class ProposalConfig:
     top_k: int
     connectivity: int
     descriptor_mode: str
+    moment_weight: float
+    geometry_weight: float
     proposal_mode: str
     rotation_tolerance: bool
     density_sigmas: tuple[float, ...]

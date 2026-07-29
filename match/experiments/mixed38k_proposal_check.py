@@ -74,7 +74,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="arc-ring-residual",
     )
     parser.add_argument("--min-area", type=int, default=5)
-    parser.add_argument("--top-k-proposals", type=int, default=6)
+    parser.add_argument("--top-k-proposals", type=int, default=3)
     parser.add_argument("--density-sigmas", nargs="+", type=float, default=(0.8, 1.6, 3.2))
     parser.add_argument("--density-threshold", type=float, default=0.20)
     parser.add_argument("--density-min-raw-points", type=int, default=3)

@@ -37,9 +37,9 @@ CLASS_NAMES = (
     "near-full",
 )
 DEFAULT_DATA_FILE = WORKSPACE_ROOT / "data" / "wm38k" / "Wafer_Map_Datasets.npz"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "mixed38k_same_label_retrieval"
+DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "mixed38k_same_label_retrieval_10_geometry"
 TOP_KS = (10, 5, 3, 1)
-TOKEN_COLORS = (
+TOKEN_COLORS = (    
     "#2563eb",
     "#dc2626",
     "#16a34a",
@@ -83,7 +83,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="arc-ring-residual",
     )
     parser.add_argument("--min-area", type=int, default=5)
-    parser.add_argument("--top-k-proposals", type=int, default=6)
+    parser.add_argument("--top-k-proposals", type=int, default=4)
     parser.add_argument("--token-match-top-k", type=int, default=3)
     parser.add_argument("--map-match-top-k", type=int, default=20)
     parser.add_argument("--min-token-score", type=float, default=0.30)
@@ -92,6 +92,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--score-shape-weight", type=float, default=0.60)
     parser.add_argument("--score-position-weight", type=float, default=0.25)
     parser.add_argument("--score-scale-weight", type=float, default=0.15)
+    parser.add_argument("--moment-weight", type=float, default=0.75)
+    parser.add_argument("--geometry-weight", type=float, default=0.25)
     parser.add_argument("--min-relative-token-area", type=float, default=0.10)
     parser.add_argument("--scale-area-weight", type=float, default=0.30)
     parser.add_argument("--scale-pca-weight", type=float, default=0.70)
@@ -241,6 +243,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     mix_total = args.random_negatives + args.hard_negatives
     if mix_total != args.negatives_per_trial:
         raise ValueError("random/hard negatives must sum to --negatives-per-trial")
+    if max(args.moment_weight, 0.0) + max(args.geometry_weight, 0.0) <= 0.0:
+        raise ValueError("--moment-weight and --geometry-weight cannot both be non-positive")
 
 
 def _load_mixed38k(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -548,6 +552,8 @@ def _rank_candidates(query: GridMaps, candidates: List[Dict], args: argparse.Nam
             score_shape_weight=args.score_shape_weight,
             score_position_weight=args.score_position_weight,
             score_scale_weight=args.score_scale_weight,
+            moment_weight=args.moment_weight,
+            geometry_weight=args.geometry_weight,
             min_relative_token_area=args.min_relative_token_area,
             scale_area_weight=args.scale_area_weight,
             scale_pca_weight=args.scale_pca_weight,

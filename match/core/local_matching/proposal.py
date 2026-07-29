@@ -15,6 +15,7 @@ import numpy as np
 
 from .models import ProposalConfig
 from .morphology import _connected_components
+from .descriptors import DEFAULT_GEOMETRY_WEIGHT, DEFAULT_MOMENT_WEIGHT
 from .proposal_utils import _finalize_token, _is_sparse_density_mode, _token_stats
 # Re-export utilities that external consumers depend on
 from .proposal_utils import _bridge_short_circular_gaps, _circular_arc_runs_with_gap_limits  # noqa: F401
@@ -147,6 +148,8 @@ def _proposal_config(
     top_k: int,
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
     density_sigmas: tuple[float, ...] = (0.8, 1.6, 3.2),
     density_threshold: float = 0.20,
     density_min_raw_points: int = 3,
@@ -170,6 +173,7 @@ def _proposal_config(
         raise ValueError("density_sigmas must contain positive values")
     if density_weight_transform not in {"count", "sqrt", "log1p"}:
         raise ValueError(f"Unsupported density weight transform: {density_weight_transform}")
+    moment_weight, geometry_weight = _descriptor_part_weights(moment_weight, geometry_weight)
 
     short_side = min(int(shape[0]), int(shape[1]))
     valid_area = max(int(valid_area), 1)
@@ -206,6 +210,8 @@ def _proposal_config(
         top_k=_effective_proposal_top_k(int(top_k), adaptive_top_k),
         connectivity=8,
         descriptor_mode=descriptor_mode,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
         proposal_mode=proposal_mode,
         rotation_tolerance=bool(rotation_tolerance),
         density_sigmas=tuple(sorted(density_sigmas)),
@@ -229,6 +235,14 @@ def _effective_proposal_min_area(requested: int, adaptive: int) -> int:
     if requested == DEFAULT_REQUESTED_MIN_AREA:
         return max(1, min(requested, adaptive))
     return max(1, requested)
+
+
+def _descriptor_part_weights(moment_weight: float, geometry_weight: float) -> tuple[float, float]:
+    moment = max(float(moment_weight), 0.0)
+    geometry = max(float(geometry_weight), 0.0)
+    if moment + geometry <= 1e-8:
+        return DEFAULT_MOMENT_WEIGHT, DEFAULT_GEOMETRY_WEIGHT
+    return moment, geometry
 
 
 def _effective_proposal_top_k(requested: int, adaptive: int) -> int:

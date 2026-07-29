@@ -39,7 +39,7 @@ CLASS_NAMES = (
     "near-full",
 )
 DEFAULT_DATA_FILE = WORKSPACE_ROOT / "data" / "wm38k" / "Wafer_Map_Datasets.npz"
-DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "mixed38k_single_to_multi_retrieval"
+DEFAULT_OUT_DIR = PROJECT_ROOT / "match" / "experiments" / "artifacts" / "mixed38k_single_to_multi_retrieval_100_1"
 TOP_KS = (10, 5, 3, 1)
 TOKEN_COLORS = (
     "#2563eb",
@@ -90,6 +90,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--score-shape-weight", type=float, default=0.60)
     parser.add_argument("--score-position-weight", type=float, default=0.25)
     parser.add_argument("--score-scale-weight", type=float, default=0.15)
+    parser.add_argument("--moment-weight", type=float, default=0.75)
+    parser.add_argument("--geometry-weight", type=float, default=0.25)
     parser.add_argument("--min-relative-token-area", type=float, default=0.10)
     parser.add_argument("--scale-area-weight", type=float, default=0.30)
     parser.add_argument("--scale-pca-weight", type=float, default=0.70)
@@ -114,6 +116,8 @@ def run_experiment(args: argparse.Namespace) -> Dict[str, Path]:
         raise ValueError("--positives-per-trial must be positive")
     if args.negatives_per_trial <= 0:
         raise ValueError("--negatives-per-trial must be positive")
+    if max(args.moment_weight, 0.0) + max(args.geometry_weight, 0.0) <= 0.0:
+        raise ValueError("--moment-weight and --geometry-weight cannot both be non-positive")
 
     maps, labels, original_ids = _load_mixed38k(args.data_file)
     maps = np.asarray([_normalize_map(raw) for raw in maps], dtype=np.uint8)
@@ -352,6 +356,8 @@ def _rank_candidates(query: GridMaps, candidates: List[Dict], args: argparse.Nam
             score_shape_weight=args.score_shape_weight,
             score_position_weight=args.score_position_weight,
             score_scale_weight=args.score_scale_weight,
+            moment_weight=args.moment_weight,
+            geometry_weight=args.geometry_weight,
             min_relative_token_area=args.min_relative_token_area,
             scale_area_weight=args.scale_area_weight,
             scale_pca_weight=args.scale_pca_weight,

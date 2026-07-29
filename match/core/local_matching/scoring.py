@@ -7,6 +7,7 @@ import numpy as np
 
 from .models import LocalMatchResult
 from .proposal import (_proposal_config, _tokens_from_mask, _tokens_from_weighted_mask,)
+from .descriptors import DEFAULT_GEOMETRY_WEIGHT, DEFAULT_MOMENT_WEIGHT
 
 
 MIN_SHAPE_SIM_FOR_MATCH = 0.30
@@ -22,6 +23,9 @@ PCA_LONG_EXTENT_WEIGHT = 0.75
 PCA_SHORT_EXTENT_WEIGHT = 0.25
 MOMENT_SIM_GAMMA = 2.0
 GEOMETRY_SIM_GAMMA = 1.5
+EDGE_EXTENT_R_MIN = 0.60
+EDGE_EXTENT_MIN_COVERAGE = 0.25
+EDGE_EXTENT_SIGMA = 0.20
 
 
 def score_kwargs_from_args(args: argparse.Namespace) -> Dict[str, Any]:
@@ -59,6 +63,8 @@ def score_kwargs_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
         moment_sim_floor=args.moment_sim_floor,
         geometry_sim_floor=args.geometry_sim_floor,
+        moment_weight=args.moment_weight,
+        geometry_weight=args.geometry_weight,
     )
 
 
@@ -97,6 +103,8 @@ def compute_count_partial_match(
     ring_min_edge_defect_fraction: float | None = None,
     moment_sim_floor: float = 0.0,
     geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
 ) -> LocalMatchResult:
     explanation = explain_count_partial_match(
         reference, candidate,
@@ -125,6 +133,8 @@ def compute_count_partial_match(
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
         moment_sim_floor=moment_sim_floor,
         geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
     )
     return explanation["result"]
 
@@ -164,6 +174,8 @@ def compute_binary_partial_match(
     ring_min_edge_defect_fraction: float | None = None,
     moment_sim_floor: float = 0.0,
     geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
 ) -> LocalMatchResult:
     explanation = explain_binary_partial_match(
         reference, candidate,
@@ -192,6 +204,8 @@ def compute_binary_partial_match(
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
         moment_sim_floor=moment_sim_floor,
         geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
     )
     return explanation["result"]
 
@@ -231,6 +245,8 @@ def explain_count_partial_match(
     ring_min_edge_defect_fraction: float | None = None,
     moment_sim_floor: float = 0.0,
     geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -263,6 +279,8 @@ def explain_count_partial_match(
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
         moment_sim_floor=moment_sim_floor,
         geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
     )
     return _explain_local_partial_match(
         reference=reference,
@@ -309,6 +327,8 @@ def explain_binary_partial_match(
     ring_min_edge_defect_fraction: float | None = None,
     moment_sim_floor: float = 0.0,
     geometry_sim_floor: float = 0.0,
+    moment_weight: float = DEFAULT_MOMENT_WEIGHT,
+    geometry_weight: float = DEFAULT_GEOMETRY_WEIGHT,
 ) -> Dict:
     valid_mask = (reference.status_map == 1) | (reference.status_map == 2)
     wbm_mask = reference.status_map == 2
@@ -341,6 +361,8 @@ def explain_binary_partial_match(
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
         moment_sim_floor=moment_sim_floor,
         geometry_sim_floor=geometry_sim_floor,
+        moment_weight=moment_weight,
+        geometry_weight=geometry_weight,
     )
     return _explain_local_partial_match(
         reference=reference,
@@ -388,6 +410,8 @@ def _explain_local_partial_match(
         ring_max_radial_std=config["ring_max_radial_std"],
         ring_max_defect_ratio=config["ring_max_defect_ratio"],
         ring_min_edge_defect_fraction=config["ring_min_edge_defect_fraction"],
+        moment_weight=config["moment_weight"],
+        geometry_weight=config["geometry_weight"],
     )
     proposal_debug = {"proposal_mode": proposal_config.proposal_mode}
     sparse_density_mode = proposal_config.proposal_mode == "sparse-density"
@@ -658,7 +682,8 @@ def _token_match_components(
     geometry_sim_floor: float = 0.0,
 ) -> Dict:
     shape_parts = _shape_similarity_components(query, candidate, moment_sim_floor, geometry_sim_floor)
-    shape_sim = shape_parts["shape_sim"]
+    edge_extent_affinity = _edge_extent_affinity(query, candidate)
+    shape_sim = shape_parts["shape_sim"] * edge_extent_affinity
     pos_dist2 = float(((query["pos"] - candidate["pos"]) ** 2).sum())
     position_affinity = float(np.exp(-pos_dist2 / max(sigma_pos**2, 1e-6)))
     support_area_affinity = _support_area_affinity(query, candidate, sigma_scale)
@@ -686,6 +711,7 @@ def _token_match_components(
         "shape_sim": shape_sim,
         "moment_sim": shape_parts["moment_sim"],
         "geometry_sim": shape_parts["geometry_sim"],
+        "edge_extent_affinity": edge_extent_affinity,
         "moment_sim_raw": shape_parts["moment_sim_raw"],
         "geometry_sim_raw": shape_parts["geometry_sim_raw"],
         "scale_area_ratio": scale_ratios["area_ratio"],
@@ -697,6 +723,32 @@ def _token_match_components(
         "pca_extent_affinity": pca_extent_affinity,
         "type_affinity": type_affinity,
     }
+
+
+def _edge_extent_affinity(query: Dict, candidate: Dict) -> float:
+    if (
+        float(query.get("radial_distance_norm", 0.0)) < EDGE_EXTENT_R_MIN
+        or float(candidate.get("radial_distance_norm", 0.0)) < EDGE_EXTENT_R_MIN
+    ):
+        return 1.0
+    q_extent = _angular_extent(query)
+    c_extent = _angular_extent(candidate)
+    if max(q_extent, c_extent) < EDGE_EXTENT_MIN_COVERAGE:
+        return 1.0
+    return float(np.exp(-abs(q_extent - c_extent) / max(EDGE_EXTENT_SIGMA, 1e-6)))
+
+
+def _angular_extent(token: Dict) -> float:
+    values = (
+        token.get("ring_arc_angular_coverage"),
+        token.get("ring_contour_angular_coverage"),
+        token.get("max_angular_run_coverage"),
+        token.get("angular_coverage"),
+    )
+    for value in values:
+        if value is not None:
+            return float(value)
+    return 0.0
 
 
 def _support_area_affinity(query: Dict, candidate: Dict, sigma_scale: float) -> float:

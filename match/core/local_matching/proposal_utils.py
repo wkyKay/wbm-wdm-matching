@@ -350,6 +350,17 @@ def _token_stats(
     theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
     occupied = np.unique(np.floor(theta / 5.0).astype(np.int64)) if len(theta) else []
     angular_coverage = float(len(occupied) / 72.0)
+    occupied_bins = np.zeros(72, dtype=bool)
+    if len(occupied):
+        occupied_bins[np.asarray(occupied, dtype=np.int64) % 72] = True
+    max_angular_run_coverage = float(max(_circular_true_runs(occupied_bins), default=0) / 72.0)
+    max_gap_coverage = float(max(_circular_true_runs(~occupied_bins), default=0) / 72.0)
+    if len(theta):
+        sector_counts, _ = np.histogram(theta, bins=12, range=(0.0, 360.0))
+        sector_mean = float(sector_counts.mean())
+        angular_count_cv = float(sector_counts.std() / sector_mean) if sector_mean > 1e-8 else 0.0
+    else:
+        angular_count_cv = 0.0
     radial_std = float(radial.std()) if len(radial) else 0.0
 
     token = {
@@ -378,6 +389,9 @@ def _token_stats(
         "compactness": float(perimeter / max(support_area, 1)),
         "radial_distance_norm": radial_distance_norm,
         "angular_coverage": angular_coverage,
+        "max_angular_run_coverage": max_angular_run_coverage,
+        "max_gap_coverage": max_gap_coverage,
+        "angular_count_cv": angular_count_cv,
         "radial_std": radial_std,
         "pixels": [(int(r), int(c)) for r, c in pixels],
     }
@@ -391,12 +405,16 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         map_shape,
         mode=proposal_config.descriptor_mode,
         rotation_tolerance=proposal_config.rotation_tolerance,
+        moment_weight=proposal_config.moment_weight,
+        geometry_weight=proposal_config.geometry_weight,
     )
     token["proposal_config"] = {
         "min_area": proposal_config.min_area,
         "top_k": proposal_config.top_k,
         "connectivity": proposal_config.connectivity,
         "descriptor_mode": proposal_config.descriptor_mode,
+        "moment_weight": proposal_config.moment_weight,
+        "geometry_weight": proposal_config.geometry_weight,
         "proposal_mode": proposal_config.proposal_mode,
         "rotation_tolerance": proposal_config.rotation_tolerance,
         "density_sigmas": proposal_config.density_sigmas,
