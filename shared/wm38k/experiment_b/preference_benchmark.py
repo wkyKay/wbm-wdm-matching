@@ -248,7 +248,7 @@ def _preference_rows(query_id, syn, neg):
     add(syn.get('identity'), syn.get('cluster_dropout'), 'identity_over_cluster_dropout', 'cluster_dropout')
     add(syn.get('cluster_dropout'), easy, 'cluster_dropout_over_easy_negative', 'cluster_dropout')
     add(syn.get('scale_mild'), easy, 'scale_mild_over_easy_negative', 'scale')
-    add(diff_sim, same_bad, 'diff_label_similar_morphology_over_same_label_bad_morphology', 'hard_negative')
+    add(same_bad, diff_sim, 'same_label_hard_negative_over_diff_label_spatially_close', 'hard_negative')
     return out
 
 
