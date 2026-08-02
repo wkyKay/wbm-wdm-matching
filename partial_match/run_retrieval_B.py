@@ -73,7 +73,7 @@ def parse_args():
     parser.add_argument('--sigma-pos', type=float, default=0.35)
     parser.add_argument('--min-token-score', type=float, default=0.30)
     parser.add_argument('--min-relative-token-area', type=float, default=0.10)
-    parser.add_argument('--scale-ratio-min', type=float, default=0.50)
+    parser.add_argument('--scale-ratio-min', type=float, default=0.20)
     parser.add_argument('--sigma-scale', type=float, default=1.5)
     parser.add_argument('--score-shape-weight', type=float, default=0.60)
     parser.add_argument('--score-position-weight', type=float, default=0.25)

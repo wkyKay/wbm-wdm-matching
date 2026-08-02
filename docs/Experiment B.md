@@ -150,7 +150,7 @@ b_config.json:
 公共路径变量：
 
 ```bash
-B_ROOT=artifacts/preference_b/wm38k_seed2026
+B_ROOT=artifacts/preference_b/8.1/wm38k_seed2026_q1000
 B_DATA=$B_ROOT/b_data.npz
 B_SPLIT=$B_ROOT/b_split_manifest.csv
 B_QUERIES=$B_ROOT/b_queries.csv
@@ -167,7 +167,7 @@ python3 partial_match/run_retrieval_B.py \
   --b-queries $B_QUERIES \
   --b-candidates $B_CANDIDATES \
   --b-preferences $B_PREFS \
-  --out-dir artifacts/preference_b/results/partial_match \
+  --out-dir artifacts/partial_match/experiment-b/8.1 \
   --method retrieval_compact \
   --min-area 5 \
   --top-k-proposals 6 \
@@ -197,7 +197,7 @@ python3 proposed/run_retrieval_B.py \
   --b-queries $B_QUERIES \
   --b-candidates $B_CANDIDATES \
   --b-preferences $B_PREFS \
-  --checkpoint artifacts/proposed/checkpoints/cluster_encoder.pt \
+  --checkpoint artifacts/proposed/cluster_pretrain/wm38k_seed2026_resnet18/best_model.pt \
   --checkpoint-key encoder \
   --out-dir artifacts/preference_b/results/proposed \
   --proposal-method retrieval_compact \
@@ -230,7 +230,7 @@ python3 Wafer-DenseIR/run_retrieval_B.py \
   --b-queries $B_QUERIES \
   --b-candidates $B_CANDIDATES \
   --b-preferences $B_PREFS \
-  --out-root artifacts/preference_b/results/denseir \
+  --out-root artifacts/wafer-denseir/experiment-b \
   --hash experiment_b \
   --backbone-type resnet \
   --backbone-config 18 \
@@ -284,9 +284,9 @@ artifacts/preference_b/results/wapirl/preference_metrics.json
 
 ```bash
 python3 evaluation/experiment_b/evaluate_preferences.py \
-  --scores artifacts/preference_b/results/partial_match/rankings.csv \
-  --preferences artifacts/preference_b/wm38k_seed2026/b_preferences.csv \
-  --out artifacts/preference_b/results/partial_match/preference_metrics.json \
+  --scores artifacts/partial_match/experiment-b/8.1/rankings.csv \
+  --preferences artifacts/preference_b/8.1/wm38k_seed2026_q1000/b_preferences.csv \
+  --out artifacts/partial_match/metrics/b_partialmatch_preference_metrics.json \
   --save-details
 ```
 
