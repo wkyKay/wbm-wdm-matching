@@ -633,6 +633,7 @@ def _compact1_tokens(
         enforce_group_radial_std=True,
         full_ring_coverage=0.50,
         merge_dilation_radius=1,
+        outer_component_grouping=True,
     )
     component_tokens = _retrieval_component_tokens(
         original & (~arc_mask),

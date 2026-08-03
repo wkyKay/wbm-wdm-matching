@@ -333,12 +333,13 @@ def _cluster_color_image(
 
     if show_kde_support:
         _overlay_kde_support(image, tokens)
+        _overlay_density_raw_evidence(image, tokens)
 
     return image
 
 
-def _overlay_kde_support(image: np.ndarray, tokens: List[Dict], alpha: float = 0.30) -> None:
-    """对于 sparse-density token，用淡色半透明层标注 KDE support 区域，展示像素是如何被选中的。"""
+def _overlay_kde_support(image: np.ndarray, tokens: List[Dict]) -> None:
+    """For sparse-density tokens, paint KDE support with a solid pastel color."""
     h, w = image.shape[:2]
     for idx, token in enumerate(tokens):
         kde_pixels = token.get("kde_support_pixels")
@@ -352,7 +353,21 @@ def _overlay_kde_support(image: np.ndarray, tokens: List[Dict], alpha: float = 0
         for r, c in kde_pixels:
             rr, cc = int(r), int(c)
             if 0 <= rr < h and 0 <= cc < w:
-                image[rr, cc] = image[rr, cc] * (1 - alpha) + pastel * alpha
+                image[rr, cc] = pastel
+
+
+def _overlay_density_raw_evidence(image: np.ndarray, tokens: List[Dict]) -> None:
+    """Restore saturated raw points after the solid KDE support layer."""
+    h, w = image.shape[:2]
+    density_sources = {"sparse_density", "sparse_density_arc_ring_residual"}
+    for idx, token in enumerate(tokens):
+        if token.get("proposal_source") not in density_sources:
+            continue
+        color = np.array(to_rgb(TOKEN_COLORS[idx % len(TOKEN_COLORS)]), dtype=np.float32)
+        for r, c in token.get("raw_pixels", []):
+            rr, cc = int(r), int(c)
+            if 0 <= rr < h and 0 <= cc < w:
+                image[rr, cc] = color
 
 
 def _pastel_color(base: np.ndarray, lightness: float = 0.50) -> np.ndarray:

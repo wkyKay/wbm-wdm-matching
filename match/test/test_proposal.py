@@ -83,8 +83,36 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-relative-token-area", type=float, default=0.10)
     parser.add_argument("--scale-area-weight", type=float, default=0.30)
     parser.add_argument("--scale-pca-weight", type=float, default=0.70)
-    parser.add_argument("--proposal-mode", type=str, default="compact", choices=["cc", "compact"])
+    parser.add_argument(
+        "--proposal-mode",
+        type=str,
+        default="compact",
+        choices=[
+            "cc",
+            "compact",
+            "compact1",
+            "arc-ring-residual",
+            "tangential-ring",
+            "sparse-density",
+            "sparse-density-arc-ring-residual",
+            "auto",
+        ],
+    )
     parser.add_argument("--rotation-tolerance", action="store_true")
+    parser.add_argument("--density-sigmas", type=float, nargs="+", default=(0.8, 1.6, 3.2))
+    parser.add_argument("--density-threshold", type=float, default=0.20)
+    parser.add_argument("--density-min-raw-points", type=int, default=3)
+    parser.add_argument("--density-min-raw-mass", type=float, default=3.0)
+    parser.add_argument("--density-merge-iou", type=float, default=0.60)
+    parser.add_argument("--density-weight-transform", choices=("count", "sqrt", "log1p"), default="sqrt")
+    parser.add_argument("--ring-min-area", type=int, default=None)
+    parser.add_argument("--ring-edge-r-min", type=float, default=None)
+    parser.add_argument("--ring-band-width", type=float, default=None)
+    parser.add_argument("--ring-min-angular-coverage", type=float, default=None)
+    parser.add_argument("--ring-angular-bins", type=int, default=None)
+    parser.add_argument("--ring-max-radial-std", type=float, default=None)
+    parser.add_argument("--ring-max-defect-ratio", type=float, default=None)
+    parser.add_argument("--ring-min-edge-defect-fraction", type=float, default=None)
     parser.add_argument("--save-figures", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--review-top-k", type=int, default=3)
     parser.add_argument("--step-max", type=int, default=3)
@@ -139,6 +167,20 @@ def run_test(args: argparse.Namespace) -> Dict[str, Path]:
             min_relative_token_area=args.min_relative_token_area,
             scale_area_weight=args.scale_area_weight,
             scale_pca_weight=args.scale_pca_weight,
+            density_sigmas=tuple(args.density_sigmas),
+            density_threshold=args.density_threshold,
+            density_min_raw_points=args.density_min_raw_points,
+            density_min_raw_mass=args.density_min_raw_mass,
+            density_merge_iou=args.density_merge_iou,
+            density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
         )
         result = explanation["result"]
         result_mo = explanation["result_matched_only"]
@@ -418,6 +460,20 @@ def _save_review_figures(
             min_relative_token_area=args.min_relative_token_area,
             scale_area_weight=args.scale_area_weight,
             scale_pca_weight=args.scale_pca_weight,
+            density_sigmas=tuple(args.density_sigmas),
+            density_threshold=args.density_threshold,
+            density_min_raw_points=args.density_min_raw_points,
+            density_min_raw_mass=args.density_min_raw_mass,
+            density_merge_iou=args.density_merge_iou,
+            density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
             save_path=topk_path,
             result_key=result_key,
         )
@@ -447,6 +503,20 @@ def _save_review_figures(
             min_relative_token_area=args.min_relative_token_area,
             scale_area_weight=args.scale_area_weight,
             scale_pca_weight=args.scale_pca_weight,
+            density_sigmas=tuple(args.density_sigmas),
+            density_threshold=args.density_threshold,
+            density_min_raw_points=args.density_min_raw_points,
+            density_min_raw_mass=args.density_min_raw_mass,
+            density_merge_iou=args.density_merge_iou,
+            density_weight_transform=args.density_weight_transform,
+            ring_min_area=args.ring_min_area,
+            ring_edge_r_min=args.ring_edge_r_min,
+            ring_band_width=args.ring_band_width,
+            ring_min_angular_coverage=args.ring_min_angular_coverage,
+            ring_angular_bins=args.ring_angular_bins,
+            ring_max_radial_std=args.ring_max_radial_std,
+            ring_max_defect_ratio=args.ring_max_defect_ratio,
+            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
             save_path=step_path,
             result_key=result_key,
         )

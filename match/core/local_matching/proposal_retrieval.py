@@ -660,6 +660,7 @@ def _extract_retrieval_arc_tokens(
     enforce_group_radial_std: bool = False,
     full_ring_coverage: float = COMPACT_ARC_MIN_FULL_COVERAGE,
     merge_dilation_radius: int = 1,
+    outer_component_grouping: bool = False,
 ) -> Tuple[List[Dict], np.ndarray, Dict]:
     arc_mask = np.zeros_like(mask, dtype=bool)
     points = np.argwhere(mask).astype(np.int64)
@@ -681,6 +682,7 @@ def _extract_retrieval_arc_tokens(
         "enforce_group_radial_std": bool(enforce_group_radial_std),
         "full_ring_coverage": float(full_ring_coverage),
         "merge_dilation_radius": int(merge_dilation_radius),
+        "outer_component_grouping": bool(outer_component_grouping),
     }
     if len(points) < min_area:
         return [], arc_mask, debug
@@ -714,7 +716,11 @@ def _extract_retrieval_arc_tokens(
     band_points = np.argwhere(band_source).astype(np.int64)
     band_rel = band_points.astype(np.float32) - center
     band_radial = np.linalg.norm(band_rel, axis=1) / radius_ref
-    all_band_keep = (band_radial >= edge_r_min) & (np.abs(band_radial - band_center) <= effective_band_width)
+    all_band_keep = (
+        band_radial >= edge_r_min
+        if outer_component_grouping
+        else (band_radial >= edge_r_min) & (np.abs(band_radial - band_center) <= effective_band_width)
+    )
     ring_band_mask = np.zeros_like(mask, dtype=bool)
     ring_band_raw = band_points[all_band_keep]
     ring_band_raw_count = int(len(ring_band_raw))
@@ -726,6 +732,10 @@ def _extract_retrieval_arc_tokens(
         raw_components = _connected_components(ring_band_mask, connectivity=8)
         raw_cc_count = len(raw_components)
         n_comp = len(raw_components)
+        component_radial_centers = [
+            float(np.median(np.linalg.norm(comp.astype(np.float32) - center, axis=1) / radius_ref))
+            for comp in raw_components
+        ]
         if n_comp <= 1:
             merged_groups = [list(range(n_comp))]
         else:
@@ -753,7 +763,11 @@ def _extract_retrieval_arc_tokens(
                     parent[rx] = ry
             for i in range(n_comp):
                 for j in range(i + 1, n_comp):
-                    if dilated_sets[i] & dilated_sets[j]:
+                    radial_compatible = (
+                        not outer_component_grouping
+                        or abs(component_radial_centers[i] - component_radial_centers[j]) <= effective_band_width
+                    )
+                    if radial_compatible and dilated_sets[i] & dilated_sets[j]:
                         _union(i, j)
             groups: dict[int, list[int]] = {}
             for i in range(n_comp):
@@ -775,6 +789,7 @@ def _extract_retrieval_arc_tokens(
         filtered = np.zeros_like(mask, dtype=bool)
         kept_count = 0
         band_groups: list = []
+        band_group_centers: list[float] = []
         for total_pixels, comp_indices in valid_groups[:5]:
             group_pixels: list = []
             for i in comp_indices:
@@ -782,6 +797,11 @@ def _extract_retrieval_arc_tokens(
                 filtered[comp[:, 0].astype(int), comp[:, 1].astype(int)] = True
                 group_pixels.extend((int(r), int(c)) for r, c in comp)
             band_groups.append(group_pixels)
+            band_group_centers.append(
+                float(np.median([component_radial_centers[i] for i in comp_indices]))
+                if outer_component_grouping
+                else band_center
+            )
             kept_count += 1
         ring_band_mask = filtered
         merged_cc_count = len(merged_groups)
@@ -791,6 +811,7 @@ def _extract_retrieval_arc_tokens(
         kept_count = 0
         rejected_by_gap = 0
         band_groups = []
+        band_group_centers = []
     cc_filter_debug = {
         "band_area_before_cc": ring_band_raw_count,
         "band_area_after_cc": int(ring_band_mask.sum()),
@@ -799,6 +820,7 @@ def _extract_retrieval_arc_tokens(
         "band_cc_kept_count": kept_count,
         "band_cc_rejected_by_gap": rejected_by_gap,
         "band_groups_raw": band_groups,
+        "band_group_radial_centers": band_group_centers,
     }
     if cc_aware:
         ring_band_mask, cc_filter_debug = _filter_ring_band_components(
@@ -835,7 +857,7 @@ def _extract_retrieval_arc_tokens(
     tokens: List[Dict] = []
     angle_rejected_count = 0
     parent_fraction_rejected_count = 0
-    for group_pixels in band_groups:
+    for group_pixels, group_band_center in zip(band_groups, band_group_centers):
         group_arr = np.array(group_pixels, dtype=np.int64)
         if len(group_arr) < min_area:
             continue
@@ -878,7 +900,7 @@ def _extract_retrieval_arc_tokens(
             ring_arc_parent_component_fraction=parent_fraction,
             ring_arc_parent_component_area=parent_area,
             ring_arc_min_parent_component_fraction=float(min_parent_fraction),
-            radial_band_center=band_center,
+            radial_band_center=group_band_center,
             ring_arc_radial_std=raw_radial_std,
         )
         tokens.append(token)

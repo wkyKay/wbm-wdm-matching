@@ -164,9 +164,13 @@ class SparseDensityProposalTest(unittest.TestCase):
                 self.assertTrue(result["wbm_tokens"])
                 self.assertTrue(result["wdm_tokens"])
 
-    def test_hybrid_mode_writes_proposal_steps_figure(self) -> None:
+    def test_sparse_modes_write_review_figures(self) -> None:
         from matplotlib import pyplot as plt
-        from match.viz.count_partial_visualization import _cluster_color_image, plot_count_partial_steps
+        from match.viz.count_partial_visualization import (
+            _cluster_color_image,
+            plot_count_partial_steps,
+            plot_count_partial_topk,
+        )
 
         center = np.array([12.5, 12.5])
         arc_points = sorted({
@@ -195,23 +199,44 @@ class SparseDensityProposalTest(unittest.TestCase):
         self.assertFalse(np.array_equal(plain, with_support))
 
         with TemporaryDirectory() as temp_dir:
-            save_path = Path(temp_dir) / "hybrid_steps.png"
-            figure, axes = plot_count_partial_steps(
-                _grid(points),
-                _grid(points, count=2.0),
-                proposal_mode="sparse-density-arc-ring-residual",
-                density_sigmas=(1.2,),
-                density_threshold=0.12,
-                density_min_raw_points=3,
-                density_min_raw_mass=3.0,
-                min_area=3,
-                ring_min_angular_coverage=0.08,
-                save_path=save_path,
-            )
-            self.assertEqual(len(axes), 5)
-            self.assertTrue(save_path.is_file())
-            self.assertGreater(save_path.stat().st_size, 10_000)
-            plt.close(figure)
+            reference = _grid(points)
+            candidate = _grid(points, count=2.0)
+            for mode in ("sparse-density", "sparse-density-arc-ring-residual"):
+                with self.subTest(proposal_mode=mode):
+                    steps_path = Path(temp_dir) / f"{mode}_steps.png"
+                    figure, axes = plot_count_partial_steps(
+                        reference,
+                        candidate,
+                        proposal_mode=mode,
+                        density_sigmas=(1.2,),
+                        density_threshold=0.12,
+                        density_min_raw_points=3,
+                        density_min_raw_mass=3.0,
+                        min_area=3,
+                        ring_min_angular_coverage=0.08,
+                        save_path=steps_path,
+                    )
+                    self.assertEqual(len(axes), 5)
+                    self.assertTrue(steps_path.is_file())
+                    self.assertGreater(steps_path.stat().st_size, 10_000)
+                    plt.close(figure)
+
+                    topk_path = Path(temp_dir) / f"{mode}_topk.png"
+                    figure, _axes = plot_count_partial_topk(
+                        reference,
+                        [("candidate", candidate)],
+                        proposal_mode=mode,
+                        density_sigmas=(1.2,),
+                        density_threshold=0.12,
+                        density_min_raw_points=3,
+                        density_min_raw_mass=3.0,
+                        min_area=3,
+                        ring_min_angular_coverage=0.08,
+                        save_path=topk_path,
+                    )
+                    self.assertTrue(topk_path.is_file())
+                    self.assertGreater(topk_path.stat().st_size, 10_000)
+                    plt.close(figure)
 
 
 if __name__ == "__main__":
