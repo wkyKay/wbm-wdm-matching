@@ -7,6 +7,7 @@ import numpy as np
 from .models import ProposalConfig
 from .morphology import (_binary_closing_square_constrained, _connected_components, _perimeter,)
 from .descriptors import _classify_token, _shape_descriptor
+from .proposal_retrieval import _retrieval_compact_tokens as _retrieval_arc_ring_residual_tokens
 
 
 def _tokens_from_mask(
@@ -189,6 +190,20 @@ def _tokens_from_components(
     proposal_debug: Optional[Dict] = None,
 ) -> List[Dict]:
     h, w = mask.shape
+    if proposal_config.proposal_mode == "arc-ring-residual":
+        tokens, ring_debug = _retrieval_arc_ring_residual_tokens(
+            mask & valid_mask,
+            weight_map,
+            valid_mask,
+            proposal_config,
+            source=source,
+        )
+        if proposal_debug is not None:
+            proposal_debug[source] = ring_debug
+        for token in tokens:
+            _finalize_token(token, (h, w), proposal_config)
+        return tokens
+
     if proposal_config.proposal_mode == "compact":
         tokens, ring_debug = _retrieval_compact_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
         if proposal_debug is not None:
@@ -806,7 +821,7 @@ def _proposal_config(
     ring_min_edge_defect_fraction: Optional[float] = None,
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
-    if proposal_mode not in {"cc", "compact", "tangential-ring", "sparse-density"}:
+    if proposal_mode not in {"cc", "compact", "arc-ring-residual", "tangential-ring", "sparse-density"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
     density_sigmas = tuple(float(sigma) for sigma in density_sigmas)
     if not density_sigmas or any(sigma <= 0.0 for sigma in density_sigmas):
