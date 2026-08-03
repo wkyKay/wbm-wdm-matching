@@ -654,6 +654,12 @@ def _extract_retrieval_arc_tokens(
     raw_mask: Optional[np.ndarray] = None,
     parent_fraction_mask: Optional[np.ndarray] = None,
     proposal_source: str = "retrieval_compact",
+    max_gap_ratio: float = 0.20,
+    max_merge_gap_count: Optional[int] = None,
+    min_band_width_cells: float = 0.0,
+    enforce_group_radial_std: bool = False,
+    full_ring_coverage: float = COMPACT_ARC_MIN_FULL_COVERAGE,
+    merge_dilation_radius: int = 1,
 ) -> Tuple[List[Dict], np.ndarray, Dict]:
     arc_mask = np.zeros_like(mask, dtype=bool)
     points = np.argwhere(mask).astype(np.int64)
@@ -669,6 +675,12 @@ def _extract_retrieval_arc_tokens(
         "min_parent_component_fraction": float(min_parent_fraction),
         "parent_fraction_rejected_count": 0,
         "connectivity_rejected_count": 0,
+        "max_gap_ratio": float(max_gap_ratio),
+        "max_merge_gap_count": max_merge_gap_count,
+        "min_band_width_cells": float(min_band_width_cells),
+        "enforce_group_radial_std": bool(enforce_group_radial_std),
+        "full_ring_coverage": float(full_ring_coverage),
+        "merge_dilation_radius": int(merge_dilation_radius),
     }
     if len(points) < min_area:
         return [], arc_mask, debug
@@ -695,6 +707,8 @@ def _extract_retrieval_arc_tokens(
     band_center = float((edges[peak] + edges[peak + 1]) / 2.0)
 
     effective_band_width = _effective_arc_band_width(band_width, radius_ref, True)
+    if min_band_width_cells > 0.0:
+        effective_band_width = max(effective_band_width, float(min_band_width_cells) / radius_ref)
     # Extract band pixels from raw_mask (actual defect pixels), not the closed mask
     band_source = raw_mask if raw_mask is not None else mask
     band_points = np.argwhere(band_source).astype(np.int64)
@@ -706,9 +720,8 @@ def _extract_retrieval_arc_tokens(
     ring_band_raw_count = int(len(ring_band_raw))
     if len(ring_band_raw):
         ring_band_mask[ring_band_raw[:, 0], ring_band_raw[:, 1]] = True
-    # 8-connected components, bridge 1-pixel gaps (X.X), keep top 5 by area.
-    # Reject merged groups where gap_count exceeds MAX_GAP_RATIO of total pixel count.
-    MAX_GAP_RATIO = 0.2
+    # Dilation only establishes raw-component groups; it never adds token pixels.
+    merge_dilation_radius = max(int(merge_dilation_radius), 0)
     if ring_band_mask.any():
         raw_components = _connected_components(ring_band_mask, connectivity=8)
         raw_cc_count = len(raw_components)
@@ -722,8 +735,8 @@ def _extract_retrieval_arc_tokens(
                 dset = set()
                 for r, c in comp:
                     r, c = int(r), int(c)
-                    for dr in (-1, 0, 1):
-                        for dc in (-1, 0, 1):
+                    for dr in range(-merge_dilation_radius, merge_dilation_radius + 1):
+                        for dc in range(-merge_dilation_radius, merge_dilation_radius + 1):
                             nr, nc = r + dr, c + dc
                             if 0 <= nr < h and 0 <= nc < w:
                                 dset.add((nr, nc))
@@ -747,13 +760,14 @@ def _extract_retrieval_arc_tokens(
                 root = _find(i)
                 groups.setdefault(root, []).append(i)
             merged_groups = list(groups.values())
-        # Filter: gap_count / pixel_count must not exceed MAX_GAP_RATIO
+        # Filter only the grouping relationship, not the original token pixels.
         valid_groups = []
         rejected_by_gap = 0
         for comp_indices in merged_groups:
             total_pixels = sum(len(raw_components[i]) for i in comp_indices)
             gap_count = len(comp_indices) - 1
-            if total_pixels > 0 and gap_count / total_pixels <= MAX_GAP_RATIO:
+            gap_count_ok = max_merge_gap_count is None or gap_count <= int(max_merge_gap_count)
+            if total_pixels > 0 and gap_count_ok and gap_count / total_pixels <= max(float(max_gap_ratio), 0.0):
                 valid_groups.append((total_pixels, comp_indices))
             else:
                 rejected_by_gap += 1
@@ -846,7 +860,11 @@ def _extract_retrieval_arc_tokens(
         raw_group_points = group_arr[raw_keep]
         if len(raw_group_points) < min_area:
             continue
-        geometry_type = "edge_ring" if angular_coverage >= COMPACT_ARC_MIN_FULL_COVERAGE else "ring_arc"
+        raw_rel = raw_group_points.astype(np.float32) - center
+        raw_radial_std = float((np.linalg.norm(raw_rel, axis=1) / radius_ref).std())
+        if enforce_group_radial_std and raw_radial_std > max_radial_std:
+            continue
+        geometry_type = "edge_ring" if angular_coverage >= full_ring_coverage else "ring_arc"
         token = _token_stats(raw_group_points, weight_map, valid_mask, total_mass=total_mass, source=source)
         token.update(
             proposal_source=proposal_source,
@@ -861,6 +879,7 @@ def _extract_retrieval_arc_tokens(
             ring_arc_parent_component_area=parent_area,
             ring_arc_min_parent_component_fraction=float(min_parent_fraction),
             radial_band_center=band_center,
+            ring_arc_radial_std=raw_radial_std,
         )
         tokens.append(token)
         arc_mask[raw_group_points[:, 0], raw_group_points[:, 1]] = True

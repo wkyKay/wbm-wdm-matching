@@ -199,7 +199,7 @@ KLARF 文件
   │    ├── 4a. Token 提案 ── proposal.py
   │    │      WBM: _tokens_from_mask (status_map == VALID_HAS_DEFECT)
   │    │      WDM: _tokens_from_weighted_mask (count_map > 0, count 作为权重)
-  │    │      模式: cc、compact、tangential-ring、sparse-density 或 auto
+  │    │      模式: cc、compact、compact1、arc-ring-residual、tangential-ring、sparse-density 或 auto
   │    ├── 4b. 形状描述符 ── descriptors.py
   │    │      每个 token → Zernike 矩 (48×48, 8阶) + 几何特征 → 拼接归一化
   │    ├── 4c. Token 对打分 ── scoring.py → _token_match_components
@@ -258,7 +258,7 @@ match/
     local_matching/        # count-partial 局部匹配
       models.py            # LocalMatchResult、ProposalConfig
       morphology.py        # 连通域提取、形态学操作
-      proposal.py          # token 提案生成（cc / compact / tangential-ring / sparse-density / auto）
+      proposal.py          # token 提案生成（cc / compact / compact1 / arc-ring-residual / tangential-ring / sparse-density / auto）
       descriptors.py       # shape descriptor（Zernike 矩 + 几何特征）
       scoring.py           # token 配对打分、贪心匹配、分数聚合
     classnumber_matching.py # classnumber 分图匹配
@@ -296,12 +296,14 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 ### 4.2 Proposal：Token 提取
 
-从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持五种模式：
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持七种模式：
 
 - **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
 - **Compact**：先提取环状候选，再从残差中提取 component token（分类为 blob / line / central / irregular），按重要性与类型多样性保留候选
   - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，仅作为 ring 连通性与轮廓证据；ring token 的像素、面积、几何统计和描述子仍只使用原始缺陷格，残余 component 也由去噪后的原始 mask 提取
   - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
+- **Compact1**：面向 (7\times12) 等小图的无 closing 模式。它从原始外圈径向带提取连通分量，仅以一像素 8 邻域膨胀判断两个分量是否允许归组；最终 token 始终是原始像素并集。默认以 24 个扇区统计角度，单弧至少覆盖 3 个扇区、至少包含 4 个原始点、最多连接一个短缺口；覆盖率达到 0.50 的弧组标记为 `edge_ring`，否则标记为 `ring_arc`。
+- **Arc-ring-residual**：先提取满足径向带和角度覆盖条件的环状 token，再从扣除环状区域后的残差中提取其余 component token；适合边缘环与其他局部缺陷共存的情形。
 - **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
 - **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
 - **Auto**：根据两侧 mask 的碎片化特征和原始证据，在 `cc` 与 `sparse-density` 间自动选择，并使一对 WBM/WDM 使用同一种 proposal 表示。

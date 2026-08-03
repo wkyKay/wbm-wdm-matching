@@ -7,7 +7,11 @@ import numpy as np
 from .models import ProposalConfig
 from .morphology import (_binary_closing_square_constrained, _connected_components, _perimeter,)
 from .descriptors import _classify_token, _shape_descriptor
-from .proposal_retrieval import _retrieval_compact_tokens as _retrieval_arc_ring_residual_tokens
+from .proposal_retrieval import (
+    _extract_retrieval_arc_tokens,
+    _retrieval_compact_tokens as _retrieval_arc_ring_residual_tokens,
+    _select_arc_band_residual_tokens,
+)
 
 
 def _tokens_from_mask(
@@ -211,6 +215,13 @@ def _tokens_from_components(
         for token in tokens:
             _finalize_token(token, (h, w), proposal_config)
         return tokens
+    if proposal_config.proposal_mode == "compact1":
+        tokens, compact_debug = _compact1_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
+        if proposal_debug is not None:
+            proposal_debug[source] = compact_debug
+        for token in tokens:
+            _finalize_token(token, (h, w), proposal_config)
+        return tokens
     if proposal_config.proposal_mode == "tangential-ring":
         tokens, ring_debug = _tangential_ring_tokens(mask & valid_mask, weight_map, valid_mask, proposal_config, source=source)
         if proposal_debug is not None:
@@ -361,6 +372,65 @@ def _retrieval_compact_tokens(
         ring_input_area=int(ring_input.sum()),
     )
     return _select_retrieval_tokens(ring_token, component_tokens, proposal_config.top_k), ring_debug
+
+
+def _compact1_tokens(
+    mask: np.ndarray,
+    weight_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+) -> Tuple[List[Dict], Dict]:
+    """Small-map compact proposal using raw arc groups instead of closing."""
+    original = mask & valid_mask
+    angular_bins = max(int(proposal_config.ring_angular_bins), 1)
+    min_arc_area = max(4, int(proposal_config.min_area))
+    arc_tokens, arc_mask, arc_debug = _extract_retrieval_arc_tokens(
+        original,
+        weight_map,
+        valid_mask,
+        source=source,
+        min_area=min_arc_area,
+        edge_r_min=proposal_config.ring_edge_r_min,
+        band_width=proposal_config.ring_band_width,
+        min_angular_coverage=3.0 / angular_bins,
+        max_angular_coverage=1.0,
+        angular_bins=angular_bins,
+        max_radial_std=proposal_config.ring_max_radial_std,
+        allowed_gap_cells=1.0,
+        max_gap_count=1,
+        min_parent_fraction=0.50,
+        raw_mask=original,
+        proposal_source="compact1",
+        max_gap_ratio=0.25,
+        max_merge_gap_count=1,
+        min_band_width_cells=1.0,
+        enforce_group_radial_std=True,
+        full_ring_coverage=0.50,
+        merge_dilation_radius=1,
+    )
+    component_tokens = _retrieval_component_tokens(
+        original & (~arc_mask),
+        weight_map,
+        valid_mask,
+        min_area=proposal_config.min_area,
+        source=source,
+    )
+    for token in component_tokens:
+        token["proposal_source"] = "compact1"
+
+    selected = _select_arc_band_residual_tokens(arc_tokens, component_tokens, proposal_config.top_k)
+    arc_debug.update(
+        source=source,
+        mode="compact1",
+        original_area=int(original.sum()),
+        arc_area=int(arc_mask.sum()),
+        residual_area=int((original & (~arc_mask)).sum()),
+        compact1_min_arc_area=min_arc_area,
+        compact1_min_arc_bins=3,
+        compact1_full_ring_coverage=0.50,
+    )
+    return selected, arc_debug
 
 
 def _tangential_ring_tokens(
@@ -821,7 +891,7 @@ def _proposal_config(
     ring_min_edge_defect_fraction: Optional[float] = None,
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
-    if proposal_mode not in {"cc", "compact", "arc-ring-residual", "tangential-ring", "sparse-density"}:
+    if proposal_mode not in {"cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
     density_sigmas = tuple(float(sigma) for sigma in density_sigmas)
     if not density_sigmas or any(sigma <= 0.0 for sigma in density_sigmas):
