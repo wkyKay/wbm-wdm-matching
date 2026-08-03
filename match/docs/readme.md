@@ -4,16 +4,16 @@
 
 ### 1.1 两种模式
 
-`--mode` 参数控制匹配深度，所有输出（TSV + 图表）自动保存到 `<output-dir>/<identifier>/<mode>/`：
+`--mode` 参数控制匹配流程，所有日志与图表自动保存到 `<output-dir>/<identifier>/<mode>/`。以下命令均从仓库根目录执行；`--klarf-dir`、`--reference` 为必填参数：
 
 | 模式 | 计算内容 | 自动输出 |
 |---|---|---|
-| `count-partial`（默认） | IoU（sum map） + count-partial token 匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + baseline_review / count_partial_review / wdm_raw_review 图表 |
-| `classnumber` | IoU（best split map） + classnumber 拆分匹配 | results.tsv, topk.tsv, token_match.tsv, map_match.tsv + classnumber 列 + baseline_review / classnumber_review / wdm_raw_classnumber_review 图表 |
+| `count-partial`（默认） | 完整 WDM 的 IoU 基线和局部 token 匹配 | `results.tsv`、`topk.tsv`、`token_match.tsv`、`map_match.tsv`、参数快照及基线、局部匹配、原始 WDM 和汇总图表 |
+| `classnumber` | 按 KLARF `CLASSNUMBER` 拆分 WDM，并选择得分最高的子图 | 与 `count-partial` 相同的日志结构，另含最佳 classnumber、count/binary 局部匹配及对应图表 |
 
 ```bash
-# count-partial — 默认模式，sum map baseline + count-partial 图表
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+# count-partial — 默认模式，完整 WDM 的 IoU 基线 + 局部匹配
+python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
@@ -21,8 +21,8 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mode count-partial \
   --identifier AF00138
 
-# classnumber — split map baseline + classnumber 拆分图表，match mode 自动由 --representation 推导
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+# classnumber — 按 CLASSNUMBER 拆分；count/binary 匹配路径由 --representation 推导
+python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
@@ -30,9 +30,9 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --mode classnumber \
   --identifier AF00138
 
-# 也可用 --config 加载 JSON 配置
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
-  --config match/run_configs/partial_count.json
+# 也可用自定义 JSON 文件提供默认参数，命令行参数优先
+python3 -m match.scripts.main \
+  --config /path/to/match_config.json
 ```
 
 CLI 参数优先级高于配置文件。
@@ -43,7 +43,7 @@ CLI 参数优先级高于配置文件。
 
 ```bash
 # count-partial 模式（sparse-density proposal）
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
@@ -55,7 +55,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --identifier AF00138_sparse
 
 # classnumber 模式（sparse-density proposal，按 classnumber 拆分后每子 WDM 独立提取 token）
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
@@ -67,14 +67,14 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
   --identifier AF00138_sparse_class
 ```
 
-`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝仅由平滑产生、没有足够原始缺陷证据的候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。若使用 `--proposal-mode auto`，系统会在任一侧由多个小连通域组成且满足最小原始证据时，让 WBM 与该 WDM 同时切换到 sparse-density；它不以图像尺寸作为判断条件。`cc` 仍是默认模式，以保持既有实验可复现。
+`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。使用 `--proposal-mode auto` 时，系统会根据碎片化程度和原始证据在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
 
 ### 1.1.2 切向断裂环 proposal
 
 `tangential-ring` 是独立于 `compact` 的高召回环状 proposal。它先在原始外圈缺陷点上估计主环半径，并将环宽限制在最多两个 die；随后仅在极坐标的角度轴上桥接不超过两个 die 的短缺口。桥接结果只记录为 `ring_contour_bins` 和覆盖率证据，绝不生成 token 像素；因此 token 的面积、几何统计、描述子和匹配始终只使用原始缺陷格。检测到的 ring 从 residual 中按原始像素扣除，其余区域仍按连通域提取。
 
 ```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
+python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
@@ -91,7 +91,7 @@ PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.main \
 另一类 CP test 输入可先从 CSV 拆分为逐 wafer、逐 hardbin 的 WBM 参考图：
 
 ```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.prepare_cp_refs \
+python3 -m match.scripts.prepare_cp_refs \
   --cp-csv /path/to/cp_result.csv \
   --out-dir match/output/cp_refs
 ```
@@ -118,7 +118,7 @@ PNG 仍使用三值编码：黑色=无 die/晶圆外，灰色=有效 die 但非�
 通过 JSON 定义多条实验，调用 `batch_run` 依次执行：
 
 ```bash
-PYTHONPATH=wbm-wdm-matching python3 -m match.scripts.batch_run \
+python3 -m match.scripts.batch_run \
   --experiments batch.json
 ```
 
@@ -132,7 +132,8 @@ JSON 格式 (`batch.json`)：
     "representation": "density",
     "die_x_range": [-20, 20],
     "die_y_range": [-20, 20],
-    "topk": 10
+    "topk": 10,
+    "proposal_mode": "cc"
   },
   "experiments": [
     {
@@ -168,7 +169,7 @@ JSON 格式 (`batch.json`)：
 
 ### 3.1 数据流
 
-入口 `scripts/main.py` 先加载 WBM 参考图（`scripts/reference_loader.py`），再对 KLARF 目录下每个文件执行 `scripts/processing.py → process_one`，最后汇总写入 TSV 和图表。
+入口 `scripts/main.py` 先加载 WBM 参考图（`scripts/reference_loader.py`），再对 KLARF 目录下每个文件执行 `scripts/processing.py → process_one`，最后汇总写入 TSV、参数快照和图表。缺陷数低于 `--defect-threshold` 的文件会标记为跳过，不进入结果表。
 
 ```
                          scripts/main.py
@@ -187,18 +188,18 @@ KLARF 文件
   │    缺陷数 < threshold → SKIPPED
   │
   ├─ ② Map: 坐标映射 + 网格表达 ── core/pipeline.py → map_klarf_to_grid
-  │    ├── core/mappers.py       坐标映射 (die-index / relative / physical)
-  │    └── core/representations.py  网格表达 (count / binary / density / soft / three-value)
+  │    ├── core/mappers.py       坐标映射 (die-index / relative-coordinate / physical-coordinate)
+  │    └── core/representations.py  网格表达 (count / binary / density / soft / three-value / mountain)
   │    输出: GridMaps (与 WBM 同尺寸 H×W)
   │
   ├─ ③ Global Similarity ── core/similarity.py → compute_similarity (method="iou")
-  │    IoU (|A∩B|/|A∪B|) 作为 baseline 指标
+  │    IoU (|A∩B|/|A∪B|) 作为当前批处理基线指标
   │
   ├─ ④ Count-Partial Match ── core/local_matching/scoring.py → explain_count_partial_match
   │    ├── 4a. Token 提案 ── proposal.py
   │    │      WBM: _tokens_from_mask (status_map == VALID_HAS_DEFECT)
   │    │      WDM: _tokens_from_weighted_mask (count_map > 0, count 作为权重)
-  │    │      模式: CC (连通域) 或 Compact (环状提取 + 残差分类) 或 Sparse-density (多尺度 KDE)
+  │    │      模式: cc、compact、tangential-ring、sparse-density 或 auto
   │    ├── 4b. 形状描述符 ── descriptors.py
   │    │      每个 token → Zernike 矩 (48×48, 8阶) + 几何特征 → 拼接归一化
   │    ├── 4c. Token 对打分 ── scoring.py → _token_match_components
@@ -233,7 +234,7 @@ rows (所有文件的结果)
         │     │     (sum map IoU top-K, 左 WBM 右 WDM 对比图)
         │     ├── save_count_partial_figures → count_partial_review/
         │     │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
-        │     │     (result + result_matched_only 各出一套, proposal_steps/ 下 4 图 1 表)
+        │     │     (result 与 result_matched_only 各出一套，并输出候选摘要图)
         │     └── save_wdm_raw_figures → wdm_raw_review/
         │           (top-K KLARF 物理坐标 wafer 原图, CLASSNUMBER=0 红色, !=0 蓝色)
         └── classnumber 模式:
@@ -253,11 +254,11 @@ match/
     mappers.py             # 3 种坐标映射器（die-index / relative-coordinate / physical-coordinate）
     representations.py     # 6 种网格表达（binary / count / density / soft / three-value / mountain）
     pipeline.py            # map_klarf_to_grid 端到端入口
-    similarity.py          # 8 种全图相似度计算
+    similarity.py          # 全图相似度实现（当前批处理默认记录 IoU）
     local_matching/        # count-partial 局部匹配
       models.py            # LocalMatchResult、ProposalConfig
       morphology.py        # 连通域提取、形态学操作
-      proposal.py          # token 提案生成（cc / compact / tangential-ring / sparse-density 四种模式）
+      proposal.py          # token 提案生成（cc / compact / tangential-ring / sparse-density / auto）
       descriptors.py       # shape descriptor（Zernike 矩 + 几何特征）
       scoring.py           # token 配对打分、贪心匹配、分数聚合
     classnumber_matching.py # classnumber 分图匹配
@@ -275,6 +276,10 @@ match/
     processing.py  # 单文件处理编排
     batch_io.py    # TSV / TopK / token-match 日志写入
     batch_viz.py   # 批处理图表生成调度
+  test/
+    test_proposal.py       # WM38K 局部提案与匹配 smoke test
+    test_sparse_density.py # sparse-density proposal 回归测试
+  requirements.txt         # NumPy、Matplotlib、Pandas、klarfio 依赖
 ```
 
 ---
@@ -285,20 +290,21 @@ match/
 
 KLARF 中的每个缺陷带有 die 索引（XINDEX/YINDEX）和 die 内相对坐标（XREL/YREL）。Mapper 将缺陷散点映射到与 WBM 同尺寸的 H×W 网格中：`physical-coordinate` 合并 die 索引与 die 内坐标，计算归一化位置后按比例映射到网格格点；`die-index` 和 `relative-coordinate` 分别只用 die 索引或 die 内坐标做线性缩放。
 
-映射后统计每个格点的缺陷数得到 `count_map`，再派生 `binary_map`（count ≥ threshold）、`density_map`（count 归一化为概率分布）等表示。网格始终以 WBM 尺寸为准，确保两张图可逐格点比对。
+映射后统计每个格点的缺陷数得到 `count_map`，再派生 `binary_map`（count ≥ `--die-defect-threshold`）、`density_map`（总质量归一化）、`soft`、`three-value` 和 `mountain` 等表示。网格始终以 WBM 尺寸为准，确保两张图可逐格点比对。
 
 WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色=无缺陷但晶圆内（`VALID_NO_DEFECT=1`）、黑色=晶圆外背景（`BACKGROUND=0`）。所有后续计算只在有效区域（status ∈ {1,2}）内进行。
 
 ### 4.2 Proposal：Token 提取
 
-从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。支持四种模式：
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持五种模式：
 
 - **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
-- **Compact**：先提取边缘环状 token（radial histogram 检测环形密集带），再从残差中提取 component token（分类为 blob / line / central / irregular），按类型多样性选取
+- **Compact**：先提取环状候选，再从残差中提取 component token（分类为 blob / line / central / irregular），按重要性与类型多样性保留候选
   - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，仅作为 ring 连通性与轮廓证据；ring token 的像素、面积、几何统计和描述子仍只使用原始缺陷格，残余 component 也由去噪后的原始 mask 提取
   - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
 - **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
 - **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
+- **Auto**：根据两侧 mask 的碎片化特征和原始证据，在 `cc` 与 `sparse-density` 间自动选择，并使一对 WBM/WDM 使用同一种 proposal 表示。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。
 
@@ -306,7 +312,7 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 每个 token 的形状描述符由两部分拼接并归一化到单位长度：
 
-**Zernike 矩（权重 0.75）**：将 token 的 bbox 裁剪区域最近邻缩放到 48×48，映射到单位圆盘，计算 8 阶 Zernike 矩的幅值向量。Zernike 矩天然旋转不变，对平移和缩放也有良好鲁棒性。
+**Zernike 矩（默认权重 0.75）**：将 token 的 bbox 裁剪区域最近邻缩放到 48×48，映射到单位圆盘，计算 8 阶 Zernike 矩的幅值向量。
 
 **几何特征（权重 0.25）**：`[fill_ratio, log(aspect), log(elongation), compactness, angular_coverage, radial_std, orientation_cos, orientation_sin]`。
 
@@ -316,7 +322,7 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 **Token 对打分**：对每对 (WBM token, WDM token)，计算三个维度的亲和度，组合为 token pair score：
 
-- **Shape similarity**：两个描述符的余弦相似度（或 Zernike 余弦相似度 ×0.75 + 几何特征指数衰减相似度 ×0.25）。低于 `MIN_SHAPE_SIM_FOR_MATCH=0.45` 的直接置零
+- **Shape similarity**：两个描述符的余弦相似度；描述子内部默认按 Zernike 0.75、几何特征 0.25 融合。低于内部形状门限或未通过尺度比例门限的 token 对直接置零
 - **Position affinity**：`exp(-d² / σ_pos²)`，d 为归一化质心间的欧氏距离
 - **Scale affinity**：`w_area × area_aff + w_pca × pca_aff`
   - `area_aff = exp(-|log(area_q / area_c)| / σ_scale)`
@@ -326,7 +332,7 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 token_score = w_shape × shape_sim + w_position × position_aff + w_scale × scale_aff
 ```
 
-默认权重：`w_shape=0.60, w_position=0.25, w_scale=0.15`。
+默认权重：`w_shape=0.60`、`w_position=0.25`、`w_scale=0.15`；可通过 `--token-score-*-weight` 调整。尺度亲和度内部默认等权融合支持面积与 PCA 长短轴范围。
 
 **贪心一对一匹配**：所有 token 对按 score 降序排列，贪心选取不重复使用 token 的配对。
 

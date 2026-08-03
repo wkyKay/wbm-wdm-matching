@@ -1,3 +1,0 @@
-PhysicalCoordinateGridMapper(GridMapper):计算方法存疑
-
-python3 match/test/test_proposal.py --input-size 64 --review-top-k 5 --step-max 5
