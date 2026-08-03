@@ -133,67 +133,16 @@ checkpoint:
 
 ### 3.3 数据增强策略
 
-当前默认增强：
+当前增强不再通过命令行选择，也不使用 crop-and-resize。训练数据集为每个整图样本构造两个独立随机视图，具体包括：
 
 ```text
---augmentation crop_noise_rotate
+1. 从 {0, 90, 180, 270} 度中随机选择离散旋转角度；
+2. 行和列分别随机平移 [-3, 3] 个像素，空缺区域以零填充；
+3. 在两个 defect 通道上以 0.02 的概率随机 dropout；
+4. 仅在全局 defect 通道上以 0.01 的概率注入 Bernoulli noise。
 ```
 
-包含三类轻量增强。
-
-#### Crop
-
-默认参数：
-
-```text
---crop_min_scale 0.85
-```
-
-含义：
-
-```text
-随机裁剪 85% 到 100% 边长范围内的区域，再 resize 回原始输入尺寸
-```
-
-这样可以增强模型对轻微边界变化的鲁棒性，但不会像 aggressive crop 那样破坏主要缺陷结构。
-
-#### Sparse Noise
-
-默认参数：
-
-```text
---noise_prob 0.002
-```
-
-只在 valid wafer 区域内做很低概率的 defect/normal 翻转，用于模拟少量 bin noise。
-
-#### Rotate
-
-当前不是任意角度旋转，而是：
-
-```text
-0 / 90 / 180 / 270 度
-```
-
-默认参数：
-
-```text
---rotate_prob 0.5
-```
-
-使用 90 度倍数旋转的原因是 wafer bin map 是离散 map，任意角度旋转会引入插值伪影和新的非离散 bin 值。
-
-如果工艺方位具有明确语义，可以关闭 rotate：
-
-```bash
---augmentation crop_noise
-```
-
-更保守时只使用 crop：
-
-```bash
---augmentation crop
-```
+离散旋转避免任意角度旋转产生插值伪影和新的非离散 bin 值。上述增强是当前训练实现的固定协议，因此训练命令不应传入已删除的 `--augmentation`、`--crop_min_scale`、`--noise_prob` 或 `--rotate_prob` 参数。
 
 ### 3.4 数据质量过滤
 
