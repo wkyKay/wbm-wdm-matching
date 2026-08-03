@@ -342,7 +342,10 @@ def _overlay_kde_support(image: np.ndarray, tokens: List[Dict], alpha: float = 0
     h, w = image.shape[:2]
     for idx, token in enumerate(tokens):
         kde_pixels = token.get("kde_support_pixels")
-        if not kde_pixels or token.get("proposal_source") != "sparse_density":
+        if not kde_pixels or token.get("proposal_source") not in {
+            "sparse_density",
+            "sparse_density_arc_ring_residual",
+        }:
             continue
         base = np.array(to_rgb(TOKEN_COLORS[idx % len(TOKEN_COLORS)]), dtype=np.float32)
         pastel = _pastel_color(base, lightness=0.55)

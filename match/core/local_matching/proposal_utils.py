@@ -281,7 +281,7 @@ def _pixel_iou(a: set, b: set) -> float:
 
 
 def _is_sparse_density_mode(proposal_mode: str) -> bool:
-    return proposal_mode == "sparse-density"
+    return proposal_mode in {"sparse-density", "sparse-density-arc-ring-residual"}
 
 
 def _component_min_chebyshev_distance(first: np.ndarray, second: np.ndarray) -> int:

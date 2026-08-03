@@ -12,6 +12,12 @@ from .proposal_retrieval import (
     _retrieval_compact_tokens as _retrieval_arc_ring_residual_tokens,
     _select_arc_band_residual_tokens,
 )
+from .proposal_utils import (
+    COMPACT_RING_ARC_ALLOWED_GAP_CELLS,
+    COMPACT_RING_ARC_MAX_ANGULAR_COVERAGE,
+    COMPACT_RING_ARC_MAX_GAP_COUNT,
+    COMPACT_RING_ARC_MIN_ANGULAR_COVERAGE,
+)
 
 
 def _tokens_from_mask(
@@ -21,8 +27,8 @@ def _tokens_from_mask(
     proposal_debug: Optional[Dict] = None,
 ) -> List[Dict]:
     weight_map = mask.astype(np.float32)
-    if proposal_config.proposal_mode == "sparse-density":
-        return _tokens_from_sparse_density(weight_map, valid_mask, proposal_config, source="wbm")
+    if proposal_config.proposal_mode in {"sparse-density", "sparse-density-arc-ring-residual"}:
+        return _tokens_from_density_mode(weight_map, valid_mask, proposal_config, source="wbm")
     return _tokens_from_components(
         mask,
         valid_mask,
@@ -46,8 +52,8 @@ def _tokens_from_weighted_mask(
     raw_weight_map: Optional[np.ndarray] = None,
     proposal_debug: Optional[Dict] = None,
 ) -> List[Dict]:
-    if proposal_config.proposal_mode == "sparse-density":
-        return _tokens_from_sparse_density(
+    if proposal_config.proposal_mode in {"sparse-density", "sparse-density-arc-ring-residual"}:
+        return _tokens_from_density_mode(
             weight_map,
             valid_mask,
             proposal_config,
@@ -64,6 +70,30 @@ def _tokens_from_weighted_mask(
     )
 
 
+def _tokens_from_density_mode(
+    impulse_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+    raw_weight_map: Optional[np.ndarray] = None,
+) -> List[Dict]:
+    if proposal_config.proposal_mode == "sparse-density-arc-ring-residual":
+        return _tokens_from_sparse_density_arc_ring_residual(
+            impulse_map,
+            valid_mask,
+            proposal_config,
+            source=source,
+            raw_weight_map=raw_weight_map,
+        )
+    return _tokens_from_sparse_density(
+        impulse_map,
+        valid_mask,
+        proposal_config,
+        source=source,
+        raw_weight_map=raw_weight_map,
+    )
+
+
 def _tokens_from_sparse_density(
     impulse_map: np.ndarray,
     valid_mask: np.ndarray,
@@ -72,6 +102,22 @@ def _tokens_from_sparse_density(
     raw_weight_map: Optional[np.ndarray] = None,
 ) -> List[Dict]:
     """Create comparable WBM/WDM tokens from a multi-scale sparse density field."""
+    tokens = _density_support_candidates(impulse_map, valid_mask, proposal_config, source, raw_weight_map)
+    tokens.sort(key=_density_token_importance, reverse=True)
+    tokens = tokens[:proposal_config.top_k]
+    for token in tokens:
+        _finalize_token(token, impulse_map.shape, proposal_config)
+    return tokens
+
+
+def _density_support_candidates(
+    impulse_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+    raw_weight_map: Optional[np.ndarray],
+) -> List[Dict]:
+    """Return deduplicated KDE candidates with raw evidence, before top-k truncation."""
     density_weights = np.where(valid_mask, np.maximum(impulse_map, 0.0), 0.0).astype(np.float32)
     raw_weights = density_weights if raw_weight_map is None else np.where(
         valid_mask, np.maximum(raw_weight_map, 0.0), 0.0
@@ -96,8 +142,6 @@ def _tokens_from_sparse_density(
                 continue
             if raw_mass < proposal_config.density_min_raw_mass:
                 continue
-            # KDE support groups nearby defects, but it must not become the
-            # matched region: all token geometry is computed from raw defects.
             raw_component = comp[component_raw > 0]
             token = _token_stats(raw_component, raw_weights, valid_mask, total_mass=total_raw_mass, source=source)
             token.update(
@@ -113,13 +157,194 @@ def _tokens_from_sparse_density(
                 density_peak=float(density[rows, cols].max()),
             )
             tokens.append(token)
+    return _deduplicate_density_tokens(tokens, proposal_config.density_merge_iou)
 
-    tokens = _deduplicate_density_tokens(tokens, proposal_config.density_merge_iou)
-    tokens.sort(key=_density_token_importance, reverse=True)
-    tokens = tokens[:proposal_config.top_k]
-    for token in tokens:
+
+def _tokens_from_sparse_density_arc_ring_residual(
+    impulse_map: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    source: str,
+    raw_weight_map: Optional[np.ndarray] = None,
+) -> List[Dict]:
+    """Use KDE support for ring/arc geometry while giving each raw pixel one owner."""
+    density_weights = np.where(valid_mask, np.maximum(impulse_map, 0.0), 0.0).astype(np.float32)
+    raw_weights = density_weights if raw_weight_map is None else np.where(
+        valid_mask, np.maximum(raw_weight_map, 0.0), 0.0
+    ).astype(np.float32)
+    raw_mask = raw_weights > 0
+    candidates = _density_support_candidates(
+        impulse_map, valid_mask, proposal_config, source, raw_weight_map
+    )
+    if not candidates:
+        return []
+
+    support_mask = np.zeros_like(valid_mask, dtype=bool)
+    for candidate in candidates:
+        pixels = np.asarray(candidate["kde_support_pixels"], dtype=np.int64)
+        support_mask[pixels[:, 0], pixels[:, 1]] = True
+
+    detected, _arc_mask, _arc_debug = _extract_retrieval_arc_tokens(
+        support_mask,
+        density_weights,
+        valid_mask,
+        source=source,
+        min_area=proposal_config.min_area,
+        edge_r_min=proposal_config.ring_edge_r_min,
+        band_width=proposal_config.ring_band_width,
+        min_angular_coverage=COMPACT_RING_ARC_MIN_ANGULAR_COVERAGE,
+        max_angular_coverage=COMPACT_RING_ARC_MAX_ANGULAR_COVERAGE,
+        angular_bins=proposal_config.ring_angular_bins,
+        max_radial_std=proposal_config.ring_max_radial_std,
+        allowed_gap_cells=COMPACT_RING_ARC_ALLOWED_GAP_CELLS,
+        max_gap_count=COMPACT_RING_ARC_MAX_GAP_COUNT,
+        # The KDE envelope is intentionally wider than its radial band, so the
+        # raw-component fraction guard is replaced by the raw evidence gate below.
+        min_parent_fraction=0.0,
+        raw_mask=support_mask,
+        parent_fraction_mask=support_mask,
+        proposal_source="sparse_density_arc_ring_residual",
+    )
+    claimed_raw = np.zeros_like(raw_mask, dtype=bool)
+    claimed_support = np.zeros_like(support_mask, dtype=bool)
+    arc_tokens: List[Dict] = []
+    for detected_token in detected:
+        if detected_token.get("proposal_type") not in {"ring_band", "ring_arc_band"}:
+            continue
+        support_pixels = np.asarray(detected_token.get("pixels", []), dtype=np.int64)
+        if not len(support_pixels):
+            continue
+        raw_pixels = _raw_band_evidence(
+            support_pixels,
+            raw_mask,
+            claimed_raw,
+            valid_mask,
+            proposal_config,
+            float(detected_token.get("radial_band_center", proposal_config.ring_edge_r_min)),
+        )
+        raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum()) if len(raw_pixels) else 0.0
+        if len(raw_pixels) < proposal_config.density_min_raw_points or raw_mass < proposal_config.density_min_raw_mass:
+            continue
+        token = _hybrid_density_token(
+            support_pixels,
+            raw_pixels,
+            density_weights,
+            raw_weights,
+            valid_mask,
+            source,
+            proposal_source="sparse_density_arc_ring_residual",
+            proposal_type=detected_token["proposal_type"],
+            geometry_type=detected_token.get("geometry_type", "ring_arc"),
+        )
+        for key, value in detected_token.items():
+            if key.startswith("ring_arc_") or key == "radial_band_center":
+                token[key] = value
+        arc_tokens.append(token)
+        claimed_raw[raw_pixels[:, 0], raw_pixels[:, 1]] = True
+        claimed_support[support_pixels[:, 0], support_pixels[:, 1]] = True
+
+    residual_tokens: List[Dict] = []
+    residual_support = support_mask & (~claimed_support)
+    for comp in _connected_components(residual_support, connectivity=proposal_config.connectivity):
+        rows, cols = comp[:, 0], comp[:, 1]
+        raw_pixels = comp[raw_mask[rows, cols] & (~claimed_raw[rows, cols])]
+        raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum()) if len(raw_pixels) else 0.0
+        if len(raw_pixels) < proposal_config.density_min_raw_points or raw_mass < proposal_config.density_min_raw_mass:
+            continue
+        token = _hybrid_density_token(
+            comp,
+            raw_pixels,
+            density_weights,
+            raw_weights,
+            valid_mask,
+            source,
+            proposal_source="sparse_density_arc_ring_residual",
+            proposal_type="density_residual",
+            geometry_type="irregular",
+        )
+        residual_tokens.append(token)
+        claimed_raw[raw_pixels[:, 0], raw_pixels[:, 1]] = True
+
+    # Reserve slots for accepted arcs first, then fill the remaining budget
+    # with residuals; unlike the legacy selector, this always enforces top-k.
+    arc_tokens.sort(key=lambda item: (item.get("ring_arc_angular_coverage", 0.0), item.get("raw_mass", 0.0)), reverse=True)
+    residual_tokens.sort(key=_density_token_importance, reverse=True)
+    selected = arc_tokens[:proposal_config.top_k]
+    remaining_slots = max(proposal_config.top_k - len(selected), 0)
+    selected.extend(residual_tokens[:remaining_slots])
+    for token in selected:
         _finalize_token(token, impulse_map.shape, proposal_config)
-    return tokens
+    return selected
+
+
+def _hybrid_density_token(
+    support_pixels: np.ndarray,
+    raw_pixels: np.ndarray,
+    density_weights: np.ndarray,
+    raw_weights: np.ndarray,
+    valid_mask: np.ndarray,
+    source: str,
+    proposal_source: str,
+    proposal_type: str,
+    geometry_type: str,
+) -> Dict:
+    token = _token_stats(
+        support_pixels,
+        density_weights,
+        valid_mask,
+        total_mass=float(density_weights.sum()),
+        source=source,
+    )
+    raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum())
+    token.update(
+        proposal_source=proposal_source,
+        proposal_type=proposal_type,
+        geometry_type=geometry_type,
+        raw_pixels=[(int(r), int(c)) for r, c in raw_pixels],
+        raw_area=int(len(raw_pixels)),
+        raw_point_count=int(len(raw_pixels)),
+        raw_mass=raw_mass,
+        kde_support_pixels=[(int(r), int(c)) for r, c in support_pixels],
+        kde_support_area=int(len(support_pixels)),
+        support_area=int(len(support_pixels)),
+        support_area_ratio=float(len(support_pixels) / max(int(valid_mask.sum()), 1)),
+    )
+    return token
+
+
+def _raw_band_evidence(
+    support_pixels: np.ndarray,
+    raw_mask: np.ndarray,
+    claimed_raw: np.ndarray,
+    valid_mask: np.ndarray,
+    proposal_config: ProposalConfig,
+    band_center: float,
+) -> np.ndarray:
+    """Recover raw arc endpoints that fall below the KDE support threshold."""
+    center = np.asarray([raw_mask.shape[0] / 2.0, raw_mask.shape[1] / 2.0], dtype=np.float32)
+    valid_points = np.argwhere(valid_mask).astype(np.float32)
+    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else 0.0
+    if radius_ref <= 1e-6:
+        return np.zeros((0, 2), dtype=np.int64)
+
+    bin_count = max(int(proposal_config.ring_angular_bins), 1)
+    support_rel = support_pixels.astype(np.float32) - center
+    support_theta = (np.degrees(np.arctan2(support_rel[:, 0], support_rel[:, 1])) + 360.0) % 360.0
+    support_bins = np.floor(support_theta / (360.0 / bin_count)).astype(np.int64) % bin_count
+    allowed_bins = {(int(bin_id) + offset) % bin_count for bin_id in support_bins for offset in (-1, 0, 1)}
+
+    points = np.argwhere(raw_mask & (~claimed_raw)).astype(np.int64)
+    if not len(points):
+        return points
+    rel = points.astype(np.float32) - center
+    radial = np.linalg.norm(rel, axis=1) / radius_ref
+    theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
+    bins = np.floor(theta / (360.0 / bin_count)).astype(np.int64) % bin_count
+    keep = (
+        (np.abs(radial - band_center) <= proposal_config.ring_band_width)
+        & np.asarray([int(bin_id) in allowed_bins for bin_id in bins], dtype=bool)
+    )
+    return points[keep]
 
 
 def _masked_gaussian_density(
@@ -891,7 +1116,7 @@ def _proposal_config(
     ring_min_edge_defect_fraction: Optional[float] = None,
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
-    if proposal_mode not in {"cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density"}:
+    if proposal_mode not in {"cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density", "sparse-density-arc-ring-residual"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
     density_sigmas = tuple(float(sigma) for sigma in density_sigmas)
     if not density_sigmas or any(sigma <= 0.0 for sigma in density_sigmas):

@@ -69,6 +69,8 @@ python3 -m match.scripts.main \
 
 `--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。使用 `--proposal-mode auto` 时，系统会根据碎片化程度和原始证据在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
 
+对稀疏且断裂的边缘环/弧，可显式使用 `--proposal-mode sparse-density-arc-ring-residual`。该模式以去重后的 KDE support 进行径向带、角度覆盖和短缺口分组，再回查环带内的原始点数与原始质量；最终 token 的 `pixels`、面积、位置与描述子使用被接受的环带 support，`raw_pixels`、`raw_area` 与 `raw_mass` 保留真实证据。接受的 ring/arc 会独占其 raw 像素，residual 仅从未占有的 raw 像素构建，避免重复匹配和重复汇总。完整 support 越过 `--ring-edge-r-min` 不会单独拒绝候选，实际 ring token 只取被检测的径向带。
+
 ### 1.1.2 切向断裂环 proposal
 
 `tangential-ring` 是独立于 `compact` 的高召回环状 proposal。它先在原始外圈缺陷点上估计主环半径，并将环宽限制在最多两个 die；随后仅在极坐标的角度轴上桥接不超过两个 die 的短缺口。桥接结果只记录为 `ring_contour_bins` 和覆盖率证据，绝不生成 token 像素；因此 token 的面积、几何统计、描述子和匹配始终只使用原始缺陷格。检测到的 ring 从 residual 中按原始像素扣除，其余区域仍按连通域提取。
@@ -296,7 +298,7 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 ### 4.2 Proposal：Token 提取
 
-从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持七种模式：
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持八种模式：
 
 - **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
 - **Compact**：先提取环状候选，再从残差中提取 component token（分类为 blob / line / central / irregular），按重要性与类型多样性保留候选
@@ -306,6 +308,7 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 - **Arc-ring-residual**：先提取满足径向带和角度覆盖条件的环状 token，再从扣除环状区域后的残差中提取其余 component token；适合边缘环与其他局部缺陷共存的情形。
 - **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
 - **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
+- **Sparse-density-arc-ring-residual**：在去重 KDE support 上检测边缘 ring/arc，并在接受后按 raw 像素所有权提取 residual。每个最终 token 同时保留 support 几何视图与 raw 证据视图；前者用于形状、位置、面积和描述子，后者用于有效性门槛与去重计数。
 - **Auto**：根据两侧 mask 的碎片化特征和原始证据，在 `cc` 与 `sparse-density` 间自动选择，并使一对 WBM/WDM 使用同一种 proposal 表示。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。

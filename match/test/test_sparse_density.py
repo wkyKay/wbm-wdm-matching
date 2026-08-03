@@ -1,6 +1,8 @@
 """Focused regression tests for sparse-density WBM/WDM proposal generation."""
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import unittest
 
 import numpy as np
@@ -92,6 +94,124 @@ class SparseDensityProposalTest(unittest.TestCase):
         )
         self.assertEqual(result["wbm_tokens"][0]["proposal_config"]["proposal_mode"], "sparse-density")
         self.assertEqual(result["wdm_tokens"][0]["proposal_config"]["proposal_mode"], "sparse-density")
+
+    def test_density_arc_ring_residual_uses_support_geometry_and_disjoint_raw_evidence(self) -> None:
+        center = np.array([12.5, 12.5])
+        arc_points = sorted({
+            (int(round(center[0] + 11 * np.sin(angle))), int(round(center[1] + 11 * np.cos(angle))))
+            for angle in np.linspace(0.0, np.pi / 2.0, 18)
+        })
+        residual_points = [(7, 7), (7, 8), (8, 7), (8, 8)]
+        points = arc_points + residual_points
+        result = explain_count_partial_match(
+            _grid(points),
+            _grid(points),
+            proposal_mode="sparse-density-arc-ring-residual",
+            density_sigmas=(1.2,),
+            density_threshold=0.12,
+            density_min_raw_points=3,
+            density_min_raw_mass=3.0,
+            min_area=3,
+            ring_min_angular_coverage=0.08,
+        )
+
+        tokens = result["wbm_tokens"]
+        arc = next(token for token in tokens if token["proposal_type"] == "ring_arc_band")
+        residual = next(token for token in tokens if token["proposal_type"] == "density_residual")
+        self.assertGreater(arc["area"], arc["raw_area"])
+        self.assertEqual(arc["area"], arc["kde_support_area"])
+        self.assertTrue(set(arc["raw_pixels"]).isdisjoint(residual["raw_pixels"]))
+        self.assertEqual(set(arc["raw_pixels"]) | set(residual["raw_pixels"]), set(points))
+
+        top_one = explain_count_partial_match(
+            _grid(points),
+            _grid(points),
+            proposal_mode="sparse-density-arc-ring-residual",
+            density_sigmas=(1.2,),
+            density_threshold=0.12,
+            density_min_raw_points=3,
+            density_min_raw_mass=3.0,
+            min_area=3,
+            top_k=1,
+            ring_min_angular_coverage=0.08,
+        )
+        self.assertEqual(len(top_one["wbm_tokens"]), 1)
+        self.assertEqual(top_one["wbm_tokens"][0]["proposal_type"], "ring_arc_band")
+        self.assertTrue(top_one["wbm_tokens"][0]["raw_pixels"])
+
+    def test_existing_proposal_modes_still_run(self) -> None:
+        points = [(5, 5), (5, 6), (6, 5), (6, 6), (12, 20), (13, 20), (14, 20), (15, 20)]
+        for mode in (
+            "cc",
+            "compact",
+            "compact1",
+            "arc-ring-residual",
+            "tangential-ring",
+            "sparse-density",
+            "auto",
+        ):
+            with self.subTest(proposal_mode=mode):
+                result = explain_count_partial_match(
+                    _grid(points),
+                    _grid(points, count=2.0),
+                    proposal_mode=mode,
+                    min_area=3,
+                    density_sigmas=(1.2,),
+                    density_threshold=0.12,
+                    density_min_raw_points=3,
+                    density_min_raw_mass=3.0,
+                )
+                self.assertTrue(result["wbm_tokens"])
+                self.assertTrue(result["wdm_tokens"])
+
+    def test_hybrid_mode_writes_proposal_steps_figure(self) -> None:
+        from matplotlib import pyplot as plt
+        from match.viz.count_partial_visualization import _cluster_color_image, plot_count_partial_steps
+
+        center = np.array([12.5, 12.5])
+        arc_points = sorted({
+            (int(round(center[0] + 11 * np.sin(angle))), int(round(center[1] + 11 * np.cos(angle))))
+            for angle in np.linspace(0.0, np.pi / 2.0, 18)
+        })
+        points = arc_points + [(7, 7), (7, 8), (8, 7), (8, 8)]
+        explanation = explain_count_partial_match(
+            _grid(points),
+            _grid(points, count=2.0),
+            proposal_mode="sparse-density-arc-ring-residual",
+            density_sigmas=(1.2,),
+            density_threshold=0.12,
+            density_min_raw_points=3,
+            density_min_raw_mass=3.0,
+            min_area=3,
+            ring_min_angular_coverage=0.08,
+        )
+        plain = _cluster_color_image(_grid(points).status_map, explanation["wbm_tokens"], source="wbm")
+        with_support = _cluster_color_image(
+            _grid(points).status_map,
+            explanation["wbm_tokens"],
+            source="wbm",
+            show_kde_support=True,
+        )
+        self.assertFalse(np.array_equal(plain, with_support))
+
+        with TemporaryDirectory() as temp_dir:
+            save_path = Path(temp_dir) / "hybrid_steps.png"
+            figure, axes = plot_count_partial_steps(
+                _grid(points),
+                _grid(points, count=2.0),
+                proposal_mode="sparse-density-arc-ring-residual",
+                density_sigmas=(1.2,),
+                density_threshold=0.12,
+                density_min_raw_points=3,
+                density_min_raw_mass=3.0,
+                min_area=3,
+                ring_min_angular_coverage=0.08,
+                save_path=save_path,
+            )
+            self.assertEqual(len(axes), 5)
+            self.assertTrue(save_path.is_file())
+            self.assertGreater(save_path.stat().st_size, 10_000)
+            plt.close(figure)
 
 
 if __name__ == "__main__":

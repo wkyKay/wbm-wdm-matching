@@ -375,7 +375,7 @@ def _explain_local_partial_match(
         ring_min_edge_defect_fraction=ring_min_edge_defect_fraction,
     )
     proposal_debug = {"proposal_mode": proposal_config.proposal_mode}
-    if proposal_config.proposal_mode == "sparse-density":
+    if proposal_config.proposal_mode in {"sparse-density", "sparse-density-arc-ring-residual"}:
         wbm_tokens = _tokens_from_weighted_mask(
             wbm_mask & valid_mask,
             valid_mask,
@@ -397,7 +397,7 @@ def _explain_local_partial_match(
         valid_mask,
         wdm_weight_map.astype(np.float32),
         proposal_config=proposal_config,
-        raw_weight_map=raw_wdm_weight_map if proposal_config.proposal_mode == "sparse-density" else None,
+        raw_weight_map=raw_wdm_weight_map if proposal_config.proposal_mode in {"sparse-density", "sparse-density-arc-ring-residual"} else None,
         proposal_debug=proposal_debug,
     )
 
