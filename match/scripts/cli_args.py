@@ -282,6 +282,26 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="PCA-extent component weight inside scale affinity.",
     )
     parser.add_argument(
+        "--proposal-min-shape-score",
+        type=float,
+        default=0.6,
+        help="Minimum mean shape score for all-WDM proposal figures; 0 keeps every candidate.",
+    )
+    parser.add_argument(
+        "--proposal-min-position-score",
+        "--proposal-min-pos-score",
+        dest="proposal_min_position_score",
+        type=float,
+        default=0.0,
+        help="Minimum mean position score for all-WDM proposal figures; 0 keeps every candidate.",
+    )
+    parser.add_argument(
+        "--proposal-min-scale-score",
+        type=float,
+        default=0.5,
+        help="Minimum mean scale score for all-WDM proposal figures; 0 keeps every candidate.",
+    )
+    parser.add_argument(
         "--proposal-mode",
         choices=("cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density", "sparse-density-arc-ring-residual", "auto"),
         default="cc",
