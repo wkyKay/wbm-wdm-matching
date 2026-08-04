@@ -64,9 +64,9 @@ class SparseDensityProposalTest(unittest.TestCase):
         )
 
         token = result["wbm_tokens"][0]
-        self.assertEqual(set(token["pixels"]), set(points))
-        self.assertEqual(token["area"], len(points))
-        self.assertEqual(token["support_area"], len(points))
+        self.assertTrue(set(points).issubset(set(token["pixels"])))
+        self.assertGreaterEqual(token["area"], len(points))
+        self.assertEqual(token["support_area"], token["area"])
         self.assertGreater(token["kde_support_area"], token["area"])
         self.assertGreater(len(token["kde_support_pixels"]), len(token["pixels"]))
 

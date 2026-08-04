@@ -134,29 +134,31 @@ def _density_support_candidates(
     for sigma in proposal_config.density_sigmas:
         density = _masked_gaussian_density(density_weights, valid_mask, sigma)
         support = _density_support_mask(density, valid_mask, proposal_config.density_threshold)
-        # Shrink only derived support; raw pixels remain anchors and their
-        # original support connectivity is preserved.
-        support = _protected_support_erosion(support, raw_points, layers=1)
         total_density_mass = float(density[support].sum())
         for comp in _connected_components(support, connectivity=proposal_config.connectivity):
             rows = comp[:, 0].astype(np.int64)
             cols = comp[:, 1].astype(np.int64)
-            component_raw = raw_weights[rows, cols]
-            raw_point_count = int((component_raw > 0).sum())
-            raw_mass = float(component_raw.sum())
+            attached_raw = _raw_support_contact_evidence(
+                comp,
+                raw_points,
+                np.zeros_like(raw_points, dtype=bool),
+                valid_mask,
+            )
+            raw_point_count = int(len(attached_raw))
+            raw_mass = float(raw_weights[attached_raw[:, 0], attached_raw[:, 1]].sum()) if len(attached_raw) else 0.0
             if raw_point_count < proposal_config.density_min_raw_points:
                 continue
             if raw_mass < proposal_config.density_min_raw_mass:
                 continue
-            raw_component = comp[component_raw > 0]
-            token = _token_stats(raw_component, raw_weights, valid_mask, total_mass=total_raw_mass, source=source)
+            support_pixels = _merge_and_erode_support(comp, attached_raw, support.shape, attached_raw, layers=1)
+            token = _token_stats(support_pixels, raw_weights, valid_mask, total_mass=total_raw_mass, source=source)
             token.update(
                 proposal_source="sparse_density",
                 proposal_type="density_support",
                 proposal_scale=float(sigma),
                 raw_mass=raw_mass,
                 raw_point_count=raw_point_count,
-                raw_pixels=[(int(r), int(c)) for r, c in raw_component],
+                raw_pixels=[(int(r), int(c)) for r, c in attached_raw],
                 kde_support_pixels=[(int(r), int(c)) for r, c in comp],
                 kde_support_area=int(len(comp)),
                 kde_support_mass=total_density_mass,
@@ -236,6 +238,13 @@ def _tokens_from_sparse_density_arc_ring_residual(
         raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum()) if len(raw_pixels) else 0.0
         if len(raw_pixels) < proposal_config.density_min_raw_points or raw_mass < proposal_config.density_min_raw_mass:
             continue
+        support_pixels = _merge_and_erode_support(
+            support_pixels,
+            raw_pixels,
+            support_mask.shape,
+            raw_pixels,
+            layers=1,
+        )
         token = _hybrid_density_token(
             support_pixels,
             raw_pixels,
@@ -264,6 +273,7 @@ def _tokens_from_sparse_density_arc_ring_residual(
         raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum()) if len(raw_pixels) else 0.0
         if len(raw_pixels) < proposal_config.density_min_raw_points or raw_mass < proposal_config.density_min_raw_mass:
             continue
+        comp = _merge_and_erode_support(comp, raw_pixels, support_mask.shape, raw_pixels, layers=1)
         token = _hybrid_density_token(
             comp,
             raw_pixels,
@@ -343,6 +353,24 @@ def _raw_support_contact_evidence(
         if np.any(expanded[rows, cols]):
             selected.append(component.astype(np.int64))
     return np.concatenate(selected, axis=0) if selected else np.zeros((0, 2), dtype=np.int64)
+
+
+def _merge_and_erode_support(
+    support_pixels: np.ndarray,
+    raw_pixels: np.ndarray,
+    shape: tuple[int, int],
+    raw_anchor_pixels: np.ndarray,
+    layers: int = 1,
+) -> np.ndarray:
+    """Attach raw pixels first, then apply protected local support erosion."""
+    support_mask = np.zeros(shape, dtype=bool)
+    support_mask[support_pixels[:, 0], support_pixels[:, 1]] = True
+    if len(raw_pixels):
+        support_mask[raw_pixels[:, 0], raw_pixels[:, 1]] = True
+    anchors = np.zeros(shape, dtype=bool)
+    if len(raw_anchor_pixels):
+        anchors[raw_anchor_pixels[:, 0], raw_anchor_pixels[:, 1]] = True
+    return np.argwhere(_protected_support_erosion(support_mask, anchors, layers=layers)).astype(np.int64)
 
 
 def _hybrid_density_token(
