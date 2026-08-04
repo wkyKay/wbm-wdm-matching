@@ -90,6 +90,22 @@ class Compact1ProposalTest(unittest.TestCase):
         self.assertNotIn((3, 0), tokens[0]["pixels"])
         self.assertEqual(explanation["proposal_debug"]["wbm"]["mode"], "compact1")
 
+    def test_scale_gate_rejects_match_without_removing_proposals(self) -> None:
+        points = [(1, 0), (2, 0), (4, 0), (5, 0)]
+        explanation = explain_count_partial_match(
+            _grid(points),
+            _grid(points),
+            proposal_mode="compact1",
+            min_area=5,
+            top_k=4,
+            min_scale_score=1.01,
+        )
+
+        self.assertEqual(len(explanation["wbm_tokens"]), 1)
+        self.assertEqual(len(explanation["wdm_tokens"]), 1)
+        self.assertEqual(explanation["matches"], [])
+        self.assertEqual(explanation["result"].matched_tokens, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

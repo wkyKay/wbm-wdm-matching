@@ -250,46 +250,60 @@ def _save_all_count_partial_proposals(args, ref_gm, scored, log_dir: Path, close
     min_scale = float(getattr(args, "proposal_min_scale_score", 0.0))
     records = []
     filtered_count = 0
+    errors = []
+    selection_rows = []
     for rank, (name, gm, score) in enumerate(scored, start=1):
-        explanation = explain_count_partial_match(
-            ref_gm,
-            gm,
-            min_area=args.proposal_min_area,
-            top_k=args.proposal_top_k,
-            proposal_mode=args.proposal_mode,
-            rotation_tolerance=args.proposal_rotation_tolerance,
-            min_token_score=args.token_min_score,
-            score_shape_weight=args.token_score_shape_weight,
-            score_position_weight=args.token_score_position_weight,
-            score_scale_weight=args.token_score_scale_weight,
-            min_relative_token_area=args.proposal_min_relative_token_area,
-            scale_area_weight=args.token_scale_area_weight,
-            scale_pca_weight=args.token_scale_pca_weight,
-            density_sigmas=tuple(args.density_sigmas),
-            density_threshold=args.density_threshold,
-            density_min_raw_points=args.density_min_raw_points,
-            density_min_raw_mass=args.density_min_raw_mass,
-            density_merge_iou=args.density_merge_iou,
-            density_weight_transform=args.density_weight_transform,
-            ring_min_area=args.ring_min_area,
-            ring_edge_r_min=args.ring_edge_r_min,
-            ring_band_width=args.ring_band_width,
-            ring_min_angular_coverage=args.ring_min_angular_coverage,
-            ring_angular_bins=args.ring_angular_bins,
-            ring_max_radial_std=args.ring_max_radial_std,
-            ring_max_defect_ratio=args.ring_max_defect_ratio,
-            ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
-        )
+        try:
+            explanation = explain_count_partial_match(
+                ref_gm,
+                gm,
+                min_area=args.proposal_min_area,
+                top_k=args.proposal_top_k,
+                proposal_mode=args.proposal_mode,
+                rotation_tolerance=args.proposal_rotation_tolerance,
+                min_token_score=args.token_min_score,
+                min_shape_score=args.proposal_min_shape_score,
+                min_position_score=args.proposal_min_position_score,
+                min_scale_score=args.proposal_min_scale_score,
+                score_shape_weight=args.token_score_shape_weight,
+                score_position_weight=args.token_score_position_weight,
+                score_scale_weight=args.token_score_scale_weight,
+                min_relative_token_area=args.proposal_min_relative_token_area,
+                scale_area_weight=args.token_scale_area_weight,
+                scale_pca_weight=args.token_scale_pca_weight,
+                density_sigmas=tuple(args.density_sigmas),
+                density_threshold=args.density_threshold,
+                density_min_raw_points=args.density_min_raw_points,
+                density_min_raw_mass=args.density_min_raw_mass,
+                density_merge_iou=args.density_merge_iou,
+                density_weight_transform=args.density_weight_transform,
+                ring_min_area=args.ring_min_area,
+                ring_edge_r_min=args.ring_edge_r_min,
+                ring_band_width=args.ring_band_width,
+                ring_min_angular_coverage=args.ring_min_angular_coverage,
+                ring_angular_bins=args.ring_angular_bins,
+                ring_max_radial_std=args.ring_max_radial_std,
+                ring_max_defect_ratio=args.ring_max_defect_ratio,
+                ring_min_edge_defect_fraction=args.ring_min_edge_defect_fraction,
+            )
+        except Exception as exc:
+            errors.append((rank, name, str(exc)))
+            selection_rows.append((rank, name, score, "error", "", "", "", str(exc)))
+            continue
         match_result = explanation["result"]
-        if (
+        below_threshold = (
             match_result.mean_shape < min_shape
             or match_result.mean_position < min_position
             or match_result.mean_scale < min_scale
-        ):
+        )
+        if below_threshold:
             filtered_count += 1
-            continue
         record = (rank, name, gm, score, explanation["wdm_tokens"])
         records.append(record)
+        selection_rows.append((
+            rank, name, score, "below_threshold" if below_threshold else "saved",
+            match_result.mean_shape, match_result.mean_position, match_result.mean_scale, "",
+        ))
         fig, axes = plt.subplots(1, 2, figsize=(8.0, 4.2))
         _plot_wdm_original(axes[0], gm, ref_gm.status_map, "WDM original", map_mode="count")
         _plot_cluster_color_map(
@@ -300,6 +314,12 @@ def _save_all_count_partial_proposals(args, ref_gm, scored, log_dir: Path, close
         save_path = individual_dir / f"rank{rank:03d}_{_safe_name(name)}_proposal.png"
         fig.savefig(save_path, dpi=160, bbox_inches="tight")
         close_all("all")
+
+    selection_path = out_dir / "proposal_selection.tsv"
+    with selection_path.open("w", encoding="utf-8") as file:
+        file.write("rank\twdm\tcount_partial\tstatus\tmean_shape\tmean_position\tmean_scale\treason\n")
+        for row in selection_rows:
+            file.write("\t".join(str(value).replace("\t", " ").replace("\n", " ") for value in row) + "\n")
 
     for group_index, start in enumerate(range(0, len(records), 10), start=1):
         group = records[start:start + 10]
@@ -320,7 +340,7 @@ def _save_all_count_partial_proposals(args, ref_gm, scored, log_dir: Path, close
 
     print(
         f"All WDM proposal figures saved: {out_dir} "
-        f"({len(records)}/{len(scored)} candidates; filtered={filtered_count}; "
+        f"({len(records)}/{len(scored)} candidates; below_threshold={filtered_count}; errors={len(errors)}; "
         f"min_shape={min_shape:.3f}, min_position={min_position:.3f}, min_scale={min_scale:.3f})"
     )
 
@@ -353,6 +373,9 @@ def _save_count_partial_figures_for_key(
             proposal_mode=args.proposal_mode,
             rotation_tolerance=args.proposal_rotation_tolerance,
             min_token_score=args.token_min_score,
+            min_shape_score=args.proposal_min_shape_score,
+            min_position_score=args.proposal_min_position_score,
+            min_scale_score=args.proposal_min_scale_score,
             score_shape_weight=args.token_score_shape_weight,
             score_position_weight=args.token_score_position_weight,
             score_scale_weight=args.token_score_scale_weight,

@@ -32,6 +32,9 @@ def compute_count_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    min_shape_score: float = 0.0,
+    min_position_score: float = 0.0,
+    min_scale_score: float = 0.0,
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
@@ -65,6 +68,9 @@ def compute_count_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        min_shape_score=min_shape_score,
+        min_position_score=min_position_score,
+        min_scale_score=min_scale_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
@@ -170,6 +176,9 @@ def explain_count_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    min_shape_score: float = 0.0,
+    min_position_score: float = 0.0,
+    min_scale_score: float = 0.0,
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
@@ -211,6 +220,9 @@ def explain_count_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        min_shape_score=min_shape_score,
+        min_position_score=min_position_score,
+        min_scale_score=min_scale_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
@@ -325,6 +337,9 @@ def _explain_local_partial_match(
     proposal_mode: str,
     rotation_tolerance: bool,
     min_token_score: float,
+    min_shape_score: float,
+    min_position_score: float,
+    min_scale_score: float,
     score_shape_weight: float,
     score_position_weight: float,
     score_scale_weight: float,
@@ -425,6 +440,9 @@ def _explain_local_partial_match(
 
     all_pairs = []
     min_token_score = max(float(min_token_score), 0.0)
+    min_shape_score = max(float(min_shape_score), 0.0)
+    min_position_score = max(float(min_position_score), 0.0)
+    min_scale_score = max(float(min_scale_score), 0.0)
     min_relative_token_area = max(float(min_relative_token_area), 0.0)
     score_weights = _normalized_score_weights(
         score_shape_weight,
@@ -458,6 +476,12 @@ def _explain_local_partial_match(
                 score_weights=score_weights,
                 scale_component_weights=scale_component_weights,
             )
+            if (
+                comp["shape_sim"] < min_shape_score
+                or comp["position_affinity"] < min_position_score
+                or comp["scale_affinity"] < min_scale_score
+            ):
+                continue
             passes_score_gate = comp["score"] >= min_token_score if min_token_score > 0 else comp["score"] > 0
             if passes_score_gate:
                 all_pairs.append(_pair_record(query_id, candidate_id, qt, ct, comp))

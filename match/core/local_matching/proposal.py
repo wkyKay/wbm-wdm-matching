@@ -1117,6 +1117,8 @@ def _proposal_config(
     ring_min_edge_defect_fraction: Optional[float] = None,
 ) -> ProposalConfig:
     proposal_mode = proposal_mode.lower().strip()
+    if proposal_mode == "sparse-arc-ring-residual":
+        proposal_mode = "sparse-density-arc-ring-residual"
     if proposal_mode not in {"cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density", "sparse-density-arc-ring-residual"}:
         raise ValueError(f"Unsupported count-partial proposal mode: {proposal_mode}")
     density_sigmas = tuple(float(sigma) for sigma in density_sigmas)

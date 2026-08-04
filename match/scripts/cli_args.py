@@ -272,20 +272,20 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--token-scale-area-weight",
         type=float,
-        default=0.50,
+        default=0.20,
         help="Support-area component weight inside scale affinity.",
     )
     parser.add_argument(
         "--token-scale-pca-weight",
         type=float,
-        default=0.50,
+        default=0.80,
         help="PCA-extent component weight inside scale affinity.",
     )
     parser.add_argument(
         "--proposal-min-shape-score",
         type=float,
         default=0.6,
-        help="Minimum mean shape score for all-WDM proposal figures; 0 keeps every candidate.",
+        help="Minimum shape score required for each token pair; 0 disables this extra gate.",
     )
     parser.add_argument(
         "--proposal-min-position-score",
@@ -293,19 +293,19 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         dest="proposal_min_position_score",
         type=float,
         default=0.0,
-        help="Minimum mean position score for all-WDM proposal figures; 0 keeps every candidate.",
+        help="Minimum position score required for each token pair; 0 disables this extra gate.",
     )
     parser.add_argument(
         "--proposal-min-scale-score",
         type=float,
         default=0.5,
-        help="Minimum mean scale score for all-WDM proposal figures; 0 keeps every candidate.",
+        help="Minimum scale score required for each token pair; 0 disables this extra gate.",
     )
     parser.add_argument(
         "--proposal-mode",
-        choices=("cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density", "sparse-density-arc-ring-residual", "auto"),
+        choices=("cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density", "sparse-density-arc-ring-residual", "sparse-arc-ring-residual", "auto"),
         default="cc",
-        help="Proposal mode: cc, compact, compact1 (small-map raw arc grouping), arc-ring-residual, tangential-ring, sparse-density, sparse-density-arc-ring-residual, or auto.",
+        help="Proposal mode: cc, compact, compact1 (small-map raw arc grouping), arc-ring-residual, tangential-ring, sparse-density, sparse-density-arc-ring-residual (or sparse-arc-ring-residual), or auto.",
     )
     parser.add_argument(
         "--proposal-rotation-tolerance",
