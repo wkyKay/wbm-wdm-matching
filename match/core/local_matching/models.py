@@ -29,6 +29,7 @@ class ProposalConfig:
     density_min_raw_mass: float
     density_merge_iou: float
     density_weight_transform: str
+    sparse_support_contact_ratio_max: float
     ring_min_area: int
     ring_edge_r_min: float
     ring_band_width: float

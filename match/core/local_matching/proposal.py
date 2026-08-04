@@ -20,7 +20,6 @@ from .proposal_utils import (
     _circular_true_runs,
     _wafer_center_and_axes,
     _elliptical_radial,
-    _elliptical_theta,
 )
 
 
@@ -219,6 +218,9 @@ def _tokens_from_sparse_density_arc_ring_residual(
         support_pixels = np.asarray(detected_token.get("pixels", []), dtype=np.int64)
         if not len(support_pixels):
             continue
+        contact_ratio, contact_count = _support_contact_ratio(support_pixels, support_mask)
+        if contact_ratio > proposal_config.sparse_support_contact_ratio_max:
+            continue
         raw_pixels = _raw_band_evidence(
             support_pixels,
             raw_mask,
@@ -245,6 +247,9 @@ def _tokens_from_sparse_density_arc_ring_residual(
         for key, value in detected_token.items():
             if key.startswith("ring_arc_") or key == "radial_band_center":
                 token[key] = value
+        token["support_contact_ratio"] = contact_ratio
+        token["support_contact_count"] = contact_count
+        token["support_contact_ratio_max"] = proposal_config.sparse_support_contact_ratio_max
         arc_tokens.append(token)
         claimed_raw[raw_pixels[:, 0], raw_pixels[:, 1]] = True
         claimed_support[support_pixels[:, 0], support_pixels[:, 1]] = True
@@ -281,6 +286,31 @@ def _tokens_from_sparse_density_arc_ring_residual(
     for token in selected:
         _finalize_token(token, impulse_map.shape, proposal_config)
     return selected
+
+
+def _support_contact_ratio(support_pixels: np.ndarray, support_mask: np.ndarray) -> tuple[float, int]:
+    """Measure how much of a ring/arc support touches its parent support residual."""
+    ring_mask = np.zeros_like(support_mask, dtype=bool)
+    ring_mask[support_pixels[:, 0], support_pixels[:, 1]] = True
+    labels = np.full(support_mask.shape, -1, dtype=np.int32)
+    for label, component in enumerate(_connected_components(support_mask, connectivity=8)):
+        labels[component[:, 0].astype(int), component[:, 1].astype(int)] = label
+    parent_ids = set(labels[support_pixels[:, 0], support_pixels[:, 1]].tolist())
+    parent_ids.discard(-1)
+    parent_mask = np.isin(labels, list(parent_ids))
+    residual = parent_mask & (~ring_mask)
+    contact_count = 0
+    h, w = support_mask.shape
+    for row, col in support_pixels:
+        r, c = int(row), int(col)
+        if any(
+            0 <= r + dr < h and 0 <= c + dc < w and residual[r + dr, c + dc]
+            for dr in (-1, 0, 1)
+            for dc in (-1, 0, 1)
+            if dr != 0 or dc != 0
+        ):
+            contact_count += 1
+    return float(contact_count / max(len(support_pixels), 1)), contact_count
 
 
 def _hybrid_density_token(
@@ -327,11 +357,10 @@ def _raw_band_evidence(
     band_center: float,
     elliptical_geometry: bool = False,
 ) -> np.ndarray:
-    """Recover raw arc endpoints that fall below the KDE support threshold."""
+    """Attach nearby raw components to an accepted KDE ring/arc support."""
     if elliptical_geometry:
         center, axes = _wafer_center_and_axes(valid_mask)
         radial_fn = lambda pts: _elliptical_radial(pts, center, axes)
-        theta_fn = lambda pts: _elliptical_theta(pts, center, axes)
     else:
         center = np.asarray([raw_mask.shape[0] / 2.0, raw_mask.shape[1] / 2.0], dtype=np.float32)
         valid_points = np.argwhere(valid_mask).astype(np.float32)
@@ -339,24 +368,52 @@ def _raw_band_evidence(
         if radius_ref <= 1e-6:
             return np.zeros((0, 2), dtype=np.int64)
         radial_fn = lambda pts: np.linalg.norm(pts.astype(np.float32) - center, axis=1) / radius_ref
-        theta_fn = lambda pts: (np.degrees(np.arctan2(pts[:, 0] - center[0], pts[:, 1] - center[1])) + 360.0) % 360.0
 
-    bin_count = max(int(proposal_config.ring_angular_bins), 1)
-    support_theta = theta_fn(support_pixels)
-    support_bins = np.floor(support_theta / (360.0 / bin_count)).astype(np.int64) % bin_count
-    allowed_bins = {(int(bin_id) + offset) % bin_count for bin_id in support_bins for offset in (-1, 0, 1)}
-
-    points = np.argwhere(raw_mask & (~claimed_raw)).astype(np.int64)
-    if not len(points):
-        return points
-    radial = radial_fn(points)
-    theta = theta_fn(points)
-    bins = np.floor(theta / (360.0 / bin_count)).astype(np.int64) % bin_count
-    keep = (
-        (np.abs(radial - band_center) <= proposal_config.ring_band_width)
-        & np.asarray([int(bin_id) in allowed_bins for bin_id in bins], dtype=bool)
+    radius_ref = (
+        float(max(axes))
+        if elliptical_geometry
+        else (
+            float(np.linalg.norm(np.argwhere(valid_mask).astype(np.float32) - center, axis=1).max())
+            if valid_mask.any()
+            else 0.0
+        )
     )
-    return points[keep]
+    if radius_ref <= 1e-6:
+        return np.zeros((0, 2), dtype=np.int64)
+
+    # Permit a small raw-only envelope around the selected normalized band.
+    # The raw component must still touch the support (8-connectivity); this
+    # recovers sparse endpoints without absorbing distant inner components.
+    radial_margin = max(float(proposal_config.ring_band_width), 3.0 / radius_ref)
+    raw_points = np.argwhere(raw_mask & (~claimed_raw) & valid_mask).astype(np.int64)
+    if not len(raw_points):
+        return raw_points
+    radial = radial_fn(raw_points)
+    allowed = np.abs(radial - float(band_center)) <= radial_margin
+    allowed_mask = np.zeros_like(raw_mask, dtype=bool)
+    allowed_points = raw_points[allowed]
+    if not len(allowed_points):
+        return np.zeros((0, 2), dtype=np.int64)
+    allowed_mask[allowed_points[:, 0], allowed_points[:, 1]] = True
+
+    support_seed = np.zeros_like(raw_mask, dtype=bool)
+    support_seed[support_pixels[:, 0], support_pixels[:, 1]] = True
+    expanded_seed = np.zeros_like(support_seed, dtype=bool)
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            shifted = np.zeros_like(support_seed, dtype=bool)
+            r0, r1 = max(0, dr), min(raw_mask.shape[0], raw_mask.shape[0] + dr)
+            c0, c1 = max(0, dc), min(raw_mask.shape[1], raw_mask.shape[1] + dc)
+            shifted[r0:r1, c0:c1] = support_seed[r0 - dr:r1 - dr, c0 - dc:c1 - dc]
+            expanded_seed |= shifted
+
+    selected: List[np.ndarray] = []
+    for component in _connected_components(allowed_mask, connectivity=8):
+        rows = component[:, 0].astype(int)
+        cols = component[:, 1].astype(int)
+        if np.any(expanded_seed[rows, cols]):
+            selected.append(component.astype(np.int64))
+    return np.concatenate(selected, axis=0) if selected else np.zeros((0, 2), dtype=np.int64)
 
 
 def _masked_gaussian_density(
@@ -1104,6 +1161,7 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         "rotation_tolerance": proposal_config.rotation_tolerance,
         "density_sigmas": proposal_config.density_sigmas,
         "density_threshold": proposal_config.density_threshold,
+        "sparse_support_contact_ratio_max": proposal_config.sparse_support_contact_ratio_max,
         "ring_min_area": proposal_config.ring_min_area,
         "ring_edge_r_min": proposal_config.ring_edge_r_min,
         "ring_band_width": proposal_config.ring_band_width,
@@ -1128,6 +1186,7 @@ def _proposal_config(
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
     density_weight_transform: str = "sqrt",
+    sparse_support_contact_ratio_max: float = 0.40,
     ring_min_area: Optional[int] = None,
     ring_edge_r_min: Optional[float] = None,
     ring_band_width: Optional[float] = None,
@@ -1202,6 +1261,7 @@ def _proposal_config(
         density_min_raw_mass=max(float(density_min_raw_mass), 0.0),
         density_merge_iou=min(max(float(density_merge_iou), 0.0), 1.0),
         density_weight_transform=density_weight_transform,
+        sparse_support_contact_ratio_max=min(max(float(sparse_support_contact_ratio_max), 0.0), 1.0),
         ring_min_area=max(int(ring_min_area), 1),
         ring_edge_r_min=min(max(float(ring_edge_r_min), 0.0), 1.0),
         ring_band_width=max(float(ring_band_width), 0.0),

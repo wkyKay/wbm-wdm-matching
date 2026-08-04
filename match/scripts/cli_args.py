@@ -350,6 +350,12 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         default="sqrt",
         help="WDM count transform used as sparse-density KDE point weights.",
     )
+    parser.add_argument(
+        "--sparse-support-contact-ratio-max",
+        type=float,
+        default=0.40,
+        help="Reject sparse ring/arc support when its contact ratio with parent support residual exceeds this value.",
+    )
     parser.add_argument("--ring-min-area", type=int, default=None, help="Override the adaptive minimum ring-band cell count.")
     parser.add_argument("--ring-edge-r-min", type=float, default=None, help="Override the minimum normalized radius considered part of an edge ring.")
     parser.add_argument("--ring-band-width", type=float, default=None, help="Override the normalized radial half-width around the selected ring band.")

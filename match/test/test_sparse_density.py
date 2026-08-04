@@ -113,6 +113,7 @@ class SparseDensityProposalTest(unittest.TestCase):
             density_min_raw_mass=3.0,
             min_area=3,
             ring_min_angular_coverage=0.08,
+            sparse_support_contact_ratio_max=1.0,
         )
 
         tokens = result["wbm_tokens"]
@@ -134,6 +135,7 @@ class SparseDensityProposalTest(unittest.TestCase):
             min_area=3,
             top_k=1,
             ring_min_angular_coverage=0.08,
+            sparse_support_contact_ratio_max=1.0,
         )
         self.assertEqual(len(top_one["wbm_tokens"]), 1)
         self.assertEqual(top_one["wbm_tokens"][0]["proposal_type"], "ring_arc_band")
