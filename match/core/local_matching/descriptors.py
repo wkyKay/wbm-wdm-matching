@@ -8,7 +8,7 @@ import numpy as np
 
 GEOMETRY_TYPES = ["blob", "line", "edge_ring", "central", "irregular"]
 ZERNIKE_SMALL_CANVAS_SIZE = 16
-ZERNIKE_LARGE_CANVAS_SIZE = 32
+ZERNIKE_LARGE_CANVAS_SIZE = 48
 ZERNIKE_SMALL_MAP_SHORT_SIDE = 12
 ZERNIKE_DEGREE = 8
 
