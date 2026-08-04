@@ -7,7 +7,9 @@ import numpy as np
 
 
 GEOMETRY_TYPES = ["blob", "line", "edge_ring", "central", "irregular"]
-ZERNIKE_CROP_SIZE = 48
+ZERNIKE_SMALL_CANVAS_SIZE = 16
+ZERNIKE_LARGE_CANVAS_SIZE = 32
+ZERNIKE_SMALL_MAP_SHORT_SIDE = 12
 ZERNIKE_DEGREE = 8
 
 
@@ -51,14 +53,15 @@ def _type_affinity(a: str, b: str) -> float:
 
 def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False) -> np.ndarray:
     geometry = _geometry_descriptor(token, include_orientation=not rotation_tolerance and mode != "coarse")
-    moment = _zernike_descriptor(token, out_size=ZERNIKE_CROP_SIZE, degree=ZERNIKE_DEGREE)
+    canvas_size = _zernike_canvas_size(map_shape)
+    moment = _zernike_descriptor(token, canvas_size=canvas_size, degree=ZERNIKE_DEGREE)
     token["descriptor_parts"] = {
         "moment": moment,
         "geometry": geometry,
         "moment_weight": 0.75,
         "geometry_weight": 0.25,
         "kind": "zernike_geometry",
-        "zernike_crop_size": ZERNIKE_CROP_SIZE,
+        "zernike_canvas_size": canvas_size,
         "zernike_degree": ZERNIKE_DEGREE,
     }
     desc = np.concatenate([moment, geometry]).astype(np.float32)
@@ -144,15 +147,18 @@ def _geometry_descriptor(token: Dict, include_orientation: bool) -> np.ndarray:
     return np.clip(np.asarray(features, dtype=np.float32), 0.0, 1.0)
 
 
-def _zernike_descriptor(token: Dict, out_size: int = 48, degree: int = 8) -> np.ndarray:
-    mask = _token_crop_mask(token)
+def _zernike_canvas_size(map_shape) -> int:
+    return ZERNIKE_SMALL_CANVAS_SIZE if min(map_shape) <= ZERNIKE_SMALL_MAP_SHORT_SIDE else ZERNIKE_LARGE_CANVAS_SIZE
+
+
+def _zernike_descriptor(token: Dict, canvas_size: int, degree: int = 8) -> np.ndarray:
+    mask = _token_fixed_canvas_mask(token, canvas_size)
     if mask.size == 0 or not mask.any():
         return _empty_zernike_descriptor(degree)
 
-    mask = _pad_to_square(mask, pad=2)
-    mask = _resize_nearest(mask, (out_size, out_size)).astype(np.float32)
-    yy, xx = np.indices((out_size, out_size), dtype=np.float32)
-    center = (out_size - 1) / 2.0
+    mask = mask.astype(np.float32)
+    yy, xx = np.indices((canvas_size, canvas_size), dtype=np.float32)
+    center = (canvas_size - 1) / 2.0
     radius = max(center, 1.0)
     x = (xx - center) / radius
     y = (yy - center) / radius
@@ -182,37 +188,20 @@ def _zernike_descriptor(token: Dict, out_size: int = 48, degree: int = 8) -> np.
     return desc
 
 
-def _token_crop_mask(token: Dict) -> np.ndarray:
+def _token_fixed_canvas_mask(token: Dict, canvas_size: int) -> np.ndarray:
     pixels = np.asarray(token.get("pixels", []), dtype=np.int64)
     if pixels.size == 0:
         return np.zeros((0, 0), dtype=bool)
-    rows = pixels[:, 0]
-    cols = pixels[:, 1]
-    r0, r1 = int(rows.min()), int(rows.max())
-    c0, c1 = int(cols.min()), int(cols.max())
-    mask = np.zeros((r1 - r0 + 1, c1 - c0 + 1), dtype=bool)
-    mask[rows - r0, cols - c0] = True
+    center_row = float(token.get("centroid_row", pixels[:, 0].mean()))
+    center_col = float(token.get("centroid_col", pixels[:, 1].mean()))
+    origin_row = int(np.floor(center_row - (canvas_size - 1) / 2.0))
+    origin_col = int(np.floor(center_col - (canvas_size - 1) / 2.0))
+    rows = pixels[:, 0] - origin_row
+    cols = pixels[:, 1] - origin_col
+    keep = (rows >= 0) & (rows < canvas_size) & (cols >= 0) & (cols < canvas_size)
+    mask = np.zeros((canvas_size, canvas_size), dtype=bool)
+    mask[rows[keep], cols[keep]] = True
     return mask
-
-
-def _pad_to_square(mask: np.ndarray, pad: int = 2) -> np.ndarray:
-    h, w = mask.shape
-    side = max(h, w) + 2 * pad
-    out = np.zeros((side, side), dtype=bool)
-    r0 = (side - h) // 2
-    c0 = (side - w) // 2
-    out[r0:r0 + h, c0:c0 + w] = mask
-    return out
-
-
-def _resize_nearest(mask: np.ndarray, target_shape: tuple[int, int]) -> np.ndarray:
-    h, w = mask.shape
-    target_h, target_w = target_shape
-    if (h, w) == (target_h, target_w):
-        return mask
-    rr = np.floor(np.arange(target_h) * h / target_h).astype(np.int64)
-    cc = np.floor(np.arange(target_w) * w / target_w).astype(np.int64)
-    return mask[np.clip(rr, 0, h - 1)][:, np.clip(cc, 0, w - 1)]
 
 
 def _zernike_radial(n: int, m: int, rho: np.ndarray) -> np.ndarray:

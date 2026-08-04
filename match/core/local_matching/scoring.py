@@ -9,6 +9,7 @@ from .proposal import (_proposal_config, _tokens_from_mask, _tokens_from_weighte
 
 
 MIN_SHAPE_SIM_FOR_MATCH = 0.45
+MIN_RING_TOPOLOGY_SIM_FOR_MATCH = 0.45
 MIN_TOKEN_SCORE_FOR_MATCH = 0.45
 DEFAULT_SHAPE_SCORE_WEIGHT = 0.60
 DEFAULT_POSITION_SCORE_WEIGHT = 0.25
@@ -107,6 +108,9 @@ def compute_binary_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    min_shape_score: float = 0.0,
+    min_position_score: float = 0.0,
+    min_scale_score: float = 0.0,
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
@@ -140,6 +144,9 @@ def compute_binary_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        min_shape_score=min_shape_score,
+        min_position_score=min_position_score,
+        min_scale_score=min_scale_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
@@ -258,6 +265,9 @@ def explain_binary_partial_match(
     proposal_mode: str = "cc",
     rotation_tolerance: bool = False,
     min_token_score: float = MIN_TOKEN_SCORE_FOR_MATCH,
+    min_shape_score: float = 0.0,
+    min_position_score: float = 0.0,
+    min_scale_score: float = 0.0,
     score_shape_weight: float = DEFAULT_SHAPE_SCORE_WEIGHT,
     score_position_weight: float = DEFAULT_POSITION_SCORE_WEIGHT,
     score_scale_weight: float = DEFAULT_SCALE_SCORE_WEIGHT,
@@ -299,6 +309,9 @@ def explain_binary_partial_match(
         proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         min_token_score=min_token_score,
+        min_shape_score=min_shape_score,
+        min_position_score=min_position_score,
+        min_scale_score=min_scale_score,
         score_shape_weight=score_shape_weight,
         score_position_weight=score_position_weight,
         score_scale_weight=score_scale_weight,
@@ -666,9 +679,10 @@ def _token_match_components(
     pca_extent_affinity = _pca_extent_affinity(query, candidate, sigma_scale)
     area_weight, pca_weight = scale_component_weights
     scale_affinity = area_weight * support_area_affinity + pca_weight * pca_extent_affinity
+    ring_topology_sim, topology_active = _ring_topology_similarity(query, candidate)
     # geometry_type remains an explanation/diversity label; shape matching lives in descriptor space.
     type_affinity = 1.0
-    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH:
+    if shape_sim < MIN_SHAPE_SIM_FOR_MATCH or (topology_active and ring_topology_sim < MIN_RING_TOPOLOGY_SIM_FOR_MATCH):
         score = 0.0
     else:
         w_shape, w_position, w_scale = score_weights
@@ -680,10 +694,30 @@ def _token_match_components(
         "geometry_sim": shape_parts["geometry_sim"],
         "position_affinity": position_affinity,
         "scale_affinity": scale_affinity,
+        "ring_topology_sim": ring_topology_sim,
+        "ring_topology_active": topology_active,
         "support_area_affinity": support_area_affinity,
         "pca_extent_affinity": pca_extent_affinity,
         "type_affinity": type_affinity,
     }
+
+
+def _ring_topology_similarity(query: Dict, candidate: Dict) -> tuple[float, bool]:
+    ring_types = {"edge_ring", "ring_arc"}
+    active = query.get("geometry_type") in ring_types or candidate.get("geometry_type") in ring_types
+    if not active:
+        return 1.0, False
+
+    def affinity(key: str, scale: float) -> float:
+        delta = abs(float(query.get(key, 0.0)) - float(candidate.get(key, 0.0)))
+        return float(np.exp(-delta / max(scale, 1e-6)))
+
+    radial = affinity("radial_distance_norm", 0.12)
+    radial_std = affinity("radial_std", 0.08)
+    arc_run = affinity("max_angular_run_coverage", 0.15)
+    gap = affinity("max_gap_coverage", 0.20)
+    band_width = affinity("radial_band_width", 0.08)
+    return 0.40 * radial + 0.15 * radial_std + 0.15 * arc_run + 0.15 * gap + 0.15 * band_width, True
 
 
 def _support_area_affinity(query: Dict, candidate: Dict, sigma_scale: float) -> float:

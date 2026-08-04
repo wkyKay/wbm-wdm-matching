@@ -9,6 +9,9 @@ from .morphology import _binary_closing_square_constrained, _connected_component
 from .descriptors import _classify_token, _shape_descriptor
 from .proposal_utils import (
     _wafer_center_and_radius,
+    _wafer_center_and_axes,
+    _elliptical_radial,
+    _elliptical_theta,
     _circular_true_runs,
     _circular_true_run_indices,
     _circular_bins_between,
@@ -661,6 +664,7 @@ def _extract_retrieval_arc_tokens(
     full_ring_coverage: float = COMPACT_ARC_MIN_FULL_COVERAGE,
     merge_dilation_radius: int = 1,
     outer_component_grouping: bool = False,
+    elliptical_geometry: bool = False,
 ) -> Tuple[List[Dict], np.ndarray, Dict]:
     arc_mask = np.zeros_like(mask, dtype=bool)
     points = np.argwhere(mask).astype(np.int64)
@@ -688,15 +692,23 @@ def _extract_retrieval_arc_tokens(
         return [], arc_mask, debug
 
     h, w = mask.shape
-    center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
-    valid_points = np.argwhere(valid_mask).astype(np.float32)
-    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else 0.0
+    if elliptical_geometry:
+        center, axes = _wafer_center_and_axes(valid_mask)
+        radius_ref = float(max(axes))
+        radial_fn = lambda pts: _elliptical_radial(pts, center, axes)
+        theta_fn = lambda pts: _elliptical_theta(pts, center, axes)
+    else:
+        center = np.array([h / 2.0, w / 2.0], dtype=np.float32)
+        valid_points = np.argwhere(valid_mask).astype(np.float32)
+        radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else 0.0
+        radial_fn = lambda pts: np.linalg.norm(pts.astype(np.float32) - center, axis=1) / radius_ref if radius_ref > 1e-6 else np.zeros(len(pts), dtype=np.float32)
+        theta_fn = lambda pts: (np.degrees(np.arctan2(pts[:, 0] - center[0], pts[:, 1] - center[1])) + 360.0) % 360.0
     if radius_ref <= 1e-6:
         debug["reason"] = "bad_radius"
         return [], arc_mask, debug
 
     rel = points.astype(np.float32) - center
-    radial = np.linalg.norm(rel, axis=1) / radius_ref
+    radial = radial_fn(points)
     edge_keep = radial >= edge_r_min
     if int(edge_keep.sum()) < min_area:
         debug.update(reason="too_few_edge_points", candidate_area=int(edge_keep.sum()))
@@ -715,7 +727,7 @@ def _extract_retrieval_arc_tokens(
     band_source = raw_mask if raw_mask is not None else mask
     band_points = np.argwhere(band_source).astype(np.int64)
     band_rel = band_points.astype(np.float32) - center
-    band_radial = np.linalg.norm(band_rel, axis=1) / radius_ref
+    band_radial = radial_fn(band_points)
     all_band_keep = (
         band_radial >= edge_r_min
         if outer_component_grouping
@@ -733,7 +745,7 @@ def _extract_retrieval_arc_tokens(
         raw_cc_count = len(raw_components)
         n_comp = len(raw_components)
         component_radial_centers = [
-            float(np.median(np.linalg.norm(comp.astype(np.float32) - center, axis=1) / radius_ref))
+            float(np.median(radial_fn(comp)))
             for comp in raw_components
         ]
         if n_comp <= 1:
@@ -862,8 +874,7 @@ def _extract_retrieval_arc_tokens(
         if len(group_arr) < min_area:
             continue
         # Compute angular coverage as fraction of angular bins occupied by this group
-        rel = group_arr.astype(np.float32) - center
-        theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
+        theta = theta_fn(group_arr)
         angular_bins_val = max(int(angular_bins), 1)
         group_bin_ids = np.unique(np.floor(theta / (360.0 / angular_bins_val)).astype(np.int64) % angular_bins_val)
         angular_coverage = float(len(group_bin_ids) / angular_bins_val)
@@ -883,7 +894,7 @@ def _extract_retrieval_arc_tokens(
         if len(raw_group_points) < min_area:
             continue
         raw_rel = raw_group_points.astype(np.float32) - center
-        raw_radial_std = float((np.linalg.norm(raw_rel, axis=1) / radius_ref).std())
+        raw_radial_std = float(radial_fn(raw_group_points).std())
         if enforce_group_radial_std and raw_radial_std > max_radial_std:
             continue
         geometry_type = "edge_ring" if angular_coverage >= full_ring_coverage else "ring_arc"

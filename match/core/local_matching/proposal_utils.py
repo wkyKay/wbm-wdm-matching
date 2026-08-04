@@ -35,6 +35,29 @@ def _wafer_center_and_radius(valid_mask: np.ndarray) -> tuple[np.ndarray, float]
     return center, radius_ref
 
 
+def _wafer_center_and_axes(valid_mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Estimate ellipse coordinates from the valid-region bounding box."""
+    points = np.argwhere(valid_mask)
+    if not len(points):
+        h, w = valid_mask.shape
+        return np.array([h / 2.0, w / 2.0], dtype=np.float32), np.array(
+            [max(h / 2.0, 0.5), max(w / 2.0, 0.5)], dtype=np.float32
+        )
+    mins = points.min(axis=0).astype(np.float32)
+    maxs = points.max(axis=0).astype(np.float32)
+    return (mins + maxs) / 2.0, np.maximum((maxs - mins) / 2.0, 0.5)
+
+
+def _elliptical_radial(points: np.ndarray, center: np.ndarray, axes: np.ndarray) -> np.ndarray:
+    rel = points.astype(np.float32) - center
+    return np.sqrt((rel[:, 0] / axes[0]) ** 2 + (rel[:, 1] / axes[1]) ** 2)
+
+
+def _elliptical_theta(points: np.ndarray, center: np.ndarray, axes: np.ndarray) -> np.ndarray:
+    rel = points.astype(np.float32) - center
+    return (np.degrees(np.arctan2(rel[:, 0] / axes[0], rel[:, 1] / axes[1])) + 360.0) % 360.0
+
+
 def _circular_true_runs(values: np.ndarray) -> list[int]:
     if len(values) == 0 or not values.any():
         return []
@@ -362,6 +385,7 @@ def _token_stats(
     else:
         angular_count_cv = 0.0
     radial_std = float(radial.std()) if len(radial) else 0.0
+    radial_band_width = float(np.percentile(radial, 90) - np.percentile(radial, 10)) if len(radial) else 0.0
 
     token = {
         "source": source,
@@ -393,6 +417,7 @@ def _token_stats(
         "max_gap_coverage": max_gap_coverage,
         "angular_count_cv": angular_count_cv,
         "radial_std": radial_std,
+        "radial_band_width": radial_band_width,
         "pixels": [(int(r), int(c)) for r, c in pixels],
     }
     token["geometry_type"] = _classify_token(token)

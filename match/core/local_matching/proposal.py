@@ -17,6 +17,10 @@ from .proposal_utils import (
     COMPACT_RING_ARC_MAX_ANGULAR_COVERAGE,
     COMPACT_RING_ARC_MAX_GAP_COUNT,
     COMPACT_RING_ARC_MIN_ANGULAR_COVERAGE,
+    _circular_true_runs,
+    _wafer_center_and_axes,
+    _elliptical_radial,
+    _elliptical_theta,
 )
 
 
@@ -204,6 +208,7 @@ def _tokens_from_sparse_density_arc_ring_residual(
         raw_mask=support_mask,
         parent_fraction_mask=support_mask,
         proposal_source="sparse_density_arc_ring_residual",
+        elliptical_geometry=True,
     )
     claimed_raw = np.zeros_like(raw_mask, dtype=bool)
     claimed_support = np.zeros_like(support_mask, dtype=bool)
@@ -221,6 +226,7 @@ def _tokens_from_sparse_density_arc_ring_residual(
             valid_mask,
             proposal_config,
             float(detected_token.get("radial_band_center", proposal_config.ring_edge_r_min)),
+            elliptical_geometry=True,
         )
         raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum()) if len(raw_pixels) else 0.0
         if len(raw_pixels) < proposal_config.density_min_raw_points or raw_mass < proposal_config.density_min_raw_mass:
@@ -319,26 +325,32 @@ def _raw_band_evidence(
     valid_mask: np.ndarray,
     proposal_config: ProposalConfig,
     band_center: float,
+    elliptical_geometry: bool = False,
 ) -> np.ndarray:
     """Recover raw arc endpoints that fall below the KDE support threshold."""
-    center = np.asarray([raw_mask.shape[0] / 2.0, raw_mask.shape[1] / 2.0], dtype=np.float32)
-    valid_points = np.argwhere(valid_mask).astype(np.float32)
-    radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else 0.0
-    if radius_ref <= 1e-6:
-        return np.zeros((0, 2), dtype=np.int64)
+    if elliptical_geometry:
+        center, axes = _wafer_center_and_axes(valid_mask)
+        radial_fn = lambda pts: _elliptical_radial(pts, center, axes)
+        theta_fn = lambda pts: _elliptical_theta(pts, center, axes)
+    else:
+        center = np.asarray([raw_mask.shape[0] / 2.0, raw_mask.shape[1] / 2.0], dtype=np.float32)
+        valid_points = np.argwhere(valid_mask).astype(np.float32)
+        radius_ref = float(np.linalg.norm(valid_points - center, axis=1).max()) if len(valid_points) else 0.0
+        if radius_ref <= 1e-6:
+            return np.zeros((0, 2), dtype=np.int64)
+        radial_fn = lambda pts: np.linalg.norm(pts.astype(np.float32) - center, axis=1) / radius_ref
+        theta_fn = lambda pts: (np.degrees(np.arctan2(pts[:, 0] - center[0], pts[:, 1] - center[1])) + 360.0) % 360.0
 
     bin_count = max(int(proposal_config.ring_angular_bins), 1)
-    support_rel = support_pixels.astype(np.float32) - center
-    support_theta = (np.degrees(np.arctan2(support_rel[:, 0], support_rel[:, 1])) + 360.0) % 360.0
+    support_theta = theta_fn(support_pixels)
     support_bins = np.floor(support_theta / (360.0 / bin_count)).astype(np.int64) % bin_count
     allowed_bins = {(int(bin_id) + offset) % bin_count for bin_id in support_bins for offset in (-1, 0, 1)}
 
     points = np.argwhere(raw_mask & (~claimed_raw)).astype(np.int64)
     if not len(points):
         return points
-    rel = points.astype(np.float32) - center
-    radial = np.linalg.norm(rel, axis=1) / radius_ref
-    theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
+    radial = radial_fn(points)
+    theta = theta_fn(points)
     bins = np.floor(theta / (360.0 / bin_count)).astype(np.int64) % bin_count
     keep = (
         (np.abs(radial - band_center) <= proposal_config.ring_band_width)
@@ -517,7 +529,13 @@ def _token_stats(
     theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
     occupied = np.unique(np.floor(theta / 5.0).astype(np.int64)) if len(theta) else []
     angular_coverage = float(len(occupied) / 72.0)
+    occupied_bins = np.zeros(72, dtype=bool)
+    if len(occupied):
+        occupied_bins[np.asarray(occupied, dtype=np.int64) % 72] = True
+    max_angular_run_coverage = float(max(_circular_true_runs(occupied_bins), default=0) / 72.0)
+    max_gap_coverage = float(max(_circular_true_runs(~occupied_bins), default=0) / 72.0)
     radial_std = float(radial.std()) if len(radial) else 0.0
+    radial_band_width = float(np.percentile(radial, 90) - np.percentile(radial, 10)) if len(radial) else 0.0
 
     token = {
         "source": source,
@@ -545,7 +563,10 @@ def _token_stats(
         "compactness": float(perimeter / max(support_area, 1)),
         "radial_distance_norm": radial_distance_norm,
         "angular_coverage": angular_coverage,
+        "max_angular_run_coverage": max_angular_run_coverage,
+        "max_gap_coverage": max_gap_coverage,
         "radial_std": radial_std,
+        "radial_band_width": radial_band_width,
         "pixels": [(int(r), int(c)) for r, c in pixels],
     }
     token["geometry_type"] = _classify_token(token)
