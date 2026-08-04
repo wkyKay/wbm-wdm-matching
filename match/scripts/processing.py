@@ -201,6 +201,8 @@ def _compute_classnumber_scores(
             density_min_raw_mass=args.density_min_raw_mass,
             density_merge_iou=args.density_merge_iou,
             density_weight_transform=args.density_weight_transform,
+            moment_weight=args.moment_weight,
+            geometry_weight=args.geometry_weight,
             ring_min_area=args.ring_min_area,
             ring_edge_r_min=args.ring_edge_r_min,
             ring_band_width=args.ring_band_width,

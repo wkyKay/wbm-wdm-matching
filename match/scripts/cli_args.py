@@ -313,10 +313,22 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Use a rotation-tolerant shape descriptor for token matching.",
     )
     parser.add_argument(
+        "--moment-weight",
+        type=float,
+        default=0.25,
+        help="Weight of moment features inside the token shape descriptor.",
+    )
+    parser.add_argument(
+        "--geometry-weight",
+        type=float,
+        default=0.75,
+        help="Weight of geometry features inside the token shape descriptor.",
+    )
+    parser.add_argument(
         "--density-sigmas",
         nargs="+",
         type=float,
-        default=(0.8, 1.6, 3.2),
+        default=(0.6, 1.2, 1.8),
         metavar="SIGMA",
         help="Grid-cell Gaussian scales used by sparse-density proposal mode.",
     )
@@ -349,12 +361,6 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         choices=("count", "sqrt", "log1p"),
         default="log1p",
         help="WDM count transform used as sparse-density KDE point weights.",
-    )
-    parser.add_argument(
-        "--sparse-support-contact-ratio-max",
-        type=float,
-        default=0.40,
-        help="Reject sparse ring/arc support when its contact ratio with parent support residual exceeds this value.",
     )
     parser.add_argument("--ring-min-area", type=int, default=None, help="Override the adaptive minimum ring-band cell count.")
     parser.add_argument("--ring-edge-r-min", type=float, default=None, help="Override the minimum normalized radius considered part of an edge ring.")
