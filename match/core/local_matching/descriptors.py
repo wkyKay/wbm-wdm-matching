@@ -51,15 +51,16 @@ def _type_affinity(a: str, b: str) -> float:
     return 0.25
 
 
-def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False) -> np.ndarray:
+def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False,
+                      moment_weight: float = 0.75, geometry_weight: float = 0.25) -> np.ndarray:
     geometry = _geometry_descriptor(token, include_orientation=not rotation_tolerance and mode != "coarse")
     canvas_size = _zernike_canvas_size(map_shape)
     moment = _zernike_descriptor(token, canvas_size=canvas_size, degree=ZERNIKE_DEGREE)
     token["descriptor_parts"] = {
         "moment": moment,
         "geometry": geometry,
-        "moment_weight": 0.75,
-        "geometry_weight": 0.25,
+        "moment_weight": float(max(moment_weight, 0.0)),
+        "geometry_weight": float(max(geometry_weight, 0.0)),
         "kind": "zernike_geometry",
         "zernike_canvas_size": canvas_size,
         "zernike_degree": ZERNIKE_DEGREE,
@@ -138,6 +139,7 @@ def _geometry_descriptor(token: Dict, include_orientation: bool) -> np.ndarray:
         float(token.get("angular_coverage", 0.0)),
         float(token.get("radial_std", 0.0)),
     ]
+    features.extend(_local_geometry_features(token))
     if include_orientation:
         orientation = float(token.get("orientation", 0.0))
         features.extend([
@@ -145,6 +147,33 @@ def _geometry_descriptor(token: Dict, include_orientation: bool) -> np.ndarray:
             0.5 + 0.5 * np.sin(np.deg2rad(orientation)),
         ])
     return np.clip(np.asarray(features, dtype=np.float32), 0.0, 1.0)
+
+
+def _local_geometry_features(token: Dict) -> list[float]:
+    """Describe radial fill and angular continuity in token-local coordinates."""
+    pixels = np.asarray(token.get("pixels", []), dtype=np.float32)
+    if len(pixels) == 0:
+        return [0.0] * 8
+    center = np.array([
+        float(token.get("centroid_row", pixels[:, 0].mean())),
+        float(token.get("centroid_col", pixels[:, 1].mean())),
+    ], dtype=np.float32)
+    rel = pixels - center
+    radius = np.linalg.norm(rel, axis=1)
+    radius /= max(float(radius.max()), 1.0)
+    radial_hist, _ = np.histogram(radius, bins=4, range=(0.0, 1.0))
+    radial_hist = radial_hist.astype(np.float32)
+    radial_hist /= max(float(radial_hist.sum()), 1.0)
+    inner = float(radial_hist[:2].sum())
+    outer = float(radial_hist[2:].sum())
+    center_occupancy = float(radial_hist[0])
+    inner_outer_ratio = inner / max(outer, 1e-6)
+    inner_outer_ratio = float(np.clip(inner_outer_ratio, 0.0, 1.0))
+    radial_concentration = float(np.clip(radial_hist.max(), 0.0, 1.0))
+    theta = (np.degrees(np.arctan2(rel[:, 0], rel[:, 1])) + 360.0) % 360.0
+    occupied = np.unique(np.floor(theta / 30.0).astype(np.int64))
+    local_angular_coverage = float(len(occupied) / 12.0)
+    return [*radial_hist.tolist(), center_occupancy, inner_outer_ratio, radial_concentration, local_angular_coverage]
 
 
 def _zernike_canvas_size(map_shape) -> int:

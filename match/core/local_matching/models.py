@@ -30,6 +30,8 @@ class ProposalConfig:
     density_merge_iou: float
     density_weight_transform: str
     sparse_support_contact_ratio_max: float
+    moment_weight: float
+    geometry_weight: float
     ring_min_area: int
     ring_edge_r_min: float
     ring_band_width: float

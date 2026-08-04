@@ -67,7 +67,7 @@ python3 -m match.scripts.main \
   --identifier AF00138_sparse_class
 ```
 
-`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `sqrt(count)` 作为 KDE 权重，可通过 `--density-weight-transform count|sqrt|log1p` 调整。使用 `--proposal-mode auto` 时，系统会根据碎片化程度和原始证据在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
+`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `log1p(count)` 作为 KDE 权重，以压缩高密度区域的扩展，可通过 `--density-weight-transform count|sqrt|log1p` 调整。support 还会进行一层受 raw pixel 保护的有限腐蚀；腐蚀不会删除 raw pixel，也不会断开同一 support 分量内 raw pixel 的连通关系。使用 `--proposal-mode auto` 时，系统会根据碎片化程度和原始证据在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
 
 对稀疏且断裂的边缘环/弧，可显式使用 `--proposal-mode sparse-density-arc-ring-residual`。该模式以去重后的 KDE support 进行径向带、角度覆盖和短缺口分组，再回查环带内的原始点数与原始质量；最终 token 的 `pixels`、面积、位置与描述子使用被接受的环带 support，`raw_pixels`、`raw_area` 与 `raw_mass` 保留真实证据。接受的 ring/arc 会独占其 raw 像素，residual 仅从未占有的 raw 像素构建，避免重复匹配和重复汇总。完整 support 越过 `--ring-edge-r-min` 不会单独拒绝候选，实际 ring token 只取被检测的径向带。
 

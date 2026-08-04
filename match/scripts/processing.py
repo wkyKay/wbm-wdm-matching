@@ -129,6 +129,8 @@ def _compute_count_partial_scores(ref_gm: "GridMaps", grid_maps: "GridMaps", arg
             density_merge_iou=args.density_merge_iou,
             density_weight_transform=args.density_weight_transform,
             sparse_support_contact_ratio_max=args.sparse_support_contact_ratio_max,
+            moment_weight=args.moment_weight,
+            geometry_weight=args.geometry_weight,
             ring_min_area=args.ring_min_area,
             ring_edge_r_min=args.ring_edge_r_min,
             ring_band_width=args.ring_band_width,

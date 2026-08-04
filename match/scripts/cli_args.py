@@ -347,7 +347,7 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--density-weight-transform",
         choices=("count", "sqrt", "log1p"),
-        default="sqrt",
+        default="log1p",
         help="WDM count transform used as sparse-density KDE point weights.",
     )
     parser.add_argument(

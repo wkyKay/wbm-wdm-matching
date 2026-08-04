@@ -134,6 +134,9 @@ def _density_support_candidates(
     for sigma in proposal_config.density_sigmas:
         density = _masked_gaussian_density(density_weights, valid_mask, sigma)
         support = _density_support_mask(density, valid_mask, proposal_config.density_threshold)
+        # Shrink only derived support; raw pixels remain anchors and their
+        # original support connectivity is preserved.
+        support = _protected_support_erosion(support, raw_points, layers=1)
         total_density_mass = float(density[support].sum())
         for comp in _connected_components(support, connectivity=proposal_config.connectivity):
             rows = comp[:, 0].astype(np.int64)
@@ -257,8 +260,7 @@ def _tokens_from_sparse_density_arc_ring_residual(
     residual_tokens: List[Dict] = []
     residual_support = support_mask & (~claimed_support)
     for comp in _connected_components(residual_support, connectivity=proposal_config.connectivity):
-        rows, cols = comp[:, 0], comp[:, 1]
-        raw_pixels = comp[raw_mask[rows, cols] & (~claimed_raw[rows, cols])]
+        raw_pixels = _raw_support_contact_evidence(comp, raw_mask, claimed_raw, valid_mask)
         raw_mass = float(raw_weights[raw_pixels[:, 0], raw_pixels[:, 1]].sum()) if len(raw_pixels) else 0.0
         if len(raw_pixels) < proposal_config.density_min_raw_points or raw_mass < proposal_config.density_min_raw_mass:
             continue
@@ -311,6 +313,36 @@ def _support_contact_ratio(support_pixels: np.ndarray, support_mask: np.ndarray)
         ):
             contact_count += 1
     return float(contact_count / max(len(support_pixels), 1)), contact_count
+
+
+def _raw_support_contact_evidence(
+    support_pixels: np.ndarray,
+    raw_mask: np.ndarray,
+    claimed_raw: np.ndarray,
+    valid_mask: np.ndarray,
+) -> np.ndarray:
+    """Attach unclaimed raw components that touch a residual support component."""
+    support_seed = np.zeros_like(raw_mask, dtype=bool)
+    support_seed[support_pixels[:, 0], support_pixels[:, 1]] = True
+    expanded = support_seed.copy()
+    h, w = raw_mask.shape
+    for dr in (-1, 0, 1):
+        for dc in (-1, 0, 1):
+            if not (dr or dc):
+                continue
+            shifted = np.zeros_like(support_seed, dtype=bool)
+            r0, r1 = max(0, dr), min(h, h + dr)
+            c0, c1 = max(0, dc), min(w, w + dc)
+            shifted[r0:r1, c0:c1] = support_seed[r0 - dr:r1 - dr, c0 - dc:c1 - dc]
+            expanded |= shifted
+    available = raw_mask & (~claimed_raw) & valid_mask
+    selected = []
+    for component in _connected_components(available, connectivity=8):
+        rows = component[:, 0].astype(int)
+        cols = component[:, 1].astype(int)
+        if np.any(expanded[rows, cols]):
+            selected.append(component.astype(np.int64))
+    return np.concatenate(selected, axis=0) if selected else np.zeros((0, 2), dtype=np.int64)
 
 
 def _hybrid_density_token(
@@ -446,6 +478,52 @@ def _density_support_mask(density: np.ndarray, valid_mask: np.ndarray, threshold
     if peak <= 0.0:
         return np.zeros_like(valid_mask, dtype=bool)
     return valid_mask & (density >= max(float(threshold), 0.0) * peak)
+
+
+def _protected_support_erosion(support: np.ndarray, raw_mask: np.ndarray, layers: int = 1) -> np.ndarray:
+    """Erode derived support without deleting or disconnecting raw anchors."""
+    result = support.copy()
+    result |= raw_mask
+    for _ in range(max(int(layers), 0)):
+        for component in _connected_components(result, connectivity=8):
+            anchors = component[raw_mask[component[:, 0], component[:, 1]]]
+            if len(anchors) < 2:
+                continue
+            comp_set = {tuple(pixel) for pixel in component.tolist()}
+            boundary = []
+            for row, col in component:
+                point = (int(row), int(col))
+                if raw_mask[point]:
+                    continue
+                if any(
+                    (int(row + dr), int(col + dc)) not in comp_set
+                    for dr in (-1, 0, 1)
+                    for dc in (-1, 0, 1)
+                    if dr or dc
+                ):
+                    boundary.append(point)
+            for row, col in boundary:
+                result[row, col] = False
+                if not _all_points_connected(result, anchors):
+                    result[row, col] = True
+    return result
+
+
+def _all_points_connected(mask: np.ndarray, points: np.ndarray) -> bool:
+    start = tuple(points[0].tolist())
+    seen = {start}
+    stack = [start]
+    while stack:
+        row, col = stack.pop()
+        for dr in (-1, 0, 1):
+            for dc in (-1, 0, 1):
+                if not (dr or dc):
+                    continue
+                nxt = (row + dr, col + dc)
+                if 0 <= nxt[0] < mask.shape[0] and 0 <= nxt[1] < mask.shape[1] and mask[nxt] and nxt not in seen:
+                    seen.add(nxt)
+                    stack.append(nxt)
+    return all(tuple(point.tolist()) in seen for point in points)
 
 
 def _deduplicate_density_tokens(tokens: List[Dict], min_iou: float) -> List[Dict]:
@@ -1151,6 +1229,8 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         map_shape,
         mode=proposal_config.descriptor_mode,
         rotation_tolerance=proposal_config.rotation_tolerance,
+        moment_weight=proposal_config.moment_weight,
+        geometry_weight=proposal_config.geometry_weight,
     )
     token["proposal_config"] = {
         "min_area": proposal_config.min_area,
@@ -1162,6 +1242,8 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         "density_sigmas": proposal_config.density_sigmas,
         "density_threshold": proposal_config.density_threshold,
         "sparse_support_contact_ratio_max": proposal_config.sparse_support_contact_ratio_max,
+        "moment_weight": proposal_config.moment_weight,
+        "geometry_weight": proposal_config.geometry_weight,
         "ring_min_area": proposal_config.ring_min_area,
         "ring_edge_r_min": proposal_config.ring_edge_r_min,
         "ring_band_width": proposal_config.ring_band_width,
@@ -1185,8 +1267,10 @@ def _proposal_config(
     density_min_raw_points: int = 3,
     density_min_raw_mass: float = 3.0,
     density_merge_iou: float = 0.60,
-    density_weight_transform: str = "sqrt",
+    density_weight_transform: str = "log1p",
     sparse_support_contact_ratio_max: float = 0.40,
+    moment_weight: float = 0.75,
+    geometry_weight: float = 0.25,
     ring_min_area: Optional[int] = None,
     ring_edge_r_min: Optional[float] = None,
     ring_band_width: Optional[float] = None,
@@ -1262,6 +1346,8 @@ def _proposal_config(
         density_merge_iou=min(max(float(density_merge_iou), 0.0), 1.0),
         density_weight_transform=density_weight_transform,
         sparse_support_contact_ratio_max=min(max(float(sparse_support_contact_ratio_max), 0.0), 1.0),
+        moment_weight=max(float(moment_weight), 0.0),
+        geometry_weight=max(float(geometry_weight), 0.0),
         ring_min_area=max(int(ring_min_area), 1),
         ring_edge_r_min=min(max(float(ring_edge_r_min), 0.0), 1.0),
         ring_band_width=max(float(ring_band_width), 0.0),
