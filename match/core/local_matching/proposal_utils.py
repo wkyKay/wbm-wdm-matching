@@ -432,6 +432,7 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         rotation_tolerance=proposal_config.rotation_tolerance,
         moment_weight=proposal_config.moment_weight,
         geometry_weight=proposal_config.geometry_weight,
+        zernike_degree=proposal_config.zernike_degree,
     )
     token["proposal_config"] = {
         "min_area": proposal_config.min_area,
@@ -440,6 +441,7 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         "descriptor_mode": proposal_config.descriptor_mode,
         "moment_weight": proposal_config.moment_weight,
         "geometry_weight": proposal_config.geometry_weight,
+        "zernike_degree": proposal_config.zernike_degree,
         "proposal_mode": proposal_config.proposal_mode,
         "rotation_tolerance": proposal_config.rotation_tolerance,
         "density_sigmas": proposal_config.density_sigmas,

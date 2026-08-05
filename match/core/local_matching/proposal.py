@@ -1259,6 +1259,7 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         rotation_tolerance=proposal_config.rotation_tolerance,
         moment_weight=proposal_config.moment_weight,
         geometry_weight=proposal_config.geometry_weight,
+        zernike_degree=proposal_config.zernike_degree,
     )
     token["proposal_config"] = {
         "min_area": proposal_config.min_area,
@@ -1272,6 +1273,7 @@ def _finalize_token(token: Dict, map_shape: tuple[int, int], proposal_config: Pr
         "sparse_support_contact_ratio_max": proposal_config.sparse_support_contact_ratio_max,
         "moment_weight": proposal_config.moment_weight,
         "geometry_weight": proposal_config.geometry_weight,
+        "zernike_degree": proposal_config.zernike_degree,
         "ring_min_area": proposal_config.ring_min_area,
         "ring_edge_r_min": proposal_config.ring_edge_r_min,
         "ring_band_width": proposal_config.ring_band_width,
@@ -1299,6 +1301,7 @@ def _proposal_config(
     sparse_support_contact_ratio_max: float = 0.40,
     moment_weight: float = 0.75,
     geometry_weight: float = 0.25,
+    zernike_degree: int = 8,
     ring_min_area: Optional[int] = None,
     ring_edge_r_min: Optional[float] = None,
     ring_band_width: Optional[float] = None,
@@ -1318,6 +1321,7 @@ def _proposal_config(
         raise ValueError("density_sigmas must contain positive values")
     if density_weight_transform not in {"count", "sqrt", "log1p"}:
         raise ValueError(f"Unsupported density weight transform: {density_weight_transform}")
+    zernike_degree = max(int(zernike_degree), 0)
     short_side = min(int(shape[0]), int(shape[1]))
     valid_area = max(int(valid_area), 1)
 
@@ -1376,6 +1380,7 @@ def _proposal_config(
         sparse_support_contact_ratio_max=min(max(float(sparse_support_contact_ratio_max), 0.0), 1.0),
         moment_weight=max(float(moment_weight), 0.0),
         geometry_weight=max(float(geometry_weight), 0.0),
+        zernike_degree=zernike_degree,
         ring_min_area=max(int(ring_min_area), 1),
         ring_edge_r_min=min(max(float(ring_edge_r_min), 0.0), 1.0),
         ring_band_width=max(float(ring_band_width), 0.0),

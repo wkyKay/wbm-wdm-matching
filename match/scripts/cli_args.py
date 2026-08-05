@@ -325,6 +325,12 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
         help="Weight of geometry features inside the token shape descriptor.",
     )
     parser.add_argument(
+        "--zernike-degree",
+        type=int,
+        default=8,
+        help="Zernike polynomial degree used in the token moment descriptor.",
+    )
+    parser.add_argument(
         "--density-sigmas",
         nargs="+",
         type=float,

@@ -32,6 +32,7 @@ class ProposalConfig:
     sparse_support_contact_ratio_max: float
     moment_weight: float
     geometry_weight: float
+    zernike_degree: int
     ring_min_area: int
     ring_edge_r_min: float
     ring_band_width: float

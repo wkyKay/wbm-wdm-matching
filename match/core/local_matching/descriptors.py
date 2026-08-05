@@ -52,10 +52,12 @@ def _type_affinity(a: str, b: str) -> float:
 
 
 def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tolerance: bool = False,
-                      moment_weight: float = 0.75, geometry_weight: float = 0.25) -> np.ndarray:
+                      moment_weight: float = 0.75, geometry_weight: float = 0.25,
+                      zernike_degree: int = ZERNIKE_DEGREE) -> np.ndarray:
     geometry = _geometry_descriptor(token, include_orientation=not rotation_tolerance and mode != "coarse")
     canvas_size = _zernike_canvas_size(map_shape)
-    moment = _zernike_descriptor(token, canvas_size=canvas_size, degree=ZERNIKE_DEGREE)
+    degree = max(int(zernike_degree), 0)
+    moment = _zernike_descriptor(token, canvas_size=canvas_size, degree=degree)
     token["descriptor_parts"] = {
         "moment": moment,
         "geometry": geometry,
@@ -63,7 +65,7 @@ def _shape_descriptor(token: Dict, map_shape, mode: str = "normal", rotation_tol
         "geometry_weight": float(max(geometry_weight, 0.0)),
         "kind": "zernike_geometry",
         "zernike_canvas_size": canvas_size,
-        "zernike_degree": ZERNIKE_DEGREE,
+        "zernike_degree": degree,
     }
     desc = np.concatenate([moment, geometry]).astype(np.float32)
     norm = float(np.linalg.norm(desc))
