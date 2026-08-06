@@ -39,7 +39,9 @@ CLI 参数优先级高于配置文件。
 
 ### 1.1.1 稀疏缺陷 proposal
 
-当 WBM 和 WDM 都由分散点构成、普通连通域无法恢复肉眼可见的环、带状或线状模式时，可使用 `sparse-density` proposal。WDM 仍先映射到与 WBM 完全一致的网格；两侧随后都把缺陷格作为 impulse，在同一组 grid-cell 尺度上生成高斯密度场、提取阈值 support，并进行跨尺度 token 去重。support 仅用于将邻近真实缺陷归为同一候选簇及绘制轮廓；token 的像素、面积、几何统计、描述子和匹配分数均只使用 support 内的原始缺陷格。token 会保留 `raw_pixels`、`raw_mass`、`raw_point_count`、`proposal_scale` 和 `kde_support_pixels` 作为证据与追溯信息。该功能同时适用于 `--mode count-partial` 和 `--mode classnumber`。
+当 WBM 和 WDM 都由分散点构成、普通连通域无法恢复肉眼可见的环、带状或线状模式时，可使用 `sparse-density` proposal。WDM 仍先映射到与 WBM 完全一致的网格；两侧随后都把缺陷格作为 impulse，在同一组 grid-cell 尺度上生成高斯密度场、提取阈值 support，并进行跨尺度 token 去重。
+
+当前实现把 `sparse-density` token 视为“support 几何 + raw 证据”的混合 token：`pixels` 是经过 raw 锚点保护合并/腐蚀后的 support 区域，`area`、质心、PCA、几何统计、shape descriptor 和 scale affinity 都基于这组 `pixels`；`raw_pixels`、`raw_mass`、`raw_point_count`、`proposal_scale` 和 `kde_support_pixels` 作为真实缺陷证据与追溯信息保留。也就是说，shape 相似度直接比较的是 support 区域形状，不是只比较原始 raw 点；raw 点负责证明该 support 有足够真实缺陷支撑，并参与候选去重和 raw mass 记录。该功能同时适用于 `--mode count-partial` 和 `--mode classnumber`。
 
 ```bash
 # count-partial 模式（sparse-density proposal）
@@ -67,9 +69,9 @@ python3 -m match.scripts.main \
   --identifier AF00138_sparse_class
 ```
 
-`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `log1p(count)` 作为 KDE 权重，以压缩高密度区域的扩展，可通过 `--density-weight-transform count|sqrt|log1p` 调整。support 还会进行一层受 raw pixel 保护的有限腐蚀；腐蚀不会删除 raw pixel，也不会断开同一 support 分量内 raw pixel 的连通关系。使用 `--proposal-mode auto` 时，系统会根据碎片化程度和原始证据在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
+`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `log1p(count)` 作为 KDE 权重，以压缩高密度区域的扩展，可通过 `--density-weight-transform count|sqrt|log1p` 调整。support 会进行一层受 raw pixel 保护的有限腐蚀；腐蚀不会删除 raw pixel，也不会断开同一 support 分量内 raw pixel 的连通关系。使用 `--proposal-mode auto` 时，系统会根据碎片化程度在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
 
-对稀疏且断裂的边缘环/弧，可显式使用 `--proposal-mode sparse-density-arc-ring-residual`。该模式以去重后的 KDE support 进行径向带、角度覆盖和短缺口分组，再回查环带内的原始点数与原始质量；最终 token 的 `pixels`、面积、位置与描述子使用被接受的环带 support，`raw_pixels`、`raw_area` 与 `raw_mass` 保留真实证据。接受的 ring/arc 会独占其 raw 像素，residual 仅从未占有的 raw 像素构建，避免重复匹配和重复汇总。完整 support 越过 `--ring-edge-r-min` 不会单独拒绝候选，实际 ring token 只取被检测的径向带。
+对稀疏且断裂的边缘环/弧，可显式使用 `--proposal-mode sparse-density-arc-ring-residual`（兼容别名 `sparse-arc-ring-residual`）。该模式先合并多尺度 KDE support，再在 support 域检测径向带、角度覆盖和短缺口形成的 ring/arc；候选通过后再回查对应 raw 点数与 raw mass。最终 token 的 `pixels`、面积、位置、PCA、描述子和 scale affinity 使用被接受的 support 区域，`raw_pixels`、`raw_area` 与 `raw_mass` 保留真实证据。接受的 ring/arc 会同时占有 support 和 raw 像素；residual 只从未占有的 support/raw 证据中提取，避免重复匹配和重复汇总。完整 support 越过 `--ring-edge-r-min` 不会单独拒绝候选，实际 ring token 只取被检测的径向带。
 
 ### 1.1.2 切向断裂环 proposal
 
@@ -203,7 +205,7 @@ KLARF 文件
   │    │      WDM: _tokens_from_weighted_mask (count_map > 0, count 作为权重)
   │    │      模式: cc、compact、compact1、arc-ring-residual、tangential-ring、sparse-density、sparse-density-arc-ring-residual 或 auto
   │    ├── 4b. 形状描述符 ── descriptors.py
-  │    │      每个 token → Zernike 矩 (48×48, 8阶) + 几何特征 → 拼接归一化
+  │    │      每个 token → Zernike 矩 (默认 48×48, 8阶，可配) + 几何特征 → 分量融合
   │    ├── 4c. Token 对打分 ── scoring.py → _token_match_components
   │    │      shape_sim + position_aff + scale_aff → token_score
   │    ├── 4d. 贪心一对一匹配 ── _greedy_one_to_one_matches
@@ -246,6 +248,7 @@ rows (所有文件的结果)
               │     viz/classnumber_visualization.py → plot_classnumber_splits + plot_classnumber_topk_splits + plot_classnumber_step
               └── save_classnumber_wdm_raw_figures → wdm_raw_classnumber_review/
                     (top-K classnumber split 物理坐标 wafer 原图, 仅该 classnumber 的缺陷, 蓝色)
+```
 
 ### 3.2 代码结构
 
@@ -300,44 +303,52 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持八种模式：
 
-- **CC（Connected Component）**：BFS 连通域提取（4-连通或 8-连通），过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k
+- **CC（Connected Component）**：8 连通域提取，过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k。
 - **Compact**：先提取环状候选，再从残差中提取 component token（分类为 blob / line / central / irregular），按重要性与类型多样性保留候选
   - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，仅作为 ring 连通性与轮廓证据；ring token 的像素、面积、几何统计和描述子仍只使用原始缺陷格，残余 component 也由去噪后的原始 mask 提取
   - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
 - **Compact1**：面向 (7\times12) 等小图的无 closing 模式。它先将全部原始外圈点 (`r >= ring-edge-r-min`) 作为候选，再提取连通分量；只有一像素 8 邻域膨胀相交且径向中位数相差不超过一个有效带宽的分量才能归组。膨胀仅用于判定归组，最终 token 始终是原始像素并集，不填充缺口。默认以 24 个扇区统计角度，单弧至少覆盖 3 个扇区、至少包含 4 个原始点、最多连接一个短缺口；覆盖率达到 0.50 的弧组标记为 `edge_ring`，否则标记为 `ring_arc`。
 - **Arc-ring-residual**：先提取满足径向带和角度覆盖条件的环状 token，再从扣除环状区域后的残差中提取其余 component token；适合边缘环与其他局部缺陷共存的情形。
 - **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
-- **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取 token。每个尺度的候选按 IoU 去重，token 必须包含足够的原始点数和原始质量；因此 KDE 只改变 proposal 的派生 support，不会覆盖原始 WBM/WDM 数据。
-- **Sparse-density-arc-ring-residual**：在去重 KDE support 上检测边缘 ring/arc，并在接受后按 raw 像素所有权提取 residual。每个最终 token 同时保留 support 几何视图与 raw 证据视图；前者用于形状、位置、面积和描述子，后者用于有效性门槛与去重计数。
-- **Auto**：根据两侧 mask 的碎片化特征和原始证据，在 `cc` 与 `sparse-density` 间自动选择，并使一对 WBM/WDM 使用同一种 proposal 表示。
+- **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取候选。候选必须包含足够 `raw_pixels` 和 `raw_mass`，跨尺度去重同时检查 support IoU 与 raw IoU。最终 token 的 `pixels` 是受 raw 锚点保护合并/腐蚀后的 support 区域，因此形状描述符、面积、位置和 PCA 直接看 support；`raw_pixels` 只作为真实证据与追溯字段。
+- **Sparse-density-arc-ring-residual**：在去重 KDE support 上检测边缘 ring/arc，并在接受后按 support/raw 所有权提取 residual。每个最终 token 同时保留 support 几何视图与 raw 证据视图；前者用于 `pixels`、形状、位置、面积、PCA、描述子和 scale affinity，后者用于有效性门槛、raw mass、去重计数和所有权控制。
+- **Auto**：根据两侧 mask 的碎片化特征，在 `cc` 与 `sparse-density` 间自动选择，并使一对 WBM/WDM 使用同一种 proposal 表示。`auto` 不会自动选择 `sparse-density-arc-ring-residual`，该模式需要显式指定。
 
-每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、径向标准差 (radial_std)、几何类型 (geometry_type)。
+每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area/support_area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、最大连续角度覆盖、最大角度缺口、径向标准差 (radial_std)、径向带宽、几何类型 (geometry_type)。sparse 系列 token 额外记录 `raw_pixels`、`raw_area`、`raw_point_count`、`raw_mass`、`kde_support_pixels`、`kde_support_area` 等证据字段。
 
 ### 4.3 Descriptor：形状描述符
 
-每个 token 的形状描述符由两部分拼接并归一化到单位长度：
+每个 token 的形状描述符由两部分组成，并在 `descriptor_parts` 中分开保存：
 
-**Zernike 矩（默认权重 0.75）**：将 token 的 bbox 裁剪区域最近邻缩放到 48×48，映射到单位圆盘，计算 8 阶 Zernike 矩的幅值向量。
+- **Zernike 矩**：将 `token["pixels"]` 投到以 token 质心为中心的固定画布上，再映射到单位圆盘，计算 Zernike 矩幅值。默认阶数为 8，可通过 `--zernike-degree` 调整；短边 ≤12 的小图使用 16×16 画布，其余使用 48×48 画布。
+- **几何特征**：包括填充率、长宽比、PCA 伸长率、紧致度、全图径向/角度统计、token 局部径向填充分布、局部角度覆盖；未开启 `--proposal-rotation-tolerance` 且 descriptor mode 不是 `coarse` 时，还会加入方向的 cos/sin 编码。
 
-**几何特征（权重 0.25）**：`[fill_ratio, log(aspect), log(elongation), compactness, angular_coverage, radial_std, orientation_cos, orientation_sin]`。
+当前 shape score 不直接使用拼接向量的整体余弦作为主路径，而是分别计算：
 
-若启用 `rotation_tolerance`，描述符退化为径向轮廓直方图（旧版方式）。
+```text
+moment_sim   = cosine(zernike_q, zernike_c)
+geometry_sim = exp(-mean_abs_diff(geometry_q, geometry_c) / 0.25)
+shape_sim    = (moment_weight × moment_sim + geometry_weight × geometry_sim)
+               / (moment_weight + geometry_weight)
+```
+
+CLI 默认 `--moment-weight 0.25`、`--geometry-weight 0.75`，即当前更偏向几何统计而不是 Zernike 矩。若要测试更高维 Zernike 的区分性，建议同时提高 `--moment-weight`，否则更高阶 moment 对最终 `shape_sim` 的影响仍然有限。
 
 ### 4.4 Score：Token 匹配与分数聚合
 
 **Token 对打分**：对每对 (WBM token, WDM token)，计算三个维度的亲和度，组合为 token pair score：
 
-- **Shape similarity**：两个描述符的余弦相似度；描述子内部默认按 Zernike 0.75、几何特征 0.25 融合。低于内部形状门限或未通过尺度比例门限的 token 对直接置零
+- **Shape similarity**：优先使用 `descriptor_parts` 中的 Zernike moment cosine 与 geometry affinity 加权融合。低于内部形状门限或 ring topology 门限的 token 对直接置零。可通过 `--proposal-min-shape-score` 增加额外 shape gate
 - **Position affinity**：`exp(-d² / σ_pos²)`，d 为归一化质心间的欧氏距离
 - **Scale affinity**：`w_area × area_aff + w_pca × pca_aff`
-  - `area_aff = exp(-|log(area_q / area_c)| / σ_scale)`
+  - `area_aff = exp(-|log(support_area_ratio_q / support_area_ratio_c)| / σ_scale)`
   - `pca_aff = exp(-(0.75·|log(long_q/long_c)| + 0.25·|log(short_q/short_c)|) / σ_scale)`
 
 ```
 token_score = w_shape × shape_sim + w_position × position_aff + w_scale × scale_aff
 ```
 
-默认权重：`w_shape=0.60`、`w_position=0.25`、`w_scale=0.15`；可通过 `--token-score-*-weight` 调整。尺度亲和度内部默认等权融合支持面积与 PCA 长短轴范围。
+默认权重：`w_shape=0.60`、`w_position=0.25`、`w_scale=0.15`；可通过 `--token-score-*-weight` 调整。尺度亲和度内部默认 `--token-scale-area-weight 0.20`、`--token-scale-pca-weight 0.80`，即更偏向 PCA 长短轴范围而不是面积。
 
 **贪心一对一匹配**：所有 token 对按 score 降序排列，贪心选取不重复使用 token 的配对。
 
