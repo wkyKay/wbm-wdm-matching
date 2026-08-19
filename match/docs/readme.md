@@ -1,96 +1,104 @@
 # WBM-WDM Matching
 
-## 1. 运行命令
+## 1. 项目定位
 
-### 1.1 两种模式
+给定一张目标 WBM（Wafer Bin Map，芯片测试分 bin 图）和一组候选 WDM（Wafer Defect Map，KLARF 缺陷扫描数据），找到能最佳解释该 WBM 的 WDM 稀疏子集。
+
+核心挑战是跨数据源匹配：WBM 来自电性测试，粒度为 die；WDM 来自光学扫描，粒度为亚 die 缺陷散点，两者的来源、粒度和语义均不同。项目通过坐标映射把 WDM 转换到与 WBM 一致的网格，再结合全图 IoU、局部 token 匹配和可选的 classnumber 分图匹配完成候选排序。
+
+输出包括全局相似度排名、count-map 局部 token 匹配分数、可选的 defect classnumber 分图匹配结果，以及 token 提取、匹配证据和 WDM 原始坐标等可视化文件。
+
+---
+
+## 2. 运行命令
+
+### 2.1 主程序
 
 `--mode` 参数控制匹配流程，所有日志与图表自动保存到 `<output-dir>/<identifier>/<mode>/`。以下命令均从仓库根目录执行；`--klarf-dir`、`--reference` 为必填参数：
 
 | 模式 | 计算内容 | 自动输出 |
 |---|---|---|
-| `count-partial`（默认） | 完整 WDM 的 IoU 基线和局部 token 匹配 | `results.tsv`、`topk.tsv`、`token_match.tsv`、`map_match.tsv`、参数快照及基线、局部匹配、原始 WDM 和汇总图表 |
+| `count-partial`（默认） | 完整 WDM 的 IoU 基线和局部 token 匹配 | `results.tsv`、`topk.tsv`、`token_match.tsv`、`map_match.tsv`、参数快照及基线、局部匹配和原始 WDM 图表 |
 | `classnumber` | 按 KLARF `CLASSNUMBER` 拆分 WDM，并选择得分最高的子图 | 与 `count-partial` 相同的日志结构，另含最佳 classnumber、count/binary 局部匹配及对应图表 |
 
+#### 2.1.1 Proposal mode
+
+| `--proposal-mode` | 适用情况 | 作用 |
+|---|---|---|
+| `cc` | 非稀疏 | 按 8 连通域提取局部 token，适合缺陷区域本身连通的情况 |
+| `compact` | 非稀疏 | 先检测环状候选，再从残差提取 component token，适合环状缺陷与普通局部缺陷共存的情况 |
+| `arc-ring-residual` | 非稀疏 | 提取满足径向带和角度覆盖条件的环/弧 token，再从残差中提取其他 component token |
+| `sparse-density` | 稀疏 | 用多尺度 KDE support 恢复分散缺陷的连续区域，并保留 raw 缺陷证据 |
+| `sparse-density-arc-ring-residual` | 稀疏 | 在 KDE support 上检测 ring/arc，再按 support/raw 所有权提取 residual；`sparse-arc-ring-residual` 是兼容别名 |
+
+下面两组命令分别对应非稀疏和稀疏缺陷情况；两组命令均固定使用 `--representation count`。
+
 ```bash
-# count-partial — 默认模式，完整 WDM 的 IoU 基线 + 局部匹配
+# 非稀疏：cc
 python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
-  --representation density \
+  --representation count \
   --mode count-partial \
+  --proposal-mode cc \
   --identifier AF00138
 
-# classnumber — 按 CLASSNUMBER 拆分；count/binary 匹配路径由 --representation 推导
+# 非稀疏：compact 或 arc-ring-residual 时，仅替换 proposal-mode
+# --proposal-mode compact
+# --proposal-mode arc-ring-residual
+
+# 稀疏：sparse-density
+python3 -m match.scripts.main \
+  --klarf-dir /path/to/klarf_files/ \
+  --reference data/wm811k/000604.png \
+  --mapper physical-coordinate \
+  --representation count \
+  --mode count-partial \
+  --proposal-mode sparse-density \
+  --density-sigmas 0.6 1.2 1.8 \
+  --density-threshold 0.20 \
+  --identifier AF00138_sparse
+
+# 稀疏：sparse-density-arc-ring-residual 时替换 proposal-mode
+# --proposal-mode sparse-density-arc-ring-residual
+
+# classnumber 模式：仍使用 count 表示，可与以上任一 proposal mode 组合
 python3 -m match.scripts.main \
   --klarf-dir /path/to/klarf_files/ \
   --reference data/wm811k/000604.png \
   --mapper physical-coordinate \
   --representation count \
   --mode classnumber \
+  --proposal-mode cc \
   --identifier AF00138
 
-# 也可用自定义 JSON 文件提供默认参数，命令行参数优先
+# 也可用 JSON 文件提供默认参数，命令行参数优先
 python3 -m match.scripts.main \
   --config /path/to/match_config.json
 ```
 
-CLI 参数优先级高于配置文件。
+CLI 参数优先级高于配置文件。每个参数的含义如下：
 
-### 1.1.1 稀疏缺陷 proposal
+| 参数 | 含义 |
+|---|---|
+| `--klarf-dir` | KLARF 文件目录 |
+| `--reference` | WBM 参考 PNG |
+| `--mapper` | WDM 到 WBM 网格的坐标映射方式，如 `physical-coordinate` |
+| `--representation` | WDM 网格表达；本项目命令统一使用 `count` |
+| `--mode` | 匹配流程：`count-partial` 或 `classnumber` |
+| `--proposal-mode` | token proposal 方式，取值见上表 |
+| `--identifier` | 本次实验名称，决定输出子目录 |
+| `--density-sigmas` | 稀疏 proposal 使用的 grid-cell 高斯尺度 |
+| `--density-threshold` | KDE support 相对峰值阈值 |
+| `--density-min-raw-points` | 一个稀疏 token 所需的最少原始占用格点数 |
+| `--density-min-raw-mass` | 一个稀疏 token 所需的最少原始权重质量 |
 
-当 WBM 和 WDM 都由分散点构成、普通连通域无法恢复肉眼可见的环、带状或线状模式时，可使用 `sparse-density` proposal。WDM 仍先映射到与 WBM 完全一致的网格；两侧随后都把缺陷格作为 impulse，在同一组 grid-cell 尺度上生成高斯密度场、提取阈值 support，并进行跨尺度 token 去重。
+稀疏模式中，`pixels` 主要表示经过 raw 锚点保护的 support 几何区域，`raw_pixels`、`raw_mass` 和 `raw_point_count` 保留真实缺陷证据；`sparse-density-arc-ring-residual` 还会在 support 上提取 ring/arc，并从未占用区域提取 residual。
 
-当前实现把 `sparse-density` token 视为“support 几何 + raw 证据”的混合 token：`pixels` 是经过 raw 锚点保护合并/腐蚀后的 support 区域，`area`、质心、PCA、几何统计、shape descriptor 和 scale affinity 都基于这组 `pixels`；`raw_pixels`、`raw_mass`、`raw_point_count`、`proposal_scale` 和 `kde_support_pixels` 作为真实缺陷证据与追溯信息保留。也就是说，shape 相似度直接比较的是 support 区域形状，不是只比较原始 raw 点；raw 点负责证明该 support 有足够真实缺陷支撑，并参与候选去重和 raw mass 记录。该功能同时适用于 `--mode count-partial` 和 `--mode classnumber`。
+### 2.2 其他工具
 
-```bash
-# count-partial 模式（sparse-density proposal）
-python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --representation density \
-  --mode count-partial \
-  --proposal-mode sparse-density \
-  --density-sigmas 0.8 1.6 3.2 \
-  --density-threshold 0.20 \
-  --identifier AF00138_sparse
-
-# classnumber 模式（sparse-density proposal，按 classnumber 拆分后每子 WDM 独立提取 token）
-python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --representation count \
-  --mode classnumber \
-  --proposal-mode sparse-density \
-  --density-sigmas 0.8 1.6 3.2 \
-  --density-threshold 0.20 \
-  --identifier AF00138_sparse_class
-```
-
-`--density-sigmas` 的单位是对齐后 WBM 网格的 cell（die）尺度，而不是 PNG 像素。`--density-threshold` 是每个尺度相对于该密度图峰值的 support 阈值；`--density-min-raw-points` 和 `--density-min-raw-mass` 用于拒绝没有足够原始缺陷证据的平滑候选。WDM 默认使用 `log1p(count)` 作为 KDE 权重，以压缩高密度区域的扩展，可通过 `--density-weight-transform count|sqrt|log1p` 调整。support 会进行一层受 raw pixel 保护的有限腐蚀；腐蚀不会删除 raw pixel，也不会断开同一 support 分量内 raw pixel 的连通关系。使用 `--proposal-mode auto` 时，系统会根据碎片化程度在两侧共同选择 `cc` 或 `sparse-density`；`cc` 仍是默认模式。
-
-对稀疏且断裂的边缘环/弧，可显式使用 `--proposal-mode sparse-density-arc-ring-residual`（兼容别名 `sparse-arc-ring-residual`）。该模式先合并多尺度 KDE support，再在 support 域检测径向带、角度覆盖和短缺口形成的 ring/arc；候选通过后再回查对应 raw 点数与 raw mass。最终 token 的 `pixels`、面积、位置、PCA、描述子和 scale affinity 使用被接受的 support 区域，`raw_pixels`、`raw_area` 与 `raw_mass` 保留真实证据。接受的 ring/arc 会同时占有 support 和 raw 像素；residual 只从未占有的 support/raw 证据中提取，避免重复匹配和重复汇总。完整 support 越过 `--ring-edge-r-min` 不会单独拒绝候选，实际 ring token 只取被检测的径向带。
-
-### 1.1.2 切向断裂环 proposal
-
-`tangential-ring` 是独立于 `compact` 的高召回环状 proposal。它先在原始外圈缺陷点上估计主环半径，并将环宽限制在最多两个 die；随后仅在极坐标的角度轴上桥接不超过两个 die 的短缺口。桥接结果只记录为 `ring_contour_bins` 和覆盖率证据，绝不生成 token 像素；因此 token 的面积、几何统计、描述子和匹配始终只使用原始缺陷格。检测到的 ring 从 residual 中按原始像素扣除，其余区域仍按连通域提取。
-
-```bash
-python3 -m match.scripts.main \
-  --klarf-dir /path/to/klarf_files/ \
-  --reference data/wm811k/000604.png \
-  --mapper physical-coordinate \
-  --representation count \
-  --mode count-partial \
-  --proposal-mode tangential-ring \
-  --identifier AF00138_tangential_ring
-```
-
-该模式不要求 ring 贴到晶圆最外边界，而是在 `ring_edge_r_min` 之外寻找主径向带。它适合小图中只断开一两个 die 的环；较大截断、宽外侧区域或与环半径不一致的散点不会被切向桥接补成真实 token 像素。
-
-### 1.2 CP CSV 参考图预处理
+#### 2.2.1 CP CSV 参考图预处理
 
 另一类 CP test 输入可先从 CSV 拆分为逐 wafer、逐 hardbin 的 WBM 参考图：
 
@@ -117,9 +125,9 @@ cp_refs/
 
 PNG 仍使用三值编码：黑色=无 die/晶圆外，灰色=有效 die 但非当前类别，白色=当前 PF fail 或 hardbin 命中。`hardbin_index.tsv` 记录每张 hardbin PNG 对应的 `hardbin_number`、`hardbin_name`、命中 die 数和文件名，便于批量调用 `main.py --reference <hardbin_png>` 并追溯结果。
 
-### 1.3 批量对比实验
+#### 2.2.2 批量对比实验
 
-通过 JSON 定义多条实验，调用 `batch_run` 依次执行：
+`scripts/batch_run.py` 用于读取一个 JSON 实验配置，复用同一组公共参数并依次调用主流程，适合批量比较多个参考图或多个 KLARF 目录。通过 JSON 定义多条实验，调用方式如下：
 
 ```bash
 python3 -m match.scripts.batch_run \
@@ -133,7 +141,7 @@ JSON 格式 (`batch.json`)：
   "common": {
     "mode": "count-partial",
     "mapper": "physical-coordinate",
-    "representation": "density",
+    "representation": "count",
     "die_x_range": [-20, 20],
     "die_y_range": [-20, 20],
     "topk": 10,
@@ -143,12 +151,12 @@ JSON 格式 (`batch.json`)：
     {
       "klarf_dir": "/data/klarf_batch1/",
       "reference": "/data/wm811k/000604.png",
-      "identifier": "batch1_density"
+      "identifier": "batch1_count_ref1"
     },
     {
       "klarf_dir": "/data/klarf_batch1/",
       "reference": "/data/wm811k/000610.png",
-      "identifier": "batch1_count",
+      "identifier": "batch1_count_ref2",
       "representation": "count"
     }
   ]
@@ -156,16 +164,6 @@ JSON 格式 (`batch.json`)：
 ```
 
 `common` 定义所有实验共享的默认参数（可选），每个实验**必须**提供 `klarf_dir`、`reference`、`identifier`，可按需覆盖 `common` 中任意参数。`identifier` 必须唯一，结果输出到 `<output-dir>/<identifier>/`。
-
----
-
-## 2. 项目定位
-
-给定一张目标 WBM（Wafer Bin Map，芯片测试分 bin 图）和一组候选 WDM（Wafer Defect Map，KLARF 缺陷扫描数据），找到能最佳「解释」该 WBM 的 WDM 稀疏子集。
-
-核心挑战是**跨数据源匹配**——WBM 来自电性测试（黑白灰三值，粒度为 die），WDM 来自光学扫描（散点，粒度为亚 die 坐标），两者粒度、来源、语义均不同。
-
-输出包括：全局相似度排名、count-map 局部 token 匹配分数、可选按 defect classnumber 拆分的分图匹配、以及匹配过程的可视化图表（token 提取、聚类着色、匹配证据表）。
 
 ---
 
@@ -203,7 +201,7 @@ KLARF 文件
   │    ├── 4a. Token 提案 ── proposal.py
   │    │      WBM: _tokens_from_mask (status_map == VALID_HAS_DEFECT)
   │    │      WDM: _tokens_from_weighted_mask (count_map > 0, count 作为权重)
-  │    │      模式: cc、compact、compact1、arc-ring-residual、tangential-ring、sparse-density、sparse-density-arc-ring-residual 或 auto
+  │    │      模式: cc、compact、arc-ring-residual、sparse-density、sparse-density-arc-ring-residual
   │    ├── 4b. 形状描述符 ── descriptors.py
   │    │      每个 token → Zernike 矩 (默认 48×48, 8阶，可配) + 几何特征 → 分量融合
   │    ├── 4c. Token 对打分 ── scoring.py → _token_match_components
@@ -235,7 +233,7 @@ rows (所有文件的结果)
   └── scripts/batch_viz.py（按 mode 分支）
         ├── count-partial 模式:
         │     ├── save_baseline_figures → baseline_review/
-        │     │     (sum map IoU top-K, 左 WBM 右 WDM 对比图)
+        │     │     (IoU top-K, 左 WBM 右 WDM 对比图)
         │     ├── save_count_partial_figures → count_partial_review/
         │     │     viz/count_partial_visualization.py → plot_count_partial_topk + plot_count_partial_steps
         │     │     (result 与 result_matched_only 各出一套，并输出候选摘要图)
@@ -257,13 +255,13 @@ match/
   core/
     models.py              # GridMaps、DefectTable、状态常量
     mappers.py             # 3 种坐标映射器（die-index / relative-coordinate / physical-coordinate）
-    representations.py     # 6 种网格表达（binary / count / density / soft / three-value / mountain）
+    representations.py     # 网格表达实现（命令示例统一使用 count；内部仍保留其他表达）
     pipeline.py            # map_klarf_to_grid 端到端入口
     similarity.py          # 全图相似度实现（当前批处理默认记录 IoU）
     local_matching/        # count-partial 局部匹配
       models.py            # LocalMatchResult、ProposalConfig
       morphology.py        # 连通域提取、形态学操作
-      proposal.py          # token 提案生成（cc / compact / compact1 / arc-ring-residual / tangential-ring / sparse-density / sparse-density-arc-ring-residual / auto）
+      proposal.py          # token 提案生成（cc / compact / arc-ring-residual / sparse-density / sparse-density-arc-ring-residual）
       descriptors.py       # shape descriptor（Zernike 矩 + 几何特征）
       scoring.py           # token 配对打分、贪心匹配、分数聚合
     classnumber_matching.py # classnumber 分图匹配
@@ -301,18 +299,15 @@ WBM 使用三值语义：白色=有缺陷 die（`VALID_HAS_DEFECT=2`）、灰色
 
 ### 4.2 Proposal：Token 提取
 
-从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。CLI 支持八种模式：
+从 WBM 和 WDM 的 mask 中提取若干局部区域作为 token，每个 token 代表一个有意义的缺陷聚集区。当前 CLI 支持五种 proposal mode：
 
 - **CC（Connected Component）**：8 连通域提取，过滤面积 < `min_area` 的小碎片，按重要性（√mass + √area + 类型加分）排序后取 top-k。
 - **Compact**：先提取环状候选，再从残差中提取 component token（分类为 blob / line / central / irregular），按重要性与类型多样性保留候选
   - 对短边 ≤12 的小图，Compact 先对原始 mask 做一次受有效区域约束的 `3×3` closing，仅作为 ring 连通性与轮廓证据；ring token 的像素、面积、几何统计和描述子仍只使用原始缺陷格，残余 component 也由去噪后的原始 mask 提取
   - 小图 ring-aware 默认使用最多 24 个角度扇区、最少 6 个 ring-band cell、最少 0.10 的角度覆盖率、最多 0.18 的径向标准差和最多 0.60 的缺陷覆盖率；较大图维持原有的 72 扇区与更严格阈值。可通过 `--ring-min-area`、`--ring-edge-r-min`、`--ring-band-width`、`--ring-min-angular-coverage`、`--ring-angular-bins`、`--ring-max-radial-std`、`--ring-max-defect-ratio`、`--ring-min-edge-defect-fraction` 显式调节
-- **Compact1**：面向 (7\times12) 等小图的无 closing 模式。它先将全部原始外圈点 (`r >= ring-edge-r-min`) 作为候选，再提取连通分量；只有一像素 8 邻域膨胀相交且径向中位数相差不超过一个有效带宽的分量才能归组。膨胀仅用于判定归组，最终 token 始终是原始像素并集，不填充缺口。默认以 24 个扇区统计角度，单弧至少覆盖 3 个扇区、至少包含 4 个原始点、最多连接一个短缺口；覆盖率达到 0.50 的弧组标记为 `edge_ring`，否则标记为 `ring_arc`。
 - **Arc-ring-residual**：先提取满足径向带和角度覆盖条件的环状 token，再从扣除环状区域后的残差中提取其余 component token；适合边缘环与其他局部缺陷共存的情形。
-- **Tangential-ring**：仅以原始外圈缺陷点构造受限径向带，并在极坐标角度轴上桥接最多两个 die 的短缺口。桥接只记录 contour 连续性，不新增 token 像素；ring 和 residual 按真实原始像素互斥。
 - **Sparse-density**：用于 WBM/WDM 同时稀疏的情况。两侧在同一网格上以多尺度截断高斯核生成连续 density map，再从相对峰值阈值 support 中提取候选。候选必须包含足够 `raw_pixels` 和 `raw_mass`，跨尺度去重同时检查 support IoU 与 raw IoU。最终 token 的 `pixels` 是受 raw 锚点保护合并/腐蚀后的 support 区域，因此形状描述符、面积、位置和 PCA 直接看 support；`raw_pixels` 只作为真实证据与追溯字段。
 - **Sparse-density-arc-ring-residual**：在去重 KDE support 上检测边缘 ring/arc，并在接受后按 support/raw 所有权提取 residual。每个最终 token 同时保留 support 几何视图与 raw 证据视图；前者用于 `pixels`、形状、位置、面积、PCA、描述子和 scale affinity，后者用于有效性门槛、raw mass、去重计数和所有权控制。
-- **Auto**：根据两侧 mask 的碎片化特征，在 `cc` 与 `sparse-density` 间自动选择，并使一对 WBM/WDM 使用同一种 proposal 表示。`auto` 不会自动选择 `sparse-density-arc-ring-residual`，该模式需要显式指定。
 
 每个 token 记录以下几何属性：加权质心 (centroid_row, centroid_col)、bbox、PCA 特征值与方向、面积 (area/support_area)、质量 (mass)、周长、紧致度 (compactness)、归一化径向距离、角度覆盖度 (angular_coverage)、最大连续角度覆盖、最大角度缺口、径向标准差 (radial_std)、径向带宽、几何类型 (geometry_type)。sparse 系列 token 额外记录 `raw_pixels`、`raw_area`、`raw_point_count`、`raw_mass`、`kde_support_pixels`、`kde_support_area` 等证据字段。
 

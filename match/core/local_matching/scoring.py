@@ -411,13 +411,7 @@ def _explain_local_partial_match(
         int(valid_mask.sum()),
         min_area,
         top_k,
-        proposal_mode=(
-            "sparse-density"
-            if proposal_mode == "auto" and _should_use_sparse_density(
-                wbm_mask, wdm_mask, valid_mask, density_min_raw_points
-            )
-            else ("cc" if proposal_mode == "auto" else proposal_mode)
-        ),
+        proposal_mode=proposal_mode,
         rotation_tolerance=rotation_tolerance,
         density_sigmas=density_sigmas,
         density_threshold=density_threshold,
@@ -644,31 +638,6 @@ def _density_weight_map(weight_map: np.ndarray, transform: str) -> np.ndarray:
     if transform == "log1p":
         return np.log1p(weights).astype(np.float32)
     raise ValueError(f"Unsupported density weight transform: {transform}")
-
-
-def _should_use_sparse_density(
-    wbm_mask: np.ndarray,
-    wdm_mask: np.ndarray,
-    valid_mask: np.ndarray,
-    min_raw_points: int,
-) -> bool:
-    """Select a shared sparse representation when either side is fragmented."""
-    return _is_fragmented_sparse_map(wbm_mask & valid_mask, min_raw_points) or _is_fragmented_sparse_map(
-        wdm_mask & valid_mask, min_raw_points
-    )
-
-
-def _is_fragmented_sparse_map(mask: np.ndarray, min_raw_points: int) -> bool:
-    point_count = int(mask.sum())
-    if point_count < max(int(min_raw_points), 1):
-        return False
-    from .morphology import _connected_components
-
-    components = _connected_components(mask, connectivity=8)
-    if len(components) < 2:
-        return False
-    largest = max(len(component) for component in components)
-    return largest < min_raw_points or largest / point_count <= 0.5
 
 
 def _normalized_score_weights(

@@ -17,7 +17,7 @@ from .batch_io import (
     write_topk_log,
     format_score,
 )
-from .batch_viz import save_baseline_figures, save_classnumber_baseline_figures, save_classnumber_figures, save_classnumber_summary_figure, save_count_partial_figures, save_summary_figure, save_wdm_raw_figures, save_classnumber_wdm_raw_figures
+from .batch_viz import save_baseline_figures, save_classnumber_baseline_figures, save_classnumber_figures, save_count_partial_figures, save_wdm_raw_figures, save_classnumber_wdm_raw_figures
 
 
 def main() -> None:
@@ -141,12 +141,10 @@ def _save_requested_figures(
         save_baseline_figures(args, ref_gm, rows, log_dir)
         save_count_partial_figures(args, ref_gm, rows, log_dir)
         _safe_viz(save_wdm_raw_figures, args, rows, log_dir, label="WDM raw")
-        _safe_viz(save_summary_figure, args, rows, log_dir, label="summary")
     elif args.mode == "classnumber":
         save_classnumber_baseline_figures(args, ref_gm, rows, log_dir)
         save_classnumber_figures(args, ref_gm, rows, log_dir)
         _safe_viz(save_classnumber_wdm_raw_figures, args, rows, log_dir, label="classnumber WDM raw")
-        _safe_viz(save_classnumber_summary_figure, args, rows, log_dir, label="classnumber summary")
 
 
 def _safe_viz(fn, *fn_args, label: str, **fn_kwargs) -> None:

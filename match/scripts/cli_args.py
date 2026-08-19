@@ -303,9 +303,9 @@ def _add_count_partial_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--proposal-mode",
-        choices=("cc", "compact", "compact1", "arc-ring-residual", "tangential-ring", "sparse-density", "sparse-density-arc-ring-residual", "sparse-arc-ring-residual", "auto"),
+        choices=("cc", "compact", "arc-ring-residual", "sparse-density", "sparse-density-arc-ring-residual", "sparse-arc-ring-residual"),
         default="cc",
-        help="Proposal mode: cc, compact, compact1 (small-map raw arc grouping), arc-ring-residual, tangential-ring, sparse-density, sparse-density-arc-ring-residual (or sparse-arc-ring-residual), or auto.",
+        help="Proposal mode: cc, compact, arc-ring-residual, sparse-density, sparse-density-arc-ring-residual (or sparse-arc-ring-residual).",
     )
     parser.add_argument(
         "--proposal-rotation-tolerance",

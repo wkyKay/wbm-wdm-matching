@@ -82,19 +82,6 @@ class SparseDensityProposalTest(unittest.TestCase):
         self.assertFalse(result["wbm_tokens"])
         self.assertFalse(result["wdm_tokens"])
 
-    def test_auto_uses_a_shared_sparse_representation_for_fragmented_pair(self) -> None:
-        points = [(5, 5), (7, 7), (9, 9), (11, 11), (13, 13)]
-        result = explain_count_partial_match(
-            _grid(points),
-            _grid(points),
-            proposal_mode="auto",
-            density_sigmas=(0.8, 1.6),
-            density_min_raw_points=3,
-            density_min_raw_mass=3.0,
-        )
-        self.assertEqual(result["wbm_tokens"][0]["proposal_config"]["proposal_mode"], "sparse-density")
-        self.assertEqual(result["wdm_tokens"][0]["proposal_config"]["proposal_mode"], "sparse-density")
-
     def test_density_arc_ring_residual_uses_support_geometry_and_disjoint_raw_evidence(self) -> None:
         center = np.array([12.5, 12.5])
         arc_points = sorted({
@@ -146,11 +133,8 @@ class SparseDensityProposalTest(unittest.TestCase):
         for mode in (
             "cc",
             "compact",
-            "compact1",
             "arc-ring-residual",
-            "tangential-ring",
             "sparse-density",
-            "auto",
         ):
             with self.subTest(proposal_mode=mode):
                 result = explain_count_partial_match(

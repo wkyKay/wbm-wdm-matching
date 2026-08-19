@@ -90,12 +90,9 @@ def parse_args() -> argparse.Namespace:
         choices=[
             "cc",
             "compact",
-            "compact1",
             "arc-ring-residual",
-            "tangential-ring",
             "sparse-density",
             "sparse-density-arc-ring-residual",
-            "auto",
         ],
     )
     parser.add_argument("--rotation-tolerance", action="store_true")
